@@ -1,0 +1,28 @@
+# Option Momentum Trading System - Development Dependencies
+# Includes all production dependencies plus testing/dev tools
+
+# Install package in editable mode (enables imports like 'from src.core.models import ...')
+-e .
+
+# Include production dependencies
+-r requirements.txt
+
+# Testing framework
+pytest>=7.4.0
+pytest-cov>=4.1.0          # Coverage reports
+pytest-mock>=3.11.0        # Mocking utilities
+
+# Code quality tools
+black>=23.0.0              # Code formatter
+ruff>=0.1.0                # Fast linter (replaces flake8, isort, etc.)
+mypy>=1.5.0                # Static type checker
+
+# Development tools
+ipython>=8.14.0            # Better REPL
+jupyter>=1.0.0             # Notebooks for experimentation
+tqdm>=4.65.0               # Progress bars
+
+# Optional: visualization for backtesting results
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.17.0             # Interactive visualizations

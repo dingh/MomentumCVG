@@ -426,17 +426,17 @@ class ORATSDataProvider:
         """
         filters = []
         
-        # Volume filter: Either call OR put must have volume
-        # Rationale: If either side is liquid, the strike is tradeable
+        # Volume filter: both call and put must have volume
+        # Rationale: If both sides are liquid, the strike is tradeable
         if self.min_volume > 0:
             filters.append(
-                (df['cVolu'] >= self.min_volume) | (df['pVolu'] >= self.min_volume)
+                (df['cVolu'] >= self.min_volume) & (df['pVolu'] >= self.min_volume)
             )
         
-        # Open interest: Either call OR put must have OI
+        # Open interest: both call AND put must have OI
         if self.min_open_interest > 0:
             filters.append(
-                (df['cOi'] >= self.min_open_interest) | (df['pOi'] >= self.min_open_interest)
+                (df['cOi'] >= self.min_open_interest) & (df['pOi'] >= self.min_open_interest)
             )
         
         # Bid price: Both call AND put must have minimum bid
