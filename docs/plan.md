@@ -81,7 +81,6 @@ venv/
 .venv/
 
 # Never commit data or results
-data/
 cache/
 results/
 logs/
