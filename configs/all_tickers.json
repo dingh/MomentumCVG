@@ -1,0 +1,42 @@
+{
+  "config_version": "1.0",
+  "config_name": "all_tickers_weekly_7dte",
+  "description": "Weekly momentum strategy on all tickers (no universe filter)",
+  "created_date": "2026-02-07",
+  
+  "execution": {
+    "initial_capital": 1.0,
+    "start_date": "2024-10-01",
+    "end_date": "2024-12-31",
+    "target_dte": 7,
+    "max_positions": 30,
+    "capital_mode": "fixed"
+  },
+  
+  "features": {
+    "path": "c:/MomentumCVG_env/cache/momen_cvg_weekly_2018_2025.parquet"
+  },
+  
+  "universe": {
+    "type": "All"
+  },
+  
+  "strategy": {
+    "type": "MomentumCVG",
+    "params": {
+      "max_lag": 60,
+      "min_lag": 8,
+      "momentum_long_pct": 0.10,
+      "momentum_short_pct": 0.10,
+      "cvg_filter_pct": 0.5,
+      "min_count_pct": 0.80
+    }
+  },
+  
+  "optimizer": {
+    "type": "EqualWeight",
+    "params": {
+      "notional_per_side": 10000.0
+    }
+  }
+}

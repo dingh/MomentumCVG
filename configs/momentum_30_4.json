@@ -1,0 +1,28 @@
+{
+  "config_version": "1.0",
+  "config_name": "momentum_30_4_sp500",
+  "description": "Faster momentum (30-week lookback, 4-week skip) on S&P 500",
+  
+  "execution": {
+    "start_date": "2024-10-01",
+    "end_date": "2024-12-31"
+  },
+  
+  "features": {
+    "path": "c:/MomentumCVG_env/cache/momen_cvg_weekly_2018_2025.parquet"
+  },
+  
+  "universe": {
+    "type": "SP500",
+    "params": {
+      "sp500_csv_path": "c:/MomentumCVG_env/cache/SP500.csv"
+    }
+  },
+  
+  "strategy": {
+    "params": {
+      "max_lag": 30,
+      "min_lag": 4
+    }
+  }
+}

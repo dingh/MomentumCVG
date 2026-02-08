@@ -1,0 +1,83 @@
+{
+  "config_version": "1.0",
+  "config_name": "baseline_sp500_weekly_7dte",
+  "description": "Baseline weekly momentum strategy on S&P 500 universe with 7 DTE options",
+  "created_date": "2026-02-07",
+  "author": "researcher",
+  
+  "execution": {
+    "initial_capital": 1.0,
+    "start_date": "2024-10-01",
+    "end_date": "2024-12-31",
+    "target_dte": 7,
+    "max_positions": 30,
+    "capital_mode": "fixed"
+  },
+  
+  "features": {
+    "path": "c:/MomentumCVG_env/cache/momen_cvg_weekly_2018_2025.parquet",
+    "required_columns": ["date", "ticker"]
+  },
+  
+  "universe": {
+    "type": "SP500",
+    "params": {
+      "sp500_csv_path": "c:/MomentumCVG_env/cache/SP500.csv"
+    }
+  },
+  
+  "strategy": {
+    "type": "MomentumCVG",
+    "params": {
+      "max_lag": 60,
+      "min_lag": 8,
+      "momentum_long_pct": 0.10,
+      "momentum_short_pct": 0.10,
+      "cvg_filter_pct": 0.5,
+      "min_count_pct": 0.80
+    }
+  },
+  
+  "optimizer": {
+    "type": "EqualWeight",
+    "params": {
+      "notional_per_side": 10000.0
+    }
+  },
+  
+  "data_provider": {
+    "type": "ORATS",
+    "params": {
+      "data_root": "c:/ORATS/data/ORATS_Adjusted",
+      "min_volume": 10,
+      "min_open_interest": 0,
+      "min_bid": 0.05,
+      "max_spread_pct": 0.50,
+      "cache_size": 5
+    }
+  },
+  
+  "executor": {
+    "type": "BacktestExecutor",
+    "params": {
+      "execution_mode": "mid"
+    }
+  },
+  
+  "output": {
+    "results_dir": "C:/MomentumCVG_env/backtesting_results",
+    "save_trades": true,
+    "save_daily_portfolio": false,
+    "save_equity_curve": true,
+    "save_summary_json": true,
+    "trades_filename": "trades.csv",
+    "equity_curve_filename": "equity_curve.csv",
+    "summary_filename": "summary.json"
+  },
+  
+  "logging": {
+    "level": "INFO",
+    "log_file": null,
+    "console_output": true
+  }
+}
