@@ -74,10 +74,25 @@ class OptionQuote:
 @dataclass(frozen=True)
 class OptionLeg:
     """
-    A single leg in a multi-leg option strategy.
+    A single leg within a multi-leg option strategy.
+
+    Represents one option contract with a specified quantity within a strategy
+    definition. The quantity's sign indicates whether this leg is long (+) or 
+    short (-) within the strategy unit.
+
+    Two-Level System:
+    1. Strategy Unit (this level): Defines the strategy's composition
+        - Quantity determines if leg is long/short within the unit
+        - Example: Straddle = call (qty=1) + put (qty=1)
+        - Example: Ratio spread = call (qty=1) + call (qty=-2)
     
-    Combines an option contract with quantity (positive=long, negative=short).
-    Used to construct complex strategies like straddles, spreads, condors.
+    2. Position Level: Scales the entire strategy
+        - Position.quantity scales all legs together
+        - Positive position = long the strategy as defined
+        - Negative position = short the strategy (inverts all legs)
+
+    Current Usage: StraddleBuilder creates symmetric strategies (all qty=+1).
+    Future: Will support complex strategies with mixed long/short legs.
     """
     option: OptionQuote  # The option contract
     quantity: int        # Positive for long, negative for short
@@ -251,13 +266,10 @@ class OptionStrategy:
                 raise ValueError(f"Missing spot price for expiry {expiry}")
             
             spot = spot_prices[expiry]
-            intrinsic = leg.calculate_intrinsic_value(spot)
+            intrinsic = leg.calculate_intrinsic_value(spot)  # Unsigned
             
-            # Apply quantity and direction (long gets value, short pays value)
-            if leg.is_long:
-                total_value += intrinsic * abs(leg.quantity)
-            else:
-                total_value -= intrinsic * abs(leg.quantity)
+            # Apply leg direction via signed quantity
+            total_value += intrinsic * leg.quantity
         
         return total_value
 
