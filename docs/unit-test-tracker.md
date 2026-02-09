@@ -11,12 +11,13 @@
 | Layer | Status | Tests Written | Coverage | Time Spent | Notes |
 |-------|--------|---------------|----------|------------|-------|
 | **Layer 1: Core Models** | ✅ Complete | 45/45 | 100% | __h / 15h | All model classes tested |
-| **Layer 2: Builders** | ⬜ Not Started | 0/8 | 0% | 0h / 6h | |
-| **Layer 3: Optimizer** | ⬜ Not Started | 0/12 | 0% | 0h / 12h | |
-| **Layer 4: Executor** | ⬜ Not Started | 0/6 | 0% | 0h / 4h | |
-| **Layer 5: Strategy** | ⬜ Not Started | 0/10 | 0% | 0h / 8h | |
+| **Layer 2: Builders & Analyzers** | 🟡 In Progress | 14/22 | 64% | __h / 12h | StraddleBuilder ✅, StraddleAnalyzer pending |
+| **Layer 3: Feature Calculators** | ⬜ Not Started | 0/14 | 0% | 0h / 8h | Momentum + CVG calculators |
+| **Layer 4: Optimizer** | ⬜ Not Started | 0/12 | 0% | 0h / 12h | |
+| **Layer 5: Executor** | ⬜ Not Started | 0/6 | 0% | 0h / 4h | |
+| **Layer 6: Strategy** | ⬜ Not Started | 0/10 | 0% | 0h / 8h | |
 | **Setup & Infrastructure** | ✅ Complete | - | - | __h / 5h | pytest.ini + conftest.py |
-| **TOTAL** | **54%** | **45/84** | **~54%** | **__h / 50h** | |
+| **TOTAL** | **52%** | **59/114** | **~52%** | **__h / 64h** | |
 
 **Status Legend:** ⬜ Not Started | 🟡 In Progress | ✅ Complete | ⚠️ Blocked
 
@@ -93,25 +94,83 @@
 
 ---
 
-## Layer 2: Builders (6h estimated)
+## Layer 2: Builders & Analyzers (12h estimated)
 **File:** `tests/unit/test_builders.py`  
-**Target:** [src/strategy/builders.py](../../src/strategy/builders.py)
+**Targets:** 
+- [src/strategy/builders.py](../../src/strategy/builders.py)
+- [src/features/straddle_analyzer.py](../../src/features/straddle_analyzer.py)
 
-### StraddleBuilder (6h)
-- [ ] `test_find_atm_strike_exact_match` - Spot = 150, strike 150 available
-- [ ] `test_find_atm_strike_closest` - Spot = 150.25, picks 150 over 155
-- [ ] `test_find_atm_strike_tie_lower_wins` - Spot = 150.50, picks 150 over 151
-- [ ] `test_build_strategy_happy_path` - Valid chain, returns 2-leg straddle
-- [ ] `test_build_strategy_empty_chain` - Raises ValueError
-- [ ] `test_build_strategy_multiple_expiries` - Raises ValueError
-- [ ] `test_build_strategy_expiry_mismatch` - Raises ValueError
-- [ ] `test_build_strategy_no_atm_options` - Raises ValueError
+### StraddleBuilder (6h) ✅
+#### Happy Path Tests
+- [x] `test_build_strategy_happy_path` - Valid chain, returns 2-leg straddle with correct structure
+
+#### ATM Strike Selection (_find_atm_strike)
+- [x] `test_find_atm_strike_exact_match` - Spot = 44.0, strike 44.0 available
+- [x] `test_find_atm_strike_closest` - Spot = 44.25, picks 44.0 (tie-break lower)
+- [x] `test_find_atm_strike_tie_lower_wins` - Spot = 44.75, picks 44.5 over 45.0
+- [x] `test_find_atm_strike_unsorted_input` - Non-sorted strikes still work
+- [x] `test_find_atm_strike_empty_chain` - No strikes raises ValueError
+
+#### Option Lookup (_get_option_at_strike)
+- [x] `test_get_option_at_strike_found` - Returns correct call/put when present
+- [x] `test_get_option_at_strike_not_found` - Returns None when missing
+
+#### Error Handling (build_strategy)
+- [x] `test_build_strategy_empty_chain` - Raises ValueError
+- [x] `test_build_strategy_multiple_expiries` - Raises ValueError
+- [x] `test_build_strategy_expiry_mismatch` - Chain expiry ≠ expected expiry
+- [x] `test_build_strategy_missing_call` - No call at ATM strike
+- [x] `test_build_strategy_missing_put` - No put at ATM strike
+- [x] `test_build_strategy_invalid_call_premium` - Call mid ≤ 0
+- [x] `test_build_strategy_invalid_put_premium` - Put mid ≤ 0
+
+**Coverage Target:** 95% | **Actual:** 100% ✅
+
+### StraddleAnalyzer (6h)
+- [ ] `test_find_best_expiry_exact_dte` - DTE=7, finds exact match
+- [ ] `test_find_best_expiry_closest` - DTE=7, picks 8 over 5 (prefer longer)
+- [ ] `test_find_best_expiry_minimum_threshold` - Rejects expiries < min_dte
+- [ ] `test_calculate_straddle_value_itm_call` - Spot > strike
+- [ ] `test_calculate_straddle_value_itm_put` - Spot < strike
+- [ ] `test_calculate_straddle_value_atm` - Spot = strike (zero value)
+- [ ] `test_build_straddle_happy_path` - Returns complete straddle data
+- [ ] `test_build_straddle_liquidity_filter` - Rejects wide spreads, low volume
+
+**Coverage Target:** 85% | **Actual:** ___%
+
+---
+
+## Layer 3: Feature Calculators (8h estimated)
+**File:** `tests/unit/test_features.py`  
+**Targets:**
+- [src/features/momentum_calculator.py](../../src/features/momentum_calculator.py)
+- [src/features/cvg_calculator.py](../../src/features/cvg_calculator.py)
+
+### MomentumCalculator (4h)
+- [ ] `test_calculate_momentum_single_window` - mom_8_4 calculation
+- [ ] `test_calculate_momentum_multiple_windows` - Multiple lag ranges
+- [ ] `test_calculate_momentum_insufficient_data` - Returns NaN for short history
+- [ ] `test_calculate_momentum_missing_values` - Handles gaps in data
+- [ ] `test_calculate_momentum_zero_denominator` - Handles division by zero
+- [ ] `test_momentum_aggregation_mean` - Mean of window returns
+- [ ] `test_momentum_aggregation_median` - Alternative aggregation
+
+**Coverage Target:** 90% | **Actual:** ___%
+
+### CVGCalculator (4h)
+- [ ] `test_calculate_cvg_continuous_gains` - Positive CVG score
+- [ ] `test_calculate_cvg_continuous_losses` - Negative CVG score
+- [ ] `test_calculate_cvg_mixed_performance` - Lower CVG with reversals
+- [ ] `test_calculate_cvg_insufficient_data` - Returns NaN
+- [ ] `test_calculate_cvg_all_zeros` - Handles zero returns
+- [ ] `test_cvg_momentum_correlation` - High momentum → high CVG tendency
+- [ ] `test_cvg_filtering_threshold` - Top percentile selection
 
 **Coverage Target:** 90% | **Actual:** ___%
 
 ---
 
-## Layer 3: Optimizer (12h estimated)
+## Layer 4: Optimizer (12h estimated)
 **File:** `tests/unit/test_optimizer.py`  
 **Target:** [src/portfolio/optimizer.py](../../src/portfolio/optimizer.py)
 
@@ -133,7 +192,7 @@
 
 ---
 
-## Layer 4: Executor (4h estimated)
+## Layer 5: Executor (4h estimated)
 **File:** `tests/unit/test_executor.py`  
 **Target:** [src/execution/backtest_executor.py](../../src/execution/backtest_executor.py)
 
@@ -149,7 +208,7 @@
 
 ---
 
-## Layer 5: Strategy (8h estimated)
+## Layer 6: Strategy (8h estimated)
 **File:** `tests/unit/test_strategy.py`  
 **Target:** [src/strategy/momentum_cvg.py](../../src/strategy/momentum_cvg.py)
 
