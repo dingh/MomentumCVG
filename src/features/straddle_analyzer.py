@@ -13,8 +13,9 @@ import numpy as np
 import pandas as pd
 
 from ..data.orats_provider import ORATSDataProvider
+from ..data.spot_price_db import SpotPriceDB
 from ..strategy.builders import StraddleBuilder
-from ..core.models import Signal, OptionQuote, StrategyType
+from ..core.models import Signal, OptionQuote, StrategyType, Position
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class StraddleHistoryBuilder:
     def __init__(
         self,
         data_root: str,
+        spot_db: SpotPriceDB,
         dte_target: int = 7,
         max_spread_pct: float = 0.50,
         min_volume: int = 10,
@@ -36,12 +38,14 @@ class StraddleHistoryBuilder:
         
         Args:
             data_root: Path to ORATS data directory
+            spot_db: Pre-loaded spot price database for RV calculations
             dte_target: Target days to expiry (7 for weekly)
             max_spread_pct: Maximum bid-ask spread as % of mid (50%)
             min_volume: Minimum volume required
             min_oi: Minimum open interest required
         """
         self.data_root = data_root
+        self.spot_db = spot_db
         self.dte_target = dte_target
         self.max_spread_pct = max_spread_pct
         self.min_volume = min_volume
@@ -61,94 +65,35 @@ class StraddleHistoryBuilder:
             self.builder = StraddleBuilder()
             logger.info(f"Worker initialized with data_root={self.data_root}")
     
-    def check_tradeability(
+    def record_liquidity_metrics(
         self, 
         call: OptionQuote, 
         put: OptionQuote
-    ) -> Tuple[bool, str, Dict[str, float]]:
+    ) -> Dict[str, float]:
         """
-        Check if straddle is tradeable based on liquidity metrics.
+        Record liquidity metrics for diagnostics.
+        
+        Note: ORATSDataProvider already filters by volume/OI/spreads,
+        so this just records metrics for analysis purposes.
         
         Args:
             call: Call option quote
             put: Put option quote
         
         Returns:
-            Tuple of (is_tradeable, failure_reason, metrics_dict)
+            Dictionary of liquidity metrics
         """
         metrics = {
-            'call_spread_pct': 0.0,
-            'put_spread_pct': 0.0,
-            'avg_spread_pct': 0.0,
+            'call_spread_pct': float((call.ask - call.bid) / call.mid if call.mid > 0 else 999.0),
+            'put_spread_pct': float((put.ask - put.bid) / put.mid if put.mid > 0 else 999.0),
             'call_volume': int(call.volume or 0),
             'put_volume': int(put.volume or 0),
             'call_open_interest': int(call.open_interest or 0),
             'put_open_interest': int(put.open_interest or 0),
         }
+        metrics['avg_spread_pct'] = (metrics['call_spread_pct'] + metrics['put_spread_pct']) / 2
         
-        # Check premiums
-        if call.mid <= 0 or put.mid <= 0:
-            return False, 'zero_premium', metrics
-        
-        # Calculate spreads
-        call_spread_pct =  float((call.ask - call.bid) / call.mid if call.mid > 0 else 999.0)
-        put_spread_pct = float((put.ask - put.bid) / put.mid if put.mid > 0 else 999.0)
-        
-        metrics['call_spread_pct'] = call_spread_pct
-        metrics['put_spread_pct'] = put_spread_pct
-        metrics['avg_spread_pct'] = (call_spread_pct + put_spread_pct) / 2
-        
-        # Check call spread
-        if call_spread_pct > self.max_spread_pct:
-            return False, f'wide_call_spread_{call_spread_pct:.1%}', metrics
-        
-        # Check put spread
-        if put_spread_pct > self.max_spread_pct:
-            return False, f'wide_put_spread_{put_spread_pct:.1%}', metrics
-        
-        call_vol = int(call.volume or 0)
-        put_vol  = int(put.volume or 0)
-
-        if call_vol < self.min_volume or put_vol < self.min_volume:
-            return False, f'low_volume_c{call_vol}_p{put_vol}', metrics
-        
-        # Check volume
-        #if call.volume < self.min_volume or put.volume < self.min_volume:
-        call_oi = int(call.open_interest or 0)
-        put_oi  = int(put.open_interest or 0)
-
-        if call_oi < self.min_oi or put_oi < self.min_oi:
-            return False, f'low_oi_c{call_oi}_p{put_oi}', metrics        
-        
-        return True, 'ok', metrics
-    
-    def calculate_realized_volatility(
-        self, 
-        entry_spot: float, 
-        exit_spot: float, 
-        days_held: int
-    ) -> Optional[float]:
-        """
-        Calculate annualized realized volatility.
-        
-        Formula: RV = |log(S_exit / S_entry)| * sqrt(252 / days_held)
-        
-        Args:
-            entry_spot: Spot price at entry
-            exit_spot: Spot price at exit
-            days_held: Number of days held
-        
-        Returns:
-            Annualized realized volatility, or None if invalid inputs
-        """
-        if entry_spot <= 0 or exit_spot <= 0 or days_held <= 0:
-            return None
-        
-        log_return = abs(np.log(exit_spot / entry_spot))
-        annualization_factor = np.sqrt(252 / days_held)
-        realized_vol = log_return * annualization_factor
-        
-        return float(realized_vol)
+        return metrics
     
     def _find_best_expiry(
         self,
@@ -305,8 +250,6 @@ class StraddleHistoryBuilder:
             'spot_move_pct': None,
             'realized_volatility': None,
             'iv_rv_spread': None,
-            'expected_move': None,
-            'move_vs_expected': None,
             'is_tradeable': False,
             'failure_reason': None,
             'call_spread_pct': None,
@@ -378,13 +321,12 @@ class StraddleHistoryBuilder:
             result['expiry_date'] = call_leg.option.expiry_date
             result['dte_actual'] = (call_leg.option.expiry_date - entry_date).days
             
-            # Check tradeability
-            is_tradeable, failure_reason, liquidity_metrics = self.check_tradeability(
+            # Record liquidity metrics (provider already filtered for liquidity)
+            liquidity_metrics = self.record_liquidity_metrics(
                 call_leg.option, put_leg.option
             )
-            result['is_tradeable'] = is_tradeable
-            result['failure_reason'] = failure_reason
             result.update(liquidity_metrics)
+            result['is_tradeable'] = True  # Provider already filtered
             
             # Get spot price at expiry
             exit_spot = self.provider.get_spot_price(ticker, call_leg.option.expiry_date)
@@ -394,15 +336,22 @@ class StraddleHistoryBuilder:
             
             result['exit_spot'] = float(exit_spot)
             
-            # Calculate P&L
-            # For long straddle: P&L = (intrinsic_value_at_expiry - entry_cost)
-            call_intrinsic = call_leg.calculate_intrinsic_value(exit_spot)
-            put_intrinsic = put_leg.calculate_intrinsic_value(exit_spot)
-            exit_value = call_intrinsic + put_intrinsic
+            # Calculate P&L using Position model (tested, correct)
+            exit_value = strategy.calculate_payoff({expiry_date: exit_spot})
+            position = Position(
+                ticker=ticker,
+                entry_date=entry_date,
+                strategy=strategy,
+                quantity=1.0,  # Single unit
+                entry_cost=strategy.net_premium,
+                exit_date=expiry_date,
+                exit_value=exit_value,
+                metadata={}
+            )
             
-            result['exit_value'] = float(exit_value)
-            result['pnl'] = float(exit_value) - result['entry_cost']
-            result['return_pct'] = (result['pnl'] / result['entry_cost']) * 100 if result['entry_cost'] > 0 else None
+            result['exit_value'] = float(position.exit_value)
+            result['pnl'] = float(position.pnl)
+            result['return_pct'] = position.pnl_pct * 100 if position.pnl_pct is not None else None
             
             # Calculate annualized return
             days_held = result['dte_actual']
@@ -410,25 +359,21 @@ class StraddleHistoryBuilder:
             if days_held > 0 and result['return_pct'] is not None:
                 result['annualized_return'] = result['return_pct'] * (365 / days_held)
             
-            # Calculate spot move
-            result['spot_move_pct'] = ((result['exit_spot'] - result['entry_spot']) / result['entry_spot']) * 100
+            # Calculate spot move percentage
+            result['spot_move_pct'] = self.spot_db.calculate_spot_move_pct(
+                ticker, entry_date, expiry_date
+            )
+            if result['spot_move_pct'] is not None:
+                result['spot_move_pct'] *= 100  # Convert to percentage
             
-            # Calculate realized volatility
-            result['realized_volatility'] = self.calculate_realized_volatility(
-                result['entry_spot'], result['exit_spot'], days_held
+            # Calculate realized volatility using SpotPriceDB (correct formula)
+            result['realized_volatility'] = self.spot_db.calculate_realized_volatility(
+                ticker, entry_date, expiry_date
             )
             
             # Calculate IV vs RV spread
             if result['realized_volatility'] is not None:
                 result['iv_rv_spread'] = result['entry_iv'] - result['realized_volatility']
-            
-            # Calculate expected move (from IV)
-            result['expected_move'] = result['entry_iv'] * np.sqrt(days_held / 252) * result['entry_spot']
-            
-            # Calculate move vs expected
-            actual_move = abs(result['exit_spot'] - result['entry_spot'])
-            if result['expected_move'] and result['expected_move'] > 0:
-                result['move_vs_expected'] = actual_move / result['expected_move']
             
         except ValueError as e:
             # Expected errors (missing data, build failures) - don't log traceback

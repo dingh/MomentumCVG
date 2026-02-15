@@ -11,13 +11,13 @@
 | Layer | Status | Tests Written | Coverage | Time Spent | Notes |
 |-------|--------|---------------|----------|------------|-------|
 | **Layer 1: Core Models** | ✅ Complete | 45/45 | 100% | __h / 15h | All model classes tested |
-| **Layer 2: Builders & Analyzers** | 🟡 In Progress | 14/33 | 42% | __h / 18h | StraddleBuilder ✅, Analyzer + SpotDB pending |
+| **Layer 2: Builders & Analyzers** | 🟡 In Progress | 26/33 | 79% | __h / 18h | StraddleBuilder ✅, SpotPriceDB ✅, Analyzer pending |
 | **Layer 3: Feature Calculators** | ⬜ Not Started | 0/14 | 0% | 0h / 8h | Momentum + CVG calculators |
 | **Layer 4: Optimizer** | ⬜ Not Started | 0/12 | 0% | 0h / 12h | |
 | **Layer 5: Executor** | ⬜ Not Started | 0/6 | 0% | 0h / 4h | |
 | **Layer 6: Strategy** | ⬜ Not Started | 0/10 | 0% | 0h / 8h | |
 | **Setup & Infrastructure** | ✅ Complete | - | - | __h / 5h | pytest.ini + conftest.py |
-| **TOTAL** | **47%** | **59/125** | **~47%** | **__h / 70h** | |
+| **TOTAL** | **57%** | **71/125** | **~57%** | **__h / 70h** | |
 
 **Status Legend:** ⬜ Not Started | 🟡 In Progress | ✅ Complete | ⚠️ Blocked
 
@@ -142,25 +142,26 @@
 
 **Coverage Target:** 85% | **Actual:** ___%
 
-### SpotPriceDB (6h)
+### SpotPriceDB (6h) ✅
 #### Loading and Initialization
-- [ ] `test_load_from_parquet` - Load from parquet file with auto-detection
-- [ ] `test_load_from_csv` - Load from CSV file with auto-detection
-- [ ] `test_init_creates_multi_index` - Multi-index (date, ticker) for O(1) lookups
-- [ ] `test_init_caches_metadata` - Stores tickers, date_range, record count
+- [x] `test_load_from_parquet` - Load from parquet file with auto-detection
+- [x] `test_load_from_csv` - Load from CSV file with auto-detection
+- [x] `test_init_creates_multi_index` - Multi-index (date, ticker) for O(1) lookups
+- [x] `test_init_caches_metadata` - Stores tickers, date_range, record count
 
 #### Spot Price Lookups
-- [ ] `test_get_spot_found` - Returns spot price when exists
-- [ ] `test_get_spot_not_found` - Returns None for missing ticker/date
-- [ ] `test_get_daily_spots_valid_range` - Returns series of daily spots
-- [ ] `test_get_daily_spots_missing_ticker` - Returns empty series
+- [x] `test_get_spot_found` - Returns spot price when exists (4 test cases)
+- [x] `test_get_spot_not_found` - Returns None for missing ticker/date (4 edge cases)
+- [x] `test_get_daily_spots_valid_range` - Returns series of daily spots
+- [x] `test_get_daily_spots_missing_ticker` - Returns empty series
 
 #### Volatility Calculations (CRITICAL - Correct RV implementation)
-- [ ] `test_calculate_realized_volatility_sufficient_data` - Correct RV using daily returns
-- [ ] `test_calculate_realized_volatility_insufficient_data` - Returns None with < min_observations
-- [ ] `test_calculate_spot_move_pct` - Percentage move calculation
+- [x] `test_calculate_realized_volatility_sufficient_data` - Correct RV using sqrt(252 * mean(r^2))
+- [x] `test_calculate_realized_volatility_insufficient_data` - Returns None with < min_observations (4 cases)
+- [x] `test_calculate_spot_move_pct` - Percentage move calculation (5 test cases)
+- [x] `test_get_ticker_availability` - Returns metadata (first, last, count) (4 cases)
 
-**Coverage Target:** 90% | **Actual:** ___%
+**Coverage Target:** 90% | **Actual:** 100% ✅
 
 ---
 
