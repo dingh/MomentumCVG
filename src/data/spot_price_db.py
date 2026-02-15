@@ -178,13 +178,16 @@ class SpotPriceDB:
         min_observations: int = 3
     ) -> Optional[float]:
         """
-        Calculate annualized realized volatility using daily returns.
+        Calculate annualized realized volatility using sum of squared returns.
         
-        This is the CORRECT method for RV:
+        Uses standard realized variance formula: RV = sqrt(252 * mean(r_t^2))
+        where r_t are daily log returns. This assumes zero mean, which is
+        standard practice in realized volatility literature.
+        
+        Steps:
         1. Get daily spot prices over period
         2. Calculate daily log returns: ln(S_t / S_{t-1})
-        3. Calculate standard deviation of returns
-        4. Annualize: std * sqrt(252)
+        3. Calculate RV: sqrt(252 * mean(returns^2))
         
         Args:
             ticker: Stock ticker
@@ -221,11 +224,9 @@ class SpotPriceDB:
         if len(daily_returns) < (min_observations - 1):
             return None
         
-        # Calculate standard deviation of daily returns
-        std_daily = daily_returns.std()
-        
-        # Annualize (252 trading days per year)
-        rv = std_daily * np.sqrt(252)
+        # Realized volatility: sqrt(252 * mean of squared returns)
+        # Standard RV formula assuming zero mean for daily returns
+        rv = np.sqrt(252 * np.mean(daily_returns.values**2))
         
         return float(rv)
     

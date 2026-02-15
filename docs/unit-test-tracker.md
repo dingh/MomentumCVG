@@ -11,13 +11,13 @@
 | Layer | Status | Tests Written | Coverage | Time Spent | Notes |
 |-------|--------|---------------|----------|------------|-------|
 | **Layer 1: Core Models** | ✅ Complete | 45/45 | 100% | __h / 15h | All model classes tested |
-| **Layer 2: Builders & Analyzers** | 🟡 In Progress | 14/22 | 64% | __h / 12h | StraddleBuilder ✅, StraddleAnalyzer pending |
+| **Layer 2: Builders & Analyzers** | 🟡 In Progress | 14/33 | 42% | __h / 18h | StraddleBuilder ✅, Analyzer + SpotDB pending |
 | **Layer 3: Feature Calculators** | ⬜ Not Started | 0/14 | 0% | 0h / 8h | Momentum + CVG calculators |
 | **Layer 4: Optimizer** | ⬜ Not Started | 0/12 | 0% | 0h / 12h | |
 | **Layer 5: Executor** | ⬜ Not Started | 0/6 | 0% | 0h / 4h | |
 | **Layer 6: Strategy** | ⬜ Not Started | 0/10 | 0% | 0h / 8h | |
 | **Setup & Infrastructure** | ✅ Complete | - | - | __h / 5h | pytest.ini + conftest.py |
-| **TOTAL** | **52%** | **59/114** | **~52%** | **__h / 64h** | |
+| **TOTAL** | **47%** | **59/125** | **~47%** | **__h / 70h** | |
 
 **Status Legend:** ⬜ Not Started | 🟡 In Progress | ✅ Complete | ⚠️ Blocked
 
@@ -94,11 +94,15 @@
 
 ---
 
-## Layer 2: Builders & Analyzers (12h estimated)
-**File:** `tests/unit/test_builders.py`  
+## Layer 2: Builders & Analyzers (18h estimated)
+**Files:** 
+- `tests/unit/test_builders.py` (StraddleBuilder + StraddleAnalyzer)
+- `tests/unit/test_spot_price_db.py` (SpotPriceDB)
+
 **Targets:** 
 - [src/strategy/builders.py](../../src/strategy/builders.py)
 - [src/features/straddle_analyzer.py](../../src/features/straddle_analyzer.py)
+- [src/data/spot_price_db.py](../../src/data/spot_price_db.py)
 
 ### StraddleBuilder (6h) ✅
 #### Happy Path Tests
@@ -137,6 +141,26 @@
 - [ ] `test_build_straddle_liquidity_filter` - Rejects wide spreads, low volume
 
 **Coverage Target:** 85% | **Actual:** ___%
+
+### SpotPriceDB (6h)
+#### Loading and Initialization
+- [ ] `test_load_from_parquet` - Load from parquet file with auto-detection
+- [ ] `test_load_from_csv` - Load from CSV file with auto-detection
+- [ ] `test_init_creates_multi_index` - Multi-index (date, ticker) for O(1) lookups
+- [ ] `test_init_caches_metadata` - Stores tickers, date_range, record count
+
+#### Spot Price Lookups
+- [ ] `test_get_spot_found` - Returns spot price when exists
+- [ ] `test_get_spot_not_found` - Returns None for missing ticker/date
+- [ ] `test_get_daily_spots_valid_range` - Returns series of daily spots
+- [ ] `test_get_daily_spots_missing_ticker` - Returns empty series
+
+#### Volatility Calculations (CRITICAL - Correct RV implementation)
+- [ ] `test_calculate_realized_volatility_sufficient_data` - Correct RV using daily returns
+- [ ] `test_calculate_realized_volatility_insufficient_data` - Returns None with < min_observations
+- [ ] `test_calculate_spot_move_pct` - Percentage move calculation
+
+**Coverage Target:** 90% | **Actual:** ___%
 
 ---
 
