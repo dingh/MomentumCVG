@@ -35,6 +35,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.features.straddle_analyzer import StraddleHistoryBuilder
+from src.data.spot_price_db import SpotPriceDB
 
 
 # HARDCODED CONFIGURATION
@@ -50,6 +51,7 @@ SP500_FILE = Path('C:/ORATS/data/meta_data/SP500.csv')
 
 def process_date_batch(
     data_root: str,
+    spot_db_path: str,
     trade_date: datetime,
     tickers: List[str]
 ) -> List[Dict]:
@@ -63,19 +65,20 @@ def process_date_batch(
     
     Args:
         data_root: Path to ORATS data
-        dte_target: Target DTE
+        spot_db_path: Path to SpotPriceDB parquet file
         trade_date: Trade date to process
         tickers: List of tickers to process
-        max_spread_pct: Max spread filter
-        min_volume: Min volume filter
-        min_oi: Min OI filter
     
     Returns:
         List of result dictionaries (one per ticker)
     """
+    # Load SpotPriceDB once per worker (shared across all tickers)
+    spot_db = SpotPriceDB.load(spot_db_path)
+    
     # Create builder for this worker (gets its own cache)
     builder = StraddleHistoryBuilder(
         data_root=data_root,
+        spot_db=spot_db,
         dte_target=DTE_TARGET,
         max_spread_pct=MAX_SPREAD_PCT,
         min_volume=MIN_VOLUME,
@@ -256,6 +259,15 @@ def main():
     
     args = parser.parse_args()
     
+    # SpotPriceDB path (required dependency)
+    SPOT_DB_PATH = 'C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet'
+    
+    # Verify SpotPriceDB exists before starting
+    if not Path(SPOT_DB_PATH).exists():
+        logger.error(f"SpotPriceDB not found: {SPOT_DB_PATH}")
+        logger.error("Please run scripts/extract_spot_prices.py first!")
+        return
+    
     # Create output directories
     Path('cache').mkdir(exist_ok=True)
     Path('logs').mkdir(exist_ok=True)
@@ -263,6 +275,7 @@ def main():
     logger.info("="*80)
     logger.info("Starting weekly straddle history precomputation")
     logger.info("="*80)
+    logger.info(f"Using SpotPriceDB: {SPOT_DB_PATH}")
     
     # Load tickers from SP500.csv
     if not SP500_FILE.exists():
@@ -295,8 +308,10 @@ def main():
     logger.info("PARALLEL PROCESSING CONFIGURATION")
     logger.info("="*80)
     logger.info(f"Workers: {N_WORKERS} parallel jobs")
-    logger.info(f"Cache per worker: 5 dates × 50MB = 250MB")
-    logger.info(f"Total memory budget: {N_WORKERS} × 250MB = {N_WORKERS * 0.25:.1f}GB")
+    logger.info(f"SpotPriceDB per worker: ~15MB (pre-loaded)")
+    logger.info(f"ORATS cache per worker: 2 dates × 50MB = 100MB")
+    logger.info(f"Total memory per worker: ~115MB")
+    logger.info(f"Total memory budget: {N_WORKERS} × 115MB = {N_WORKERS * 0.115:.1f}GB")
     logger.info(f"Strategy: Date batching (process all tickers per date in one worker)")
     logger.info(f"Expected cache hit rate: 95%+ (2 dates active per batch: entry + expiry)")
     logger.info("="*80)
@@ -308,6 +323,7 @@ def main():
     all_results = Parallel(n_jobs=N_WORKERS, backend='loky', verbose=0)(
         delayed(process_date_batch)(
             args.data_root,
+            SPOT_DB_PATH,
             trade_date.date(),
             tickers
         )

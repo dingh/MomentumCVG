@@ -1,9 +1,3 @@
-"""
-Straddle analysis and historical data generation.
-
-This module provides tools for analyzing straddle performance and
-building historical databases for momentum strategies.
-"""
 
 import logging
 from datetime import datetime, date
@@ -22,7 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 class StraddleHistoryBuilder:
-    """Build historical straddle database for momentum strategy."""
+    """Build historical straddle database for momentum strategy.
+        This module provides tools for analyzing straddle performance and building historical databases for momentum strategies.
+    """
     
     def __init__(
         self,
