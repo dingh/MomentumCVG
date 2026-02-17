@@ -12,8 +12,6 @@ Features computed per window:
 - sum: Cumulative return
 - count: Number of observations
 - std: Return volatility
-- sharpe: Risk-adjusted return (mean/std)
-- win_rate: Percentage of profitable trades
 
 Example:
     >>> from src.features.base import FeatureDataContext
@@ -45,13 +43,22 @@ class MomentumCalculator:
     Calculate momentum features from historical straddle returns.
     
     Implements IFeatureCalculator protocol to compute windowed momentum
-    statistics (mean, std, sharpe, win rate, etc.) from realized returns.
+    statistics (mean, sum, count, std) using row-based lookback.
+    
+    **Important:** Works with sparse data. Each ticker has its own timeline
+    of trades which may have gaps due to IPO dates, delistings, liquidity
+    issues, or missing data. Rolling windows use row-based lookback (not
+    calendar weeks):
+    
+    - Window (12, 2) at position 14 uses rows [2, 3, ..., 12] from ticker's history
+    - These 11 rows may span varying calendar time depending on data gaps
+    - Features are NaN if count < min_periods observations
     
     Attributes:
         windows: List of (max_lag, min_lag) tuples defining lookback periods.
-            Example: [(12, 2)] means use returns from t-12 to t-2 weeks.
+            Example: [(12, 2)] means use returns from position t-12 to t-2.
         min_periods: Minimum observations required for valid calculation.
-            Default 3 ensures at least 3 trades before computing momentum.
+            Default 1 allows single observation; use 3+ for stable statistics.
     
     Example:
         >>> calculator = MomentumCalculator(
@@ -59,9 +66,8 @@ class MomentumCalculator:
         ...     min_periods=3
         ... )
         >>> calculator.feature_names
-        ['mom_12_2_mean', 'mom_12_2_sum', 'mom_12_2_count', 
-         'mom_12_2_std', 'mom_12_2_sharpe', 'mom_12_2_win_rate',
-         'mom_8_1_mean', 'mom_8_1_sum', ...]
+        ['mom_12_2_mean', 'mom_12_2_sum', 'mom_12_2_count', 'mom_12_2_std',
+         'mom_8_1_mean', 'mom_8_1_sum', 'mom_8_1_count', 'mom_8_1_std']
     """
     
     def __init__(
@@ -112,8 +118,7 @@ class MomentumCalculator:
         Example:
             >>> calculator = MomentumCalculator(windows=[(12, 2)])
             >>> calculator.feature_names
-            ['mom_12_2_mean', 'mom_12_2_sum', 'mom_12_2_count',
-             'mom_12_2_std', 'mom_12_2_sharpe', 'mom_12_2_win_rate']
+            ['mom_12_2_mean', 'mom_12_2_sum', 'mom_12_2_count', 'mom_12_2_std']
         """
         names = []
         for max_lag, min_lag in self.windows:
@@ -122,9 +127,7 @@ class MomentumCalculator:
                 f'{prefix}_mean',      # Average return
                 f'{prefix}_sum',       # Cumulative return
                 f'{prefix}_count',     # Number of observations
-                f'{prefix}_std',       # Volatility
-                f'{prefix}_sharpe',    # Risk-adjusted return
-                f'{prefix}_win_rate'   # % profitable trades
+                f'{prefix}_std'        # Volatility
             ])
         return names
     
@@ -148,17 +151,20 @@ class MomentumCalculator:
         Calculate momentum features for specified tickers at a single date.
         
         Uses row-based lookback (same as rolling windows in calculate_bulk).
-        Assumes history has continuous weekly rows (NaN for weeks without trades).
+        Works with sparse data - tickers may have gaps in their history due to
+        IPO dates, delistings, or data quality issues.
         
         Args:
             context: Data context containing 'straddle_history' DataFrame with:
                 - ticker (str): Stock ticker
-                - entry_date (datetime): Trade entry date (weekly)
-                - return_pct (float): Realized return percentage (NaN if no trade)
+                - entry_date (datetime/date): Trade entry date (sparse, not all dates)
+                - return_pct (float): Realized return percentage
                 
-            date: Target date for feature calculation
+            date: Target date for feature calculation (datetime or pandas Timestamp).
+                  Compared against entry_date using <= (includes target date).
             
-            tickers: List of ticker symbols to calculate features for
+            tickers: List of ticker symbols to calculate features for. Tickers
+                     with insufficient history will have NaN features.
             
         Returns:
             DataFrame with columns:
@@ -168,8 +174,6 @@ class MomentumCalculator:
                 - mom_{w1}_{w2}_sum: Cumulative return
                 - mom_{w1}_{w2}_count: Number of non-NaN observations
                 - mom_{w1}_{w2}_std: Return volatility
-                - mom_{w1}_{w2}_sharpe: Risk-adjusted return
-                - mom_{w1}_{w2}_win_rate: % profitable trades
                 
             NaN values indicate insufficient data (< min_periods observations).
             
@@ -250,9 +254,7 @@ class MomentumCalculator:
                         f'{prefix}_mean': np.nan,
                         f'{prefix}_sum': np.nan,
                         f'{prefix}_count': 0,
-                        f'{prefix}_std': np.nan,
-                        f'{prefix}_sharpe': np.nan,
-                        f'{prefix}_win_rate': np.nan
+                        f'{prefix}_std': np.nan
                     })
                     continue
                 
@@ -292,9 +294,7 @@ class MomentumCalculator:
             f'{prefix}_mean': np.nan,
             f'{prefix}_sum': np.nan,
             f'{prefix}_count': count,
-            f'{prefix}_std': np.nan,
-            f'{prefix}_sharpe': np.nan,
-            f'{prefix}_win_rate': np.nan
+            f'{prefix}_std': np.nan
         }
         
         # Need minimum observations for valid statistics
@@ -306,19 +306,11 @@ class MomentumCalculator:
         sum_return = np.sum(returns)
         std_return = np.std(returns, ddof=1) if count > 1 else 0.0
         
-        # Win rate: % of positive returns
-        win_rate = np.sum(returns > 0) / count * 100
-        
-        # Sharpe ratio: mean/std (handle zero std)
-        sharpe = mean_return / std_return if std_return > 0 else np.nan
-        
         # Update features
         features.update({
             f'{prefix}_mean': mean_return,
             f'{prefix}_sum': sum_return,
-            f'{prefix}_std': std_return,
-            f'{prefix}_sharpe': sharpe,
-            f'{prefix}_win_rate': win_rate
+            f'{prefix}_std': std_return
         })
         
         return features
@@ -333,13 +325,13 @@ class MomentumCalculator:
         """
         Calculate momentum features for a date range efficiently (vectorized).
         
-        Uses pandas rolling windows + shift (same as add_momentum_features),
-        which is 20-100x faster than looping through dates.
+        Uses pandas rolling windows + shift for 20-100x speedup vs looping.
+        Works with sparse data - each ticker has its own timeline with potential gaps.
         
         Args:
             context: Data context containing 'straddle_history' DataFrame with:
                 - ticker (str): Stock ticker
-                - entry_date (datetime): Trade entry date
+                - entry_date (datetime/date): Trade entry date (sparse timeline)
                 - return_pct (float): Realized return percentage
                 
             start_date: Start date for feature calculation (inclusive)
@@ -356,8 +348,6 @@ class MomentumCalculator:
                 - mom_{max_lag}_{min_lag}_sum (float): Cumulative return
                 - mom_{max_lag}_{min_lag}_count (int): Number of observations
                 - mom_{max_lag}_{min_lag}_std (float): Return volatility
-                - mom_{max_lag}_{min_lag}_sharpe (float): Risk-adjusted return
-                - mom_{max_lag}_{min_lag}_win_rate (float): % profitable trades
                 
             One row per (ticker, date) where ticker has data in the date range.
             NaN values indicate insufficient data (< min_periods).
@@ -394,9 +384,6 @@ class MomentumCalculator:
         # Sort by ticker and date (required for rolling windows)
         history = history.sort_values(['ticker', 'entry_date'])
         
-        # Convert dates to datetime if needed
-        if not pd.api.types.is_datetime64_any_dtype(history['entry_date']):
-            history['entry_date'] = pd.to_datetime(history['entry_date'])
         
         return_col = 'return_pct'
         
@@ -440,28 +427,9 @@ class MomentumCalculator:
                 .reset_index(level=0, drop=True)
             )
             
-            # Sharpe: mean / std
-            history[f'{prefix}_sharpe'] = (
-                history[f'{prefix}_mean'] / history[f'{prefix}_std']
-            )
-            
-            # Win rate: rolling apply for % positive returns
-            def win_rate_calc(x):
-                if len(x) == 0:
-                    return np.nan
-                return (x > 0).sum() / len(x) * 100
-            
-            history[f'{prefix}_win_rate'] = (
-                grouped
-                .rolling(window=window_size, min_periods=1)
-                .apply(win_rate_calc, raw=True)
-                .shift(min_lag)
-                .reset_index(level=0, drop=True)
-            )
-            
             # Set features to NaN where count < min_periods
             mask = history[f'{prefix}_count'] < self.min_periods
-            for stat in ['mean', 'sum', 'std', 'sharpe', 'win_rate']:
+            for stat in ['mean', 'sum', 'std']:
                 history.loc[mask, f'{prefix}_{stat}'] = np.nan
         
         # Filter to target date range (inclusive)
