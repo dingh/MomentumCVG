@@ -24,8 +24,8 @@ venv/
 cache/
 results/
 logs/
-*.parquet
-*.csv
+#*.parquet
+#*.csv
 !tests/fixtures/*.csv  # Except test fixtures
 
 # OS

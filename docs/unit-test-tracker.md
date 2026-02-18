@@ -12,12 +12,12 @@
 |-------|--------|---------------|----------|------------|-------|
 | **Layer 1: Core Models** | ✅ Complete | 45/45 | 100% | __h / 15h | All model classes tested |
 | **Layer 2: Builders & Analyzers** | ✅ Complete | 37/37 | 100% | __h / 18h | StraddleBuilder ✅, SpotPriceDB ✅, Analyzer ✅ |
-| **Layer 3: Feature Calculators** | ⬜ Not Started | 0/14 | 0% | 0h / 8h | Momentum + CVG calculators |
+| **Layer 3: Feature Calculators** | 🟡 In Progress | 7/52 | ~13% | __h / 8h | MomentumCalculator: Init ✅, rest stubs; CVG not started |
 | **Layer 4: Optimizer** | ⬜ Not Started | 0/12 | 0% | 0h / 12h | |
 | **Layer 5: Executor** | ⬜ Not Started | 0/6 | 0% | 0h / 4h | |
 | **Layer 6: Strategy** | ⬜ Not Started | 0/10 | 0% | 0h / 8h | |
 | **Setup & Infrastructure** | ✅ Complete | - | - | __h / 5h | pytest.ini + conftest.py |
-| **TOTAL** | **67%** | **82/122** | **~67%** | **__h / 70h** | |
+| **TOTAL** | **54%** | **89/162** | **~54%** | **__h / 70h** | |
 
 **Status Legend:** ⬜ Not Started | 🟡 In Progress | ✅ Complete | ⚠️ Blocked
 
@@ -177,23 +177,77 @@
 ---
 
 ## Layer 3: Feature Calculators (8h estimated)
-**File:** `tests/unit/test_features.py`  
+**File:** `tests/unit/test_momentum_calculator.py`  
 **Targets:**
 - [src/features/momentum_calculator.py](../../src/features/momentum_calculator.py)
 - [src/features/cvg_calculator.py](../../src/features/cvg_calculator.py)
 
-### MomentumCalculator (4h)
-- [ ] `test_calculate_momentum_single_window` - mom_8_4 calculation
-- [ ] `test_calculate_momentum_multiple_windows` - Multiple lag ranges
-- [ ] `test_calculate_momentum_insufficient_data` - Returns NaN for short history
-- [ ] `test_calculate_momentum_missing_values` - Handles gaps in data
-- [ ] `test_calculate_momentum_zero_denominator` - Handles division by zero
-- [ ] `test_momentum_aggregation_mean` - Mean of window returns
-- [ ] `test_momentum_aggregation_median` - Alternative aggregation
+### MomentumCalculator (4h) — 7/45 ✅
+
+#### TestMomentumCalculatorInit ✅ (7/7)
+- [x] `test_init_default_parameters` - Default window [(12,2)], min_periods=1, 4 feature names
+- [x] `test_init_custom_windows` - 3 windows → 12 features (4 stats × 3 windows)
+- [x] `test_init_invalid_window_max_equal_to_min` - ValueError when max_lag == min_lag
+- [x] `test_init_invalid_window_max_less_than_min` - ValueError when max_lag < min_lag
+- [x] `test_init_invalid_window_negative_min_lag` - ValueError when min_lag < 0
+- [x] `test_feature_names_order_consistent` - Stats grouped by window, in order: mean, sum, count, std
+- [x] `test_required_data_sources` - Returns ['straddle_history']
+
+#### TestWindowFeatureCalculation (0/6)
+- [ ] `test_calculate_window_features_basic` - [10,20,30,40,50] → mean=30, sum=150, std≈15.81
+- [ ] `test_calculate_window_features_with_nan` - [10,NaN,20,NaN,30] → count=3, mean=20
+- [ ] `test_calculate_window_features_insufficient_data` - 2 returns, min_periods=3 → NaN (count=2)
+- [ ] `test_calculate_window_features_single_observation` - min_periods=1, [25.5] → std=0.0
+- [ ] `test_calculate_window_features_negative_returns` - [-10,-20,-30,5,10] → mean=-9, sum=-45
+- [ ] `test_calculate_window_features_all_nan` - [NaN,NaN,NaN] → count=0, rest NaN
+
+#### TestCalculateSingleDate (0/9)
+- [ ] `test_calculate_basic_single_ticker` - AAPL at week 20, window covers 11 rows
+- [ ] `test_calculate_multiple_tickers` - [AAPL, TSLA, UBER] at week 40, 3 rows returned
+- [ ] `test_calculate_ticker_not_in_history` - XYZ → 1 row, all NaN
+- [ ] `test_calculate_date_not_in_history` - Missing date → all NaN
+- [ ] `test_calculate_boundary_early_position` - Week 5, window clamped, partial data
+- [ ] `test_calculate_boundary_collapsed_window` - Week 1, end_idx < start_idx → count=0
+- [ ] `test_calculate_empty_history` - Empty DataFrame → 2 rows, all NaN
+- [ ] `test_calculate_uppercase_ticker_conversion` - ['aapl'] matches 'AAPL' in history
+- [ ] `test_calculate_with_nan_returns_excluded` - ADP sparse NaN → count reflects non-NaN only
+
+#### TestCalculateBulk (0/8)
+- [ ] `test_calculate_bulk_single_ticker` - AAPL weeks 20-30 → 11 rows
+- [ ] `test_calculate_bulk_multiple_tickers` - [AAPL, TSLA] weeks 20-30 → 22 rows
+- [ ] `test_calculate_bulk_all_tickers` - tickers=None → all 4 tickers
+- [ ] `test_calculate_bulk_date_filtering` - Only dates in [start, end] returned
+- [ ] `test_calculate_bulk_empty_date_range` - Future dates → empty DataFrame
+- [ ] `test_calculate_bulk_sparse_data` - Sparse history → only actual dates returned
+- [ ] `test_calculate_bulk_output_schema` - Columns: ticker, date, mom_* (no entry_date)
+- [ ] `test_calculate_bulk_ticker_uppercase_conversion` - ['aapl'] matched correctly
+
+#### TestMultipleWindows (0/4)
+- [ ] `test_multiple_windows_feature_count` - 3 windows → 12 features
+- [ ] `test_multiple_windows_calculate` - All 12 columns present, values differ per window
+- [ ] `test_multiple_windows_calculate_bulk` - Bulk with 3 windows → 12 columns
+- [ ] `test_multiple_windows_different_min_periods` - Short window valid before long window
+
+#### TestConsistency (0/3)
+- [ ] `test_calculate_vs_bulk_single_date_single_ticker` - calculate() == calculate_bulk() for same input
+- [ ] `test_calculate_vs_bulk_multiple_dates` - Loop of calculate() matches calculate_bulk() for 10 dates
+- [ ] `test_bulk_with_ticker_filter_matches_all_tickers` - Filtered bulk == unfiltered bulk
+
+#### TestEdgeCases (0/6)
+- [ ] `test_empty_ticker_list` - tickers=[] → empty DataFrame with schema
+- [ ] `test_date_before_all_history` - Pre-2019 date → all NaN
+- [ ] `test_single_return_in_window` - min_periods=1, 1 return → std=0.0
+- [ ] `test_all_returns_identical` - [10,10,10,10,10] → std=0.0
+- [ ] `test_very_large_returns` - [10000,20000,30000] → no overflow
+- [ ] `test_date_type_datetime_vs_date` - Both datetime and date objects accepted
+
+#### TestPerformance (0/2)
+- [ ] `test_bulk_faster_than_loop` - calculate_bulk() ≥5× faster than loop of calculate()
+- [ ] `test_bulk_memory_efficient` - Output memory < 10MB for 10k rows
 
 **Coverage Target:** 90% | **Actual:** ___%
 
-### CVGCalculator (4h)
+### CVGCalculator (4h) — 0/7
 - [ ] `test_calculate_cvg_continuous_gains` - Positive CVG score
 - [ ] `test_calculate_cvg_continuous_losses` - Negative CVG score
 - [ ] `test_calculate_cvg_mixed_performance` - Lower CVG with reversals

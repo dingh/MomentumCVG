@@ -12,6 +12,7 @@ Tests cover:
 """
 
 import pytest
+from pathlib import Path
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 import pandas as pd
@@ -31,30 +32,24 @@ def sample_straddle_history():
     """
     Create sample straddle history with dense date structure (no gaps).
     
+    Loaded from tests/fixtures/sample_straddle_history.csv - real 2019 data.
+    
     Returns DataFrame with columns:
-        - ticker: Stock ticker (AAPL, TSLA, UBER)
+        - ticker: Stock ticker (AAPL, TSLA, UBER, ADP)
         - entry_date: Trade entry dates (weekly Fridays, ALL dates present)
         - return_pct: Realized return percentage (NaN for weeks without trades)
         
     Data characteristics:
-        - ALL tickers have rows for ALL 52 weeks (dense structure)
-        - AAPL: Full valid data (52 weeks), no NaN returns
-        - TSLA: Full rows (52 weeks), some return_pct = NaN (weeks without trades)
-        - UBER: Full rows (52 weeks), but return_pct = NaN before week 33 (pre-IPO)
-        
-    This matches actual straddle_history format where dates are continuous
-    for all tickers, but return_pct is NaN when ticker didn't exist or no trade.
-    
-    TODO: Implement with realistic return patterns for testing
+        - ALL tickers have rows for ALL ~52 weeks (dense structure)
+        - AAPL: Valid returns for all weeks
+        - TSLA: Valid returns for all weeks
+        - ADP: Valid returns with some NaN scattered
+        - UBER: return_pct = NaN before 2019-05-31 (pre-IPO), valid after
     """
-    # TODO: Create DataFrame with:
-    # - 52 weeks of data (2023-01-06 to 2024-01-05)
-    # - All tickers have ALL 52 rows (no missing dates)
-    # - AAPL: return_pct values for all 52 weeks
-    # - TSLA: return_pct with some NaN scattered (e.g., weeks 5, 15, 25, 35, 45)
-    # - UBER: return_pct = NaN for weeks 0-32, valid values weeks 33-51 (IPO at week 33)
-    # - Mix of positive/negative returns for valid data
-    pass
+    fixtures_dir = Path(__file__).parent.parent / 'fixtures'
+    df = pd.read_csv(fixtures_dir / 'sample_straddle_history.csv')
+    df['entry_date'] = pd.to_datetime(df['entry_date'])
+    return df
 
 
 @pytest.fixture
@@ -69,13 +64,14 @@ def sample_straddle_history_all_nan():
         - XYZ: Has rows for all 52 weeks, but ALL return_pct = NaN
         
     Use case: Test handling of tickers with no valid data to calculate momentum.
-    
-    TODO: Implement edge case history
     """
-    # TODO: Create DataFrame with:
-    # - 52 weeks of data
-    # - Ticker 'XYZ' with all return_pct = NaN
-    pass
+    fixtures_dir = Path(__file__).parent.parent / 'fixtures'
+    df = pd.read_csv(fixtures_dir / 'sample_straddle_history.csv')
+    df['entry_date'] = pd.to_datetime(df['entry_date'])
+    # Take all unique dates from AAPL and create XYZ rows with all NaN returns
+    dates = df[df['ticker'] == 'AAPL']['entry_date'].values
+    xyz_rows = pd.DataFrame({'ticker': 'XYZ', 'entry_date': dates, 'return_pct': np.nan})
+    return pd.concat([df, xyz_rows], ignore_index=True)
 
 
 @pytest.fixture
@@ -88,11 +84,8 @@ def feature_context(sample_straddle_history):
         
     Returns:
         FeatureDataContext instance with 'straddle_history' data source
-    
-    TODO: Implement context wrapper
     """
-    # TODO: Create FeatureDataContext({'straddle_history': sample_straddle_history})
-    pass
+    return FeatureDataContext({'straddle_history': sample_straddle_history})
 
 
 @pytest.fixture
@@ -103,11 +96,8 @@ def momentum_calculator():
     Configuration:
         - windows: [(12, 2)] - Single 11-week window from t-12 to t-2
         - min_periods: 3 - Require at least 3 observations
-    
-    TODO: Implement standard calculator instance
     """
-    # TODO: return MomentumCalculator(windows=[(12, 2)], min_periods=3)
-    pass
+    return MomentumCalculator(windows=[(12, 2)], min_periods=3)
 
 
 @pytest.fixture
@@ -118,11 +108,8 @@ def momentum_calculator_multi_window():
     Configuration:
         - windows: [(12, 2), (8, 1), (20, 4)] - Three different windows
         - min_periods: 3
-    
-    TODO: Implement multi-window calculator
     """
-    # TODO: return MomentumCalculator(windows=[(12, 2), (8, 1), (20, 4)], min_periods=3)
-    pass
+    return MomentumCalculator(windows=[(12, 2), (8, 1), (20, 4)], min_periods=3)
 
 
 @pytest.fixture
@@ -133,11 +120,8 @@ def momentum_calculator_no_min():
     Configuration:
         - windows: [(12, 2)]
         - min_periods: 1 - Allow single observation
-    
-    TODO: Implement permissive calculator
     """
-    # TODO: return MomentumCalculator(windows=[(12, 2)], min_periods=1)
-    pass
+    return MomentumCalculator(windows=[(12, 2)], min_periods=1)
 
 
 # ============================================================================
@@ -156,11 +140,13 @@ class TestMomentumCalculatorInit:
         - Default min_periods is 1
         - Feature names generated correctly
         """
-        # TODO: Create calculator with no args
-        # TODO: Assert windows == [(12, 2)]
-        # TODO: Assert min_periods == 1
-        # TODO: Assert feature_names == ['mom_12_2_mean', 'mom_12_2_sum', 'mom_12_2_count', 'mom_12_2_std']
-        pass
+        # Arrange & Act
+        calc = MomentumCalculator()
+        
+        # Assert
+        assert calc.windows == [(12, 2)]
+        assert calc.min_periods == 1
+        assert calc.feature_names == ['mom_12_2_mean', 'mom_12_2_sum', 'mom_12_2_count', 'mom_12_2_std']
     
     def test_init_custom_windows(self):
         """
@@ -168,56 +154,87 @@ class TestMomentumCalculatorInit:
         
         Verifies:
         - Custom windows stored correctly
-        - Feature names generated for all windows
+        - Feature names generated for all windows (4 stats × 3 windows = 12)
         """
-        # TODO: Create calculator with windows=[(8, 1), (12, 2), (20, 4)]
-        # TODO: Assert 12 feature names (4 stats × 3 windows)
-        # TODO: Assert feature names contain all expected patterns
-        pass
+        # Arrange & Act
+        calc = MomentumCalculator(windows=[(8, 1), (12, 2), (20, 4)], min_periods=3)
+        
+        # Assert windows stored correctly
+        assert calc.windows == [(8, 1), (12, 2), (20, 4)]
+        
+        # Assert 12 feature names (4 stats × 3 windows)
+        assert len(calc.feature_names) == 12
+        
+        # Assert all window prefixes present
+        names = calc.feature_names
+        assert 'mom_8_1_mean' in names
+        assert 'mom_12_2_mean' in names
+        assert 'mom_20_4_mean' in names
+        
+        # Assert all stats present for each window
+        for prefix in ['mom_8_1', 'mom_12_2', 'mom_20_4']:
+            for stat in ['mean', 'sum', 'count', 'std']:
+                assert f'{prefix}_{stat}' in names
+    
+    def test_init_invalid_window_max_equal_to_min(self):
+        """
+        Test validation rejects window where max_lag == min_lag.
+        
+        Verifies ValueError raised (window would have zero width).
+        """
+        # Arrange & Act & Assert
+        with pytest.raises(ValueError, match="max_lag"):
+            MomentumCalculator(windows=[(2, 2)])
     
     def test_init_invalid_window_max_less_than_min(self):
         """
-        Test validation rejects invalid window (max_lag <= min_lag).
+        Test validation rejects window where max_lag < min_lag.
         
-        Verifies ValueError raised with appropriate message.
+        Verifies ValueError raised (inverted window).
         """
-        # TODO: Assert raises ValueError when max_lag <= min_lag
-        # TODO: Test cases: (2, 2), (2, 5)
-        pass
+        # Arrange & Act & Assert
+        with pytest.raises(ValueError, match="max_lag"):
+            MomentumCalculator(windows=[(2, 5)])
     
     def test_init_invalid_window_negative_min_lag(self):
         """
         Test validation rejects negative min_lag.
         
-        Verifies ValueError raised for negative min_lag.
+        Verifies ValueError raised (would introduce look-ahead bias).
         """
-        # TODO: Assert raises ValueError for negative min_lag
-        # TODO: Test case: (12, -1)
-        pass
+        # Arrange & Act & Assert
+        with pytest.raises(ValueError, match="min_lag"):
+            MomentumCalculator(windows=[(12, -1)])
     
-    def test_feature_names_property(self):
+    def test_feature_names_order_consistent(self):
         """
-        Test feature_names property returns correct list.
+        Test feature_names property returns names in consistent order.
         
         Verifies:
-        - Correct naming pattern: mom_{max_lag}_{min_lag}_{stat}
-        - All stats included: mean, sum, count, std
-        - Order is consistent
+        - Stats grouped by window (not interleaved)
+        - Order within each window: mean, sum, count, std
         """
-        # TODO: Create calculator with windows=[(12, 2)]
-        # TODO: Assert feature_names == ['mom_12_2_mean', 'mom_12_2_sum', 'mom_12_2_count', 'mom_12_2_std']
-        pass
+        # Arrange & Act
+        calc = MomentumCalculator(windows=[(12, 2), (8, 1)])
+        names = calc.feature_names
+        
+        # Assert order: all mom_12_2 stats first, then all mom_8_1 stats
+        assert names.index('mom_12_2_mean') < names.index('mom_12_2_std')
+        assert names.index('mom_12_2_std') < names.index('mom_8_1_mean')
+        assert names.index('mom_8_1_mean') < names.index('mom_8_1_std')
     
     def test_required_data_sources(self):
         """
-        Test required_data_sources property.
+        Test required_data_sources property returns correct list.
         
         Verifies:
         - Returns ['straddle_history']
         """
-        # TODO: Create calculator
-        # TODO: Assert required_data_sources == ['straddle_history']
-        pass
+        # Arrange & Act
+        calc = MomentumCalculator()
+        
+        # Assert
+        assert calc.required_data_sources == ['straddle_history']
 
 
 # ============================================================================
