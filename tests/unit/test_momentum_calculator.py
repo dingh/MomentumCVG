@@ -85,7 +85,7 @@ def feature_context(sample_straddle_history):
     Returns:
         FeatureDataContext instance with 'straddle_history' data source
     """
-    return FeatureDataContext({'straddle_history': sample_straddle_history})
+    return FeatureDataContext(straddle_history=sample_straddle_history)
 
 
 @pytest.fixture
@@ -255,13 +255,17 @@ class TestWindowFeatureCalculation:
         - count = 5
         - std ≈ 15.81 (sample std with ddof=1)
         """
-        # TODO: Create DataFrame with return_pct = [10, 20, 30, 40, 50]
-        # TODO: Call _calculate_window_features(df, 'mom_12_2')
-        # TODO: Assert mean ≈ 30.0
-        # TODO: Assert sum ≈ 150.0
-        # TODO: Assert count == 5
-        # TODO: Assert std ≈ 15.81 (use pytest.approx)
-        pass
+        # Arrange
+        window_data = pd.DataFrame({'return_pct': [10.0, 20.0, 30.0, 40.0, 50.0]})
+        
+        # Act
+        result = momentum_calculator._calculate_window_features(window_data, 'mom_12_2')
+        
+        # Assert
+        assert result['mom_12_2_mean'] == pytest.approx(30.0)
+        assert result['mom_12_2_sum'] == pytest.approx(150.0)
+        assert result['mom_12_2_count'] == 5
+        assert result['mom_12_2_std'] == pytest.approx(15.811, rel=1e-3)
     
     def test_calculate_window_features_with_nan(self, momentum_calculator):
         """
@@ -274,10 +278,17 @@ class TestWindowFeatureCalculation:
         - count = 3 (not 5)
         - sum = 60.0
         """
-        # TODO: Create DataFrame with mixed NaN values
-        # TODO: Call _calculate_window_features
-        # TODO: Assert statistics computed only on non-NaN values
-        pass
+        # Arrange
+        window_data = pd.DataFrame({'return_pct': [10.0, np.nan, 20.0, np.nan, 30.0]})
+        
+        # Act
+        result = momentum_calculator._calculate_window_features(window_data, 'mom_12_2')
+        
+        # Assert
+        assert result['mom_12_2_count'] == 3          # NaN rows excluded
+        assert result['mom_12_2_mean'] == pytest.approx(20.0)
+        assert result['mom_12_2_sum'] == pytest.approx(60.0)
+        assert result['mom_12_2_std'] == pytest.approx(10.0)
     
     def test_calculate_window_features_insufficient_data(self, momentum_calculator):
         """
@@ -289,11 +300,17 @@ class TestWindowFeatureCalculation:
         Expected:
         - All features NaN except count=2
         """
-        # TODO: Create DataFrame with only 2 returns
-        # TODO: Call _calculate_window_features
-        # TODO: Assert mean, sum, std are NaN
-        # TODO: Assert count == 2
-        pass
+        # Arrange
+        window_data = pd.DataFrame({'return_pct': [10.0, 20.0]})
+        
+        # Act
+        result = momentum_calculator._calculate_window_features(window_data, 'mom_12_2')
+        
+        # Assert - count reported, but stats are NaN due to insufficient data
+        assert result['mom_12_2_count'] == 2
+        assert np.isnan(result['mom_12_2_mean'])
+        assert np.isnan(result['mom_12_2_sum'])
+        assert np.isnan(result['mom_12_2_std'])
     
     def test_calculate_window_features_single_observation(self, momentum_calculator_no_min):
         """
@@ -308,11 +325,17 @@ class TestWindowFeatureCalculation:
         - count = 1
         - std = 0.0 (only 1 value)
         """
-        # TODO: Use calculator with min_periods=1
-        # TODO: Create DataFrame with single return
-        # TODO: Assert mean == sum == 25.5
-        # TODO: Assert std == 0.0
-        pass
+        # Arrange
+        window_data = pd.DataFrame({'return_pct': [25.5]})
+        
+        # Act
+        result = momentum_calculator_no_min._calculate_window_features(window_data, 'mom_12_2')
+        
+        # Assert
+        assert result['mom_12_2_mean'] == pytest.approx(25.5)
+        assert result['mom_12_2_sum'] == pytest.approx(25.5)
+        assert result['mom_12_2_count'] == 1
+        assert result['mom_12_2_std'] == pytest.approx(0.0)
     
     def test_calculate_window_features_negative_returns(self, momentum_calculator):
         """
@@ -324,12 +347,17 @@ class TestWindowFeatureCalculation:
         - sum = -45.0
         - std calculated correctly (handles negatives)
         """
-        # TODO: Create DataFrame with negative returns
-        # TODO: Call _calculate_window_features
-        # TODO: Assert mean < 0
-        # TODO: Assert sum < 0
-        # TODO: Assert std > 0
-        pass
+        # Arrange
+        window_data = pd.DataFrame({'return_pct': [-10.0, -20.0, -30.0, 5.0, 10.0]})
+        
+        # Act
+        result = momentum_calculator._calculate_window_features(window_data, 'mom_12_2')
+        
+        # Assert
+        assert result['mom_12_2_mean'] == pytest.approx(-9.0)
+        assert result['mom_12_2_sum'] == pytest.approx(-45.0)
+        assert result['mom_12_2_count'] == 5
+        assert result['mom_12_2_std'] > 0
     
     def test_calculate_window_features_all_nan(self, momentum_calculator):
         """
@@ -339,10 +367,17 @@ class TestWindowFeatureCalculation:
         Expected:
         - All features NaN except count=0
         """
-        # TODO: Create DataFrame with all NaN
-        # TODO: Assert count == 0
-        # TODO: Assert all other features are NaN
-        pass
+        # Arrange
+        window_data = pd.DataFrame({'return_pct': [np.nan, np.nan, np.nan]})
+        
+        # Act
+        result = momentum_calculator._calculate_window_features(window_data, 'mom_12_2')
+        
+        # Assert
+        assert result['mom_12_2_count'] == 0
+        assert np.isnan(result['mom_12_2_mean'])
+        assert np.isnan(result['mom_12_2_sum'])
+        assert np.isnan(result['mom_12_2_std'])
 
 
 # ============================================================================
@@ -357,39 +392,56 @@ class TestCalculateSingleDate:
         Test basic momentum calculation for single ticker at one date.
         
         Given:
-        - AAPL with 30 weeks of history
-        - Calculate at week 20 (position 20)
-        - Window (12, 2): uses rows 8-18 (11 rows)
+        - AAPL at position 19 (2019-05-17), all returns valid
+        - Window (12, 2): rows 7-17 inclusive = 11 rows, all AAPL non-NaN
         
         Verifies:
         - Returns DataFrame with 1 row
         - All expected columns present
-        - Feature values are numeric (not NaN)
+        - count == 11, mean/sum/std all non-NaN
         """
-        # TODO: Get date at position 20 from sample data
-        # TODO: Call calculator.calculate(context, date, ['AAPL'])
-        # TODO: Assert result has 1 row
-        # TODO: Assert columns: ticker, date, mom_12_2_mean, mom_12_2_sum, mom_12_2_count, mom_12_2_std
-        # TODO: Assert count == 11 (or close, depending on NaN handling)
-        pass
+        # Arrange: position 19 in the fixture (0-indexed from 2019-01-04)
+        calc_date = pd.Timestamp('2019-05-17')
+        expected_cols = {'ticker', 'date', 'mom_12_2_mean', 'mom_12_2_sum',
+                         'mom_12_2_count', 'mom_12_2_std'}
+        
+        # Act
+        result = momentum_calculator.calculate(feature_context, calc_date, ['AAPL'])
+        
+        # Assert
+        assert len(result) == 1
+        assert set(result.columns) == expected_cols
+        assert result.iloc[0]['mom_12_2_count'] == 11
+        assert result.iloc[0]['mom_12_2_mean'] == pytest.approx(22.001535, rel=1e-5)
+        assert result.iloc[0]['mom_12_2_sum']  == pytest.approx(242.016881, rel=1e-5)
+        assert result.iloc[0]['mom_12_2_std']  == pytest.approx(117.347678, rel=1e-5)
     
     def test_calculate_multiple_tickers(self, momentum_calculator, feature_context):
         """
         Test momentum calculation for multiple tickers at same date.
         
         Given:
-        - Calculate for ['AAPL', 'TSLA', 'UBER'] at week 40
+        - Calculate for ['AAPL', 'TSLA', 'UBER'] at position 29 (2019-07-26)
+        - UBER IPO at position 21 (2019-05-31); window rows 17-27 include
+          4 pre-IPO NaN rows → UBER count=7, AAPL count=11
         
         Verifies:
         - Returns 3 rows (one per ticker)
-        - Each ticker has independent features
-        - UBER may have fewer observations (IPO scenario)
+        - UBER count < AAPL count (partial valid history in window)
         """
-        # TODO: Get date at position 40
-        # TODO: Call calculate with ['AAPL', 'TSLA', 'UBER']
-        # TODO: Assert result has 3 rows
-        # TODO: Assert UBER count < AAPL count (partial history)
-        pass
+        # Arrange: UBER first valid return at 2019-05-31 (position 21)
+        calc_date = pd.Timestamp('2019-07-26')
+        
+        # Act
+        result = momentum_calculator.calculate(feature_context, calc_date, ['AAPL', 'TSLA', 'UBER'])
+        
+        # Assert
+        assert len(result) == 3
+        assert set(result['ticker'].tolist()) == {'AAPL', 'TSLA', 'UBER'}
+        
+        uber_count = result.loc[result['ticker'] == 'UBER', 'mom_12_2_count'].iloc[0]
+        aapl_count = result.loc[result['ticker'] == 'AAPL', 'mom_12_2_count'].iloc[0]
+        assert uber_count < aapl_count
     
     def test_calculate_ticker_not_in_history(self, momentum_calculator, feature_context):
         """
@@ -397,113 +449,160 @@ class TestCalculateSingleDate:
         
         Given: Ticker 'XYZ' not in straddle_history
         Expected:
-        - Returns 1 row with all features NaN
-        - No error raised
+        - Returns 1 row (no error raised)
+        - All features NaN (including count, since no ticker data at all)
         """
-        # TODO: Call calculate with ['XYZ']
-        # TODO: Assert result has 1 row
-        # TODO: Assert all features are NaN
-        pass
+        # Arrange
+        calc_date = pd.Timestamp('2019-05-17')
+        
+        # Act
+        result = momentum_calculator.calculate(feature_context, calc_date, ['XYZ'])
+        
+        # Assert
+        assert len(result) == 1
+        assert result.iloc[0]['ticker'] == 'XYZ'
+        for col in momentum_calculator.feature_names:
+            assert pd.isna(result.iloc[0][col])
     
     def test_calculate_date_not_in_history(self, momentum_calculator, feature_context):
         """
-        Test calculation for date not in ticker's history.
+        Test calculation for date not present in ticker's dense history.
         
         Given:
-        - AAPL has data for weeks 1-52
-        - Request calculation at week 25 (but week 25 missing for AAPL)
+        - 2019-03-06 is a Wednesday, not in any ticker's weekly Friday history
         
         Expected:
-        - Returns 1 row with all features NaN
+        - target_rows lookup returns empty → row with all features NaN
         """
-        # TODO: Use sample_straddle_history_with_gaps fixture
-        # TODO: Call calculate for AAPL at missing date
-        # TODO: Assert all features NaN
-        pass
+        # Arrange: a Wednesday, so not in weekly-Friday fixture
+        missing_date = pd.Timestamp('2019-03-06')
+        
+        # Act
+        result = momentum_calculator.calculate(feature_context, missing_date, ['AAPL'])
+        
+        # Assert
+        assert len(result) == 1
+        for col in momentum_calculator.feature_names:
+            assert pd.isna(result.iloc[0][col])
     
     def test_calculate_boundary_early_position(self, momentum_calculator, feature_context):
         """
-        Test calculation when target position < max_lag.
+        Test calculation when target position is less than max_lag.
         
         Given:
-        - Calculate at position 5 (week 5)
-        - Window (12, 2): start_idx = 5-12 = -7 → clamped to 0
-        - Uses rows [0, 1, 2, 3] (partial window, only 4 rows)
+        - AAPL at position 5 (2019-02-08)
+        - Window (12, 2): start = 5-12 = -7 → clamped to 0; end = 5-2 = 3
+        - Covers rows [0, 1, 2, 3] = 4 rows, all AAPL returns valid
         
         Verifies:
-        - Features calculated on available data
-        - count = 4 (or fewer if NaN returns)
-        - mean/sum/std calculated correctly on partial window
+        - count == 4 (partial window, clamped at start)
+        - count(4) >= min_periods(3) → mean/std are not NaN
         """
-        # TODO: Get date at position 5
-        # TODO: Call calculate
-        # TODO: Assert count <= 4 (partial window)
-        # TODO: Assert features calculated (not NaN) if count >= min_periods
-        pass
+        # Arrange: position 5 = 2019-02-08
+        calc_date = pd.Timestamp('2019-02-08')
+        
+        # Act
+        result = momentum_calculator.calculate(feature_context, calc_date, ['AAPL'])
+        
+        # Assert
+        assert len(result) == 1
+        assert result.iloc[0]['mom_12_2_count'] == 4
+        assert not pd.isna(result.iloc[0]['mom_12_2_mean'])
+        assert not pd.isna(result.iloc[0]['mom_12_2_std'])
     
     def test_calculate_boundary_collapsed_window(self, momentum_calculator, feature_context):
         """
-        Test calculation when window collapses (end_idx <= start_idx).
+        Test calculation when min_lag pushes end_idx before start_idx.
         
         Given:
-        - Calculate at position 1 (week 1)
-        - Window (12, 2): start=0, end=1-2=-1
-        - Window is invalid (end < start)
+        - AAPL at position 1 (2019-01-11)
+        - Window (12, 2): start = 1-12 = -11 → clamped to 0; end = 1-2 = -1
+        - end(-1) <= start(0) → window collapses
         
         Expected:
-        - count = 0
-        - All features NaN
+        - count == 0 (explicitly set on collapse)
+        - mean, sum, std all NaN
         """
-        # TODO: Get date at position 1
-        # TODO: Call calculate
-        # TODO: Assert count == 0
-        # TODO: Assert all features NaN
-        pass
+        # Arrange: position 1 = 2019-01-11
+        calc_date = pd.Timestamp('2019-01-11')
+        
+        # Act
+        result = momentum_calculator.calculate(feature_context, calc_date, ['AAPL'])
+        
+        # Assert
+        assert len(result) == 1
+        assert result.iloc[0]['mom_12_2_count'] == 0
+        assert pd.isna(result.iloc[0]['mom_12_2_mean'])
+        assert pd.isna(result.iloc[0]['mom_12_2_sum'])
+        assert pd.isna(result.iloc[0]['mom_12_2_std'])
     
     def test_calculate_empty_history(self, momentum_calculator):
         """
         Test calculation with empty straddle history.
         
-        Given: Context with empty DataFrame
+        Given: Context with empty DataFrame (no rows)
         Expected:
-        - Returns rows for all requested tickers
-        - All features NaN
+        - Returns 2 rows (one per requested ticker)
+        - All feature columns NaN (including count)
         """
-        # TODO: Create empty DataFrame
-        # TODO: Create context with empty history
-        # TODO: Call calculate with ['AAPL', 'TSLA']
-        # TODO: Assert 2 rows returned
-        # TODO: Assert all features NaN
-        pass
+        # Arrange
+        empty_history = pd.DataFrame(columns=['ticker', 'entry_date', 'return_pct'])
+        empty_context = FeatureDataContext(straddle_history=empty_history)
+        calc_date = pd.Timestamp('2019-05-17')
+        
+        # Act
+        result = momentum_calculator.calculate(empty_context, calc_date, ['AAPL', 'TSLA'])
+        
+        # Assert
+        assert len(result) == 2
+        for col in momentum_calculator.feature_names:
+            assert result[col].isna().all()
     
     def test_calculate_uppercase_ticker_conversion(self, momentum_calculator, feature_context):
         """
-        Test that ticker symbols are converted to uppercase.
+        Test that ticker symbols are converted to uppercase before lookup.
         
-        Given: Call calculate with lowercase tickers ['aapl', 'tsla']
-        Expected: Correctly matches uppercase tickers in history
+        Given: Lowercase tickers ['aapl', 'tsla']
+        Expected:
+        - Both matched against uppercase 'AAPL' / 'TSLA' in history
+        - Result ticker column contains uppercase values
+        - Features are valid (not NaN)
         """
-        # TODO: Call calculate with ['aapl', 'tsla'] (lowercase)
-        # TODO: Assert results returned (not empty)
-        # TODO: Assert ticker column contains uppercase 'AAPL', 'TSLA'
-        pass
+        # Arrange
+        calc_date = pd.Timestamp('2019-05-17')
+        
+        # Act
+        result = momentum_calculator.calculate(feature_context, calc_date, ['aapl', 'tsla'])
+        
+        # Assert
+        assert len(result) == 2
+        assert set(result['ticker'].tolist()) == {'AAPL', 'TSLA'}
+        assert not result['mom_12_2_mean'].isna().any()
     
     def test_calculate_with_nan_returns_excluded(self, momentum_calculator, feature_context):
         """
-        Test that NaN returns are excluded from statistics.
+        Test that NaN returns in the window are excluded from statistics.
         
         Given:
-        - TSLA has some NaN returns in window
-        - Window should have 11 rows, but only 7 non-NaN
+        - ADP at position 19 (2019-05-17)
+        - Window rows [7..17]: positions 7 (2019-02-22) and 14 (2019-04-12)
+          are NaN for ADP → 11 rows total, 9 valid
         
         Expected:
-        - count = 7 (not 11)
-        - mean/sum/std calculated on 7 values only
+        - count == 9 (not 11)
+        - mean/sum/std computed on 9 values only
         """
-        # TODO: Use TSLA (has NaN returns in fixture)
-        # TODO: Call calculate
-        # TODO: Verify count reflects only non-NaN values
-        pass
+        # Arrange: ADP has scattered NaN; window rows 7-17 have 2 NaN at pos 7 and 14
+        calc_date = pd.Timestamp('2019-05-17')
+        
+        # Act
+        result = momentum_calculator.calculate(feature_context, calc_date, ['ADP'])
+        
+        # Assert
+        assert len(result) == 1
+        assert result.iloc[0]['mom_12_2_count'] == 9
+        assert not pd.isna(result.iloc[0]['mom_12_2_mean'])
+        assert not pd.isna(result.iloc[0]['mom_12_2_sum'])
 
 
 # ============================================================================

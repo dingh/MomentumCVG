@@ -12,12 +12,12 @@
 |-------|--------|---------------|----------|------------|-------|
 | **Layer 1: Core Models** | ✅ Complete | 45/45 | 100% | __h / 15h | All model classes tested |
 | **Layer 2: Builders & Analyzers** | ✅ Complete | 37/37 | 100% | __h / 18h | StraddleBuilder ✅, SpotPriceDB ✅, Analyzer ✅ |
-| **Layer 3: Feature Calculators** | 🟡 In Progress | 7/52 | ~13% | __h / 8h | MomentumCalculator: Init ✅, rest stubs; CVG not started |
+| **Layer 3: Feature Calculators** | 🟡 In Progress | 22/52 | ~42% | __h / 8h | MomentumCalculator: Init ✅, WindowFeature ✅, SingleDate ✅; Bulk/Multi/Consistency/Edge/Perf stubs; CVG not started |
 | **Layer 4: Optimizer** | ⬜ Not Started | 0/12 | 0% | 0h / 12h | |
 | **Layer 5: Executor** | ⬜ Not Started | 0/6 | 0% | 0h / 4h | |
 | **Layer 6: Strategy** | ⬜ Not Started | 0/10 | 0% | 0h / 8h | |
 | **Setup & Infrastructure** | ✅ Complete | - | - | __h / 5h | pytest.ini + conftest.py |
-| **TOTAL** | **54%** | **89/162** | **~54%** | **__h / 70h** | |
+| **TOTAL** | **64%** | **104/162** | **~64%** | **__h / 70h** | |
 
 **Status Legend:** ⬜ Not Started | 🟡 In Progress | ✅ Complete | ⚠️ Blocked
 
@@ -182,7 +182,7 @@
 - [src/features/momentum_calculator.py](../../src/features/momentum_calculator.py)
 - [src/features/cvg_calculator.py](../../src/features/cvg_calculator.py)
 
-### MomentumCalculator (4h) — 7/45 ✅
+### MomentumCalculator (4h) — 22/45 🟡
 
 #### TestMomentumCalculatorInit ✅ (7/7)
 - [x] `test_init_default_parameters` - Default window [(12,2)], min_periods=1, 4 feature names
@@ -193,24 +193,24 @@
 - [x] `test_feature_names_order_consistent` - Stats grouped by window, in order: mean, sum, count, std
 - [x] `test_required_data_sources` - Returns ['straddle_history']
 
-#### TestWindowFeatureCalculation (0/6)
-- [ ] `test_calculate_window_features_basic` - [10,20,30,40,50] → mean=30, sum=150, std≈15.81
-- [ ] `test_calculate_window_features_with_nan` - [10,NaN,20,NaN,30] → count=3, mean=20
-- [ ] `test_calculate_window_features_insufficient_data` - 2 returns, min_periods=3 → NaN (count=2)
-- [ ] `test_calculate_window_features_single_observation` - min_periods=1, [25.5] → std=0.0
-- [ ] `test_calculate_window_features_negative_returns` - [-10,-20,-30,5,10] → mean=-9, sum=-45
-- [ ] `test_calculate_window_features_all_nan` - [NaN,NaN,NaN] → count=0, rest NaN
+#### TestWindowFeatureCalculation ✅ (6/6)
+- [x] `test_calculate_window_features_basic` - [10,20,30,40,50] → mean=30, sum=150, std≈15.81
+- [x] `test_calculate_window_features_with_nan` - [10,NaN,20,NaN,30] → count=3, mean=20
+- [x] `test_calculate_window_features_insufficient_data` - 2 returns, min_periods=3 → NaN (count=2)
+- [x] `test_calculate_window_features_single_observation` - min_periods=1, [25.5] → std=0.0
+- [x] `test_calculate_window_features_negative_returns` - [-10,-20,-30,5,10] → mean=-9, sum=-45
+- [x] `test_calculate_window_features_all_nan` - [NaN,NaN,NaN] → count=0, rest NaN
 
-#### TestCalculateSingleDate (0/9)
-- [ ] `test_calculate_basic_single_ticker` - AAPL at week 20, window covers 11 rows
-- [ ] `test_calculate_multiple_tickers` - [AAPL, TSLA, UBER] at week 40, 3 rows returned
-- [ ] `test_calculate_ticker_not_in_history` - XYZ → 1 row, all NaN
-- [ ] `test_calculate_date_not_in_history` - Missing date → all NaN
-- [ ] `test_calculate_boundary_early_position` - Week 5, window clamped, partial data
-- [ ] `test_calculate_boundary_collapsed_window` - Week 1, end_idx < start_idx → count=0
-- [ ] `test_calculate_empty_history` - Empty DataFrame → 2 rows, all NaN
-- [ ] `test_calculate_uppercase_ticker_conversion` - ['aapl'] matches 'AAPL' in history
-- [ ] `test_calculate_with_nan_returns_excluded` - ADP sparse NaN → count reflects non-NaN only
+#### TestCalculateSingleDate ✅ (9/9)
+- [x] `test_calculate_basic_single_ticker` - AAPL 2019-05-17, count=11, mean=22.00, sum=242.02, std=117.35
+- [x] `test_calculate_multiple_tickers` - [AAPL, TSLA, UBER] at 2019-07-26, UBER count < AAPL count
+- [x] `test_calculate_ticker_not_in_history` - XYZ → 1 row, all NaN
+- [x] `test_calculate_date_not_in_history` - Wednesday (not in Friday fixture) → all NaN
+- [x] `test_calculate_boundary_early_position` - 2019-02-08 (pos 5), count=4 (clamped start)
+- [x] `test_calculate_boundary_collapsed_window` - 2019-01-11 (pos 1), count=0, all NaN
+- [x] `test_calculate_empty_history` - Empty DataFrame → 2 rows, all NaN
+- [x] `test_calculate_uppercase_ticker_conversion` - ['aapl','tsla'] → ticker col {'AAPL','TSLA'}
+- [x] `test_calculate_with_nan_returns_excluded` - ADP 2019-05-17, count=9 (2 NaN in window)
 
 #### TestCalculateBulk (0/8)
 - [ ] `test_calculate_bulk_single_ticker` - AAPL weeks 20-30 → 11 rows
