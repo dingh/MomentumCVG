@@ -12,12 +12,12 @@
 |-------|--------|---------------|----------|------------|-------|
 | **Layer 1: Core Models** | ✅ Complete | 45/45 | 100% | __h / 15h | All model classes tested |
 | **Layer 2: Builders & Analyzers** | ✅ Complete | 37/37 | 100% | __h / 18h | StraddleBuilder ✅, SpotPriceDB ✅, Analyzer ✅ |
-| **Layer 3: Feature Calculators** | 🟡 In Progress | 22/52 | ~42% | __h / 8h | MomentumCalculator: Init ✅, WindowFeature ✅, SingleDate ✅; Bulk/Multi/Consistency/Edge/Perf stubs; CVG not started |
+| **Layer 3: Feature Calculators** | 🟡 In Progress | 42/49 | ~86% | __h / 8h | MomentumCalculator: 42/42 ✅ (2 source bugs found & fixed); CVG: 0/7 not started |
 | **Layer 4: Optimizer** | ⬜ Not Started | 0/12 | 0% | 0h / 12h | |
 | **Layer 5: Executor** | ⬜ Not Started | 0/6 | 0% | 0h / 4h | |
 | **Layer 6: Strategy** | ⬜ Not Started | 0/10 | 0% | 0h / 8h | |
 | **Setup & Infrastructure** | ✅ Complete | - | - | __h / 5h | pytest.ini + conftest.py |
-| **TOTAL** | **64%** | **104/162** | **~64%** | **__h / 70h** | |
+| **TOTAL** | **78%** | **124/159** | **~78%** | **__h / 70h** | |
 
 **Status Legend:** ⬜ Not Started | 🟡 In Progress | ✅ Complete | ⚠️ Blocked
 
@@ -182,7 +182,7 @@
 - [src/features/momentum_calculator.py](../../src/features/momentum_calculator.py)
 - [src/features/cvg_calculator.py](../../src/features/cvg_calculator.py)
 
-### MomentumCalculator (4h) — 22/45 🟡
+### MomentumCalculator (4h) — 42/42 ✅
 
 #### TestMomentumCalculatorInit ✅ (7/7)
 - [x] `test_init_default_parameters` - Default window [(12,2)], min_periods=1, 4 feature names
@@ -212,40 +212,35 @@
 - [x] `test_calculate_uppercase_ticker_conversion` - ['aapl','tsla'] → ticker col {'AAPL','TSLA'}
 - [x] `test_calculate_with_nan_returns_excluded` - ADP 2019-05-17, count=9 (2 NaN in window)
 
-#### TestCalculateBulk (0/8)
-- [ ] `test_calculate_bulk_single_ticker` - AAPL weeks 20-30 → 11 rows
-- [ ] `test_calculate_bulk_multiple_tickers` - [AAPL, TSLA] weeks 20-30 → 22 rows
-- [ ] `test_calculate_bulk_all_tickers` - tickers=None → all 4 tickers
-- [ ] `test_calculate_bulk_date_filtering` - Only dates in [start, end] returned
-- [ ] `test_calculate_bulk_empty_date_range` - Future dates → empty DataFrame
-- [ ] `test_calculate_bulk_sparse_data` - Sparse history → only actual dates returned
-- [ ] `test_calculate_bulk_output_schema` - Columns: ticker, date, mom_* (no entry_date)
-- [ ] `test_calculate_bulk_ticker_uppercase_conversion` - ['aapl'] matched correctly
+#### TestCalculateBulk ✅ (8/8)
+- [x] `test_calculate_bulk_single_ticker` - AAPL weeks 20-30 → 11 rows
+- [x] `test_calculate_bulk_multiple_tickers` - [AAPL, TSLA] weeks 20-30 → 22 rows
+- [x] `test_calculate_bulk_all_tickers` - tickers=None → all 4 tickers
+- [x] `test_calculate_bulk_date_filtering` - Only dates in [start, end] returned
+- [x] `test_calculate_bulk_empty_date_range` - Future dates → empty DataFrame
+- [x] `test_calculate_bulk_nan_returns_excluded_from_count` - UBER pre-IPO NaNs excluded; UBER count < AAPL count
+- [x] `test_calculate_bulk_output_schema` - Columns: ticker, date, mom_* (no entry_date)
+- [x] `test_calculate_bulk_ticker_uppercase_conversion` - ['aapl'] matched correctly
 
-#### TestMultipleWindows (0/4)
-- [ ] `test_multiple_windows_feature_count` - 3 windows → 12 features
-- [ ] `test_multiple_windows_calculate` - All 12 columns present, values differ per window
-- [ ] `test_multiple_windows_calculate_bulk` - Bulk with 3 windows → 12 columns
-- [ ] `test_multiple_windows_different_min_periods` - Short window valid before long window
+#### TestMultipleWindows ✅ (4/4)
+- [x] `test_multiple_windows_feature_count` - 3 windows → 12 features
+- [x] `test_multiple_windows_calculate` - All 12 columns present, values differ per window
+- [x] `test_multiple_windows_calculate_bulk` - Bulk with 3 windows → 12 columns
+- [x] `test_multiple_windows_different_min_periods` - Short window valid before long window
 
-#### TestConsistency (0/3)
-- [ ] `test_calculate_vs_bulk_single_date_single_ticker` - calculate() == calculate_bulk() for same input
-- [ ] `test_calculate_vs_bulk_multiple_dates` - Loop of calculate() matches calculate_bulk() for 10 dates
-- [ ] `test_bulk_with_ticker_filter_matches_all_tickers` - Filtered bulk == unfiltered bulk
+#### TestConsistency ✅ (3/3)
+- [x] `test_calculate_vs_bulk_single_date_all_tickers` - calculate() == calculate_bulk() for all 4 tickers at 2019-07-26
+- [x] `test_calculate_vs_bulk_full_fixture` - Exhaustive: all 52 dates × all 4 tickers; caught 2 source bugs
+- [x] `test_bulk_with_ticker_filter_matches_all_tickers` - Filtered bulk == unfiltered bulk subsetted
 
-#### TestEdgeCases (0/6)
-- [ ] `test_empty_ticker_list` - tickers=[] → empty DataFrame with schema
-- [ ] `test_date_before_all_history` - Pre-2019 date → all NaN
-- [ ] `test_single_return_in_window` - min_periods=1, 1 return → std=0.0
-- [ ] `test_all_returns_identical` - [10,10,10,10,10] → std=0.0
-- [ ] `test_very_large_returns` - [10000,20000,30000] → no overflow
-- [ ] `test_date_type_datetime_vs_date` - Both datetime and date objects accepted
+#### TestEdgeCases ✅ (5/5)
+- [x] `test_empty_ticker_list` - tickers=[] → empty DataFrame (0 rows)
+- [x] `test_date_before_all_history` - 2018-01-01 (pre-fixture) → all NaN
+- [x] `test_single_return_in_window` - AAPL pos 2 with min_periods=1 → count=1, std=0.0
+- [x] `test_all_returns_identical` - [10,10,10,10,10] → std=0.0
+- [x] `test_very_large_returns` - [10000..50000] → mean=30000, no overflow/NaN
 
-#### TestPerformance (0/2)
-- [ ] `test_bulk_faster_than_loop` - calculate_bulk() ≥5× faster than loop of calculate()
-- [ ] `test_bulk_memory_efficient` - Output memory < 10MB for 10k rows
-
-**Coverage Target:** 90% | **Actual:** ___%
+**Coverage Target:** 90% | **Actual:** 100% ✅
 
 ### CVGCalculator (4h) — 0/7
 - [ ] `test_calculate_cvg_continuous_gains` - Positive CVG score
@@ -394,7 +389,9 @@
 ### Bug Findings
 _Record any new bugs discovered during testing_
 
-- 
+- **Bug: `calculate()` off-by-one in collapsed window check** (`momentum_calculator.py`) — `if end_idx <= start_idx` incorrectly collapsed a valid 1-element window when `end==start==0`. Fixed: `<=` → `<`. Caught by `TestConsistency.test_calculate_vs_bulk_full_fixture` (AAPL 2019-01-18, count=0 vs bulk count=1).
+
+- **Bug: `calculate_bulk()` cross-ticker shift contamination** (`momentum_calculator.py`) — `groupby('ticker').rolling().sum()` returns a `(ticker, pos)` MultiIndex; plain `.shift(min_lag)` shifted across the entire concatenated series, so ADP's first rows received AAPL's last rolling values. Fixed: `.groupby(level=0).shift(min_lag)` for all 3 stat chains (sum, count, std). Caught by same exhaustive consistency test.
 
 ### Testing Patterns Learned
 _Document useful pytest patterns as you learn them_

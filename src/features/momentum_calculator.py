@@ -248,7 +248,7 @@ class MomentumCalculator:
                 # Ensure indices are valid
                 if start_idx < 0:
                     start_idx = 0
-                if end_idx <= start_idx:
+                if end_idx < start_idx:
                     # No valid window
                     row.update({
                         f'{prefix}_mean': np.nan,
@@ -395,20 +395,22 @@ class MomentumCalculator:
             # Group by ticker for per-ticker rolling calculations
             grouped = history.groupby('ticker')[return_col]
             
-            # Sum: rolling sum + shift
+            # Sum: rolling sum + per-ticker shift
             history[f'{prefix}_sum'] = (
                 grouped
                 .rolling(window=window_size, min_periods=1)
                 .sum()
+                .groupby(level=0)
                 .shift(min_lag)
                 .reset_index(level=0, drop=True)
             )
             
-            # Count: rolling count + shift
+            # Count: rolling count + per-ticker shift
             history[f'{prefix}_count'] = (
                 grouped
                 .rolling(window=window_size, min_periods=1)
                 .count()
+                .groupby(level=0)
                 .shift(min_lag)
                 .reset_index(level=0, drop=True)
             )
@@ -418,11 +420,12 @@ class MomentumCalculator:
                 history[f'{prefix}_sum'] / history[f'{prefix}_count']
             )
             
-            # Std: rolling std + shift (need at least 2 for std calculation)
+            # Std: rolling std + per-ticker shift (need at least 2 for std calculation)
             history[f'{prefix}_std'] = (
                 grouped
                 .rolling(window=window_size, min_periods=max(2, self.min_periods))
                 .std(ddof=1)
+                .groupby(level=0)
                 .shift(min_lag)
                 .reset_index(level=0, drop=True)
             )

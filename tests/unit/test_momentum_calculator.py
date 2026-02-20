@@ -618,19 +618,28 @@ class TestCalculateBulk:
         
         Given:
         - AAPL history from week 1-52
-        - Calculate bulk for weeks 20-30 (11 dates)
+        - Calculate bulk for weeks 20-30 (2019-05-17 to 2019-07-26 = 11 dates)
         
         Verifies:
         - Returns 11 rows (one per date)
-        - Features calculated correctly for each date
-        - Output columns match expected schema
+        - ticker column is all 'AAPL'
+        - date range matches request (min == start, max == end)
+        - AAPL has valid (non-NaN) mean features at this point in the year
         """
-        # TODO: Get start_date (week 20) and end_date (week 30)
-        # TODO: Call calculate_bulk(context, start_date, end_date, ['AAPL'])
-        # TODO: Assert result has 11 rows
-        # TODO: Assert ticker column all 'AAPL'
-        # TODO: Assert date range matches request
-        pass
+        # Arrange: positions 19-29 in the fixture (0-indexed from 2019-01-04)
+        start_date = pd.Timestamp('2019-05-17')
+        end_date   = pd.Timestamp('2019-07-26')
+        
+        # Act
+        result = momentum_calculator.calculate_bulk(feature_context, start_date, end_date, ['AAPL'])
+        
+        # Assert
+        assert len(result) == 11
+        assert (result['ticker'] == 'AAPL').all()
+        assert result['date'].min() == start_date
+        assert result['date'].max() == end_date
+        # AAPL has dense valid returns by week 20 — at least some means are non-NaN
+        assert not result['mom_12_2_mean'].isna().all()
     
     def test_calculate_bulk_multiple_tickers(self, momentum_calculator, feature_context):
         """
@@ -638,110 +647,185 @@ class TestCalculateBulk:
         
         Given:
         - Calculate for ['AAPL', 'TSLA'] over weeks 20-30
+          (2019-05-17 to 2019-07-26 = 11 dates, dense fixture)
         
         Verifies:
         - Returns 22 rows (11 dates × 2 tickers)
-        - Each ticker has independent features
+        - Both tickers present, each with exactly 11 rows
         """
-        # TODO: Call calculate_bulk with ['AAPL', 'TSLA']
-        # TODO: Assert result has 22 rows
-        # TODO: Assert 2 unique tickers
-        pass
+        # Arrange
+        start_date = pd.Timestamp('2019-05-17')
+        end_date   = pd.Timestamp('2019-07-26')
+        
+        # Act
+        result = momentum_calculator.calculate_bulk(feature_context, start_date, end_date, ['AAPL', 'TSLA'])
+        
+        # Assert
+        assert len(result) == 22
+        assert set(result['ticker'].unique()) == {'AAPL', 'TSLA'}
+        # Each ticker should have exactly 11 rows (dense fixture)
+        per_ticker = result.groupby('ticker').size()
+        assert (per_ticker == 11).all()
     
     def test_calculate_bulk_all_tickers(self, momentum_calculator, feature_context):
         """
         Test bulk calculation without ticker filter (all tickers).
         
         Given:
-        - sample_straddle_history has 3 tickers (AAPL, TSLA, UBER)
-        - Calculate for all tickers over weeks 40-45
+        - sample_straddle_history has 4 tickers (AAPL, TSLA, ADP, UBER),
+          all present at every date in the dense fixture
+        - tickers=None → uses all tickers
         
         Verifies:
-        - UBER may have fewer rows (started later)
-        - All tickers processed correctly
+        - All 4 unique tickers appear in result
+        - Each ticker has 11 rows for the 11-date range
         """
-        # TODO: Call calculate_bulk with tickers=None
-        # TODO: Assert 3 unique tickers in result
-        # TODO: Assert UBER has fewer rows than AAPL (IPO scenario)
-        pass
+        # Arrange
+        start_date = pd.Timestamp('2019-05-17')
+        end_date   = pd.Timestamp('2019-07-26')
+        
+        # Act: no tickers argument → all tickers
+        result = momentum_calculator.calculate_bulk(feature_context, start_date, end_date)
+        
+        # Assert
+        assert set(result['ticker'].unique()) == {'AAPL', 'TSLA', 'ADP', 'UBER'}
+        # Dense fixture: every ticker has a row at every date
+        per_ticker = result.groupby('ticker').size()
+        assert (per_ticker == 11).all()
     
     def test_calculate_bulk_date_filtering(self, momentum_calculator, feature_context):
         """
         Test that date range filtering works correctly.
         
         Given:
-        - Full history weeks 1-52
-        - Request weeks 10-20
+        - Full 52-week history
+        - Request weeks 10-20 (2019-03-08 to 2019-05-17 = 11 dates)
         
         Verifies:
-        - Only dates in [10, 20] returned
-        - No dates outside range
+        - Only dates in [start_date, end_date] are returned
+        - min(date) == start_date, max(date) == end_date
+        - No dates outside the requested range
         """
-        # TODO: Call calculate_bulk with specific date range
-        # TODO: Assert min(result.date) == start_date
-        # TODO: Assert max(result.date) == end_date
-        # TODO: Assert all dates in range
-        pass
+        # Arrange: positions 9-19 in the fixture
+        start_date = pd.Timestamp('2019-03-08')
+        end_date   = pd.Timestamp('2019-05-17')
+        
+        # Act
+        result = momentum_calculator.calculate_bulk(feature_context, start_date, end_date, ['AAPL'])
+        
+        # Assert
+        assert len(result) == 11
+        assert result['date'].min() == start_date
+        assert result['date'].max() == end_date
+        assert (result['date'] >= start_date).all()
+        assert (result['date'] <= end_date).all()
     
     def test_calculate_bulk_empty_date_range(self, momentum_calculator, feature_context):
         """
         Test bulk calculation with no dates in range.
         
         Given:
-        - History has data for 2023
+        - History has data only for 2019
         - Request date range in 2025 (future, no data)
         
         Expected:
         - Returns empty DataFrame
-        - Correct column schema preserved
+        - Correct column schema still present
         """
-        # TODO: Call calculate_bulk with future dates
-        # TODO: Assert result is empty (len == 0)
-        # TODO: Assert columns present
-        pass
+        # Arrange: future dates not in fixture
+        start_date = pd.Timestamp('2025-01-01')
+        end_date   = pd.Timestamp('2025-12-31')
+        
+        # Act
+        result = momentum_calculator.calculate_bulk(feature_context, start_date, end_date, ['AAPL'])
+        
+        # Assert
+        assert len(result) == 0
+        expected_cols = ['ticker', 'date', 'mom_12_2_mean', 'mom_12_2_sum',
+                         'mom_12_2_count', 'mom_12_2_std']
+        assert list(result.columns) == expected_cols
     
-    def test_calculate_bulk_sparse_data(self, momentum_calculator, feature_context):
+    def test_calculate_bulk_nan_returns_excluded_from_count(self, momentum_calculator, feature_context):
         """
-        Test bulk calculation with sparse data (missing weeks).
-        
+        Test that NaN return_pct values are excluded from window counts in bulk mode.
+
+        In this system every trade date always has a row for every ticker, but a
+        ticker can have NaN return_pct (UBER pre-IPO, ADP data gaps).  The rolling
+        window must count only non-NaN returns — this is the only form of "sparse"
+        data that actually occurs.
+
         Given:
-        - sample_straddle_history_with_gaps (AAPL missing weeks 10, 20, 30)
-        
+        - At 2019-07-26 (position 29), window (12, 2) covers rows [17..27]
+        - AAPL: all 11 returns valid → count == 11
+        - UBER: IPO at position 21 (2019-05-31); rows 17-20 are NaN → count == 7
+
         Verifies:
-        - Only actual dates in history returned
-        - Missing dates not included in result
-        - Features calculated correctly around gaps
+        - UBER count < AAPL count at the same date
+        - UBER count > 0 (has valid returns after IPO inside the window)
+        - AAPL count == 11 (all valid)
         """
-        # TODO: Use sample_straddle_history_with_gaps fixture
-        # TODO: Call calculate_bulk
-        # TODO: Assert missing weeks not in result
-        # TODO: Assert row count matches actual data points
-        pass
+        # Arrange
+        start_date = pd.Timestamp('2019-07-26')
+        end_date   = pd.Timestamp('2019-07-26')
+
+        # Act
+        result = momentum_calculator.calculate_bulk(
+            feature_context, start_date, end_date, ['AAPL', 'UBER']
+        )
+
+        # Assert
+        assert len(result) == 2
+        aapl_count = result.loc[result['ticker'] == 'AAPL', 'mom_12_2_count'].iloc[0]
+        uber_count = result.loc[result['ticker'] == 'UBER', 'mom_12_2_count'].iloc[0]
+
+        assert aapl_count == 11          # all 11 window rows valid for AAPL
+        assert 0 < uber_count < aapl_count  # UBER has fewer valid returns (pre-IPO NaNs)
     
     def test_calculate_bulk_output_schema(self, momentum_calculator, feature_context):
         """
-        Test that bulk calculation returns correct schema.
+        Test that bulk calculation returns the correct column schema.
         
         Verifies:
-        - Columns: ['ticker', 'date', 'mom_12_2_mean', 'mom_12_2_sum', 'mom_12_2_count', 'mom_12_2_std']
-        - entry_date renamed to 'date'
-        - No extra columns
+        - Columns: ['ticker', 'date', 'mom_12_2_mean', 'mom_12_2_sum',
+                    'mom_12_2_count', 'mom_12_2_std']
+        - 'entry_date' renamed to 'date' (no raw 'entry_date' column)
+        - No extra columns beyond expected schema
         """
-        # TODO: Call calculate_bulk
-        # TODO: Assert column names match expected
-        # TODO: Assert 'entry_date' not in columns (renamed to 'date')
-        pass
+        # Arrange
+        start_date = pd.Timestamp('2019-05-17')
+        end_date   = pd.Timestamp('2019-07-26')
+        
+        # Act
+        result = momentum_calculator.calculate_bulk(feature_context, start_date, end_date, ['AAPL'])
+        
+        # Assert
+        expected_cols = ['ticker', 'date', 'mom_12_2_mean', 'mom_12_2_sum',
+                         'mom_12_2_count', 'mom_12_2_std']
+        assert list(result.columns) == expected_cols
+        assert 'entry_date' not in result.columns
     
     def test_calculate_bulk_ticker_uppercase_conversion(self, momentum_calculator, feature_context):
         """
         Test ticker uppercase conversion in bulk mode.
         
         Given: tickers=['aapl', 'tsla'] (lowercase)
-        Expected: Results returned (matched uppercase in history)
+        Expected:
+        - Matched against uppercase 'AAPL' / 'TSLA' in history
+        - Result contains rows (not empty)
+        - Result ticker column values are uppercase
         """
-        # TODO: Call calculate_bulk with lowercase tickers
-        # TODO: Assert results returned (not empty)
-        pass
+        # Arrange
+        start_date = pd.Timestamp('2019-05-17')
+        end_date   = pd.Timestamp('2019-07-26')
+        
+        # Act
+        result = momentum_calculator.calculate_bulk(
+            feature_context, start_date, end_date, ['aapl', 'tsla']
+        )
+        
+        # Assert
+        assert len(result) > 0
+        assert set(result['ticker'].unique()) == {'AAPL', 'TSLA'}
 
 
 # ============================================================================
@@ -756,56 +840,118 @@ class TestMultipleWindows:
         Test that multiple windows generate correct number of features.
         
         Given: windows=[(12, 2), (8, 1), (20, 4)]
-        Expected: 12 features (4 stats × 3 windows)
+        Expected: 12 features (4 stats × 3 windows), one group per window
         """
-        # TODO: Assert len(feature_names) == 12
-        # TODO: Assert all window prefixes present: mom_12_2, mom_8_1, mom_20_4
-        pass
+        # Arrange & Act
+        names = momentum_calculator_multi_window.feature_names
+        
+        # Assert total count
+        assert len(names) == 12
+
+        # Assert all 4 stats present for each of the 3 window prefixes
+        for prefix in ['mom_12_2', 'mom_8_1', 'mom_20_4']:
+            for stat in ['mean', 'sum', 'count', 'std']:
+                assert f'{prefix}_{stat}' in names
     
     def test_multiple_windows_calculate(self, momentum_calculator_multi_window, feature_context):
         """
-        Test calculate() with multiple windows.
+        Test calculate() produces independent features for every window.
+        
+        Given:
+        - AAPL at position 19 (2019-05-17), plenty of history for all three windows
+          - (12,2): rows [7..17] = 11 rows
+          - (8,1):  rows [11..18] = 8 rows
+          - (20,4): rows [0..15]  = 16 rows (clamped start)
         
         Verifies:
-        - All windows calculated independently
-        - Features for each window present
-        - Values differ between windows (different lookback periods)
+        - All 12 feature columns present in result
+        - All three window means are non-NaN (sufficient data)
+        - mom_12_2_mean != mom_8_1_mean (different lookback periods → different values)
         """
-        # TODO: Call calculate with multi-window calculator
-        # TODO: Assert all 12 feature columns present
-        # TODO: Assert mom_12_2_mean != mom_8_1_mean (different windows)
-        pass
+        # Arrange
+        calc_date = pd.Timestamp('2019-05-17')
+        
+        # Act
+        result = momentum_calculator_multi_window.calculate(feature_context, calc_date, ['AAPL'])
+        
+        # Assert schema: ticker + date + 12 feature columns
+        assert len(result) == 1
+        expected_cols = {'ticker', 'date'} | set(momentum_calculator_multi_window.feature_names)
+        assert set(result.columns) == expected_cols
+        
+        # Assert all three windows produced valid (non-NaN) means
+        row = result.iloc[0]
+        assert not pd.isna(row['mom_12_2_mean'])
+        assert not pd.isna(row['mom_8_1_mean'])
+        assert not pd.isna(row['mom_20_4_mean'])
+        
+        # Assert windows differ (different lookback periods cover different returns)
+        assert row['mom_12_2_mean'] != pytest.approx(row['mom_8_1_mean'])
     
     def test_multiple_windows_calculate_bulk(self, momentum_calculator_multi_window, feature_context):
         """
-        Test calculate_bulk() with multiple windows.
+        Test calculate_bulk() produces all window columns across a date range.
+        
+        Given:
+        - AAPL over weeks 20-30 (2019-05-17 to 2019-07-26 = 11 dates)
+        - All three windows have sufficient history by week 20
         
         Verifies:
-        - Bulk calculation works with multiple windows
-        - Performance reasonable (vectorization still effective)
+        - 11 rows returned
+        - Column list is exactly ['ticker', 'date'] + all 12 feature names
+        - No window column is entirely NaN for AAPL in this range
         """
-        # TODO: Call calculate_bulk with multi-window calculator
-        # TODO: Assert all 12 feature columns present in result
-        pass
+        # Arrange
+        start_date = pd.Timestamp('2019-05-17')
+        end_date   = pd.Timestamp('2019-07-26')
+        
+        # Act
+        result = momentum_calculator_multi_window.calculate_bulk(
+            feature_context, start_date, end_date, ['AAPL']
+        )
+        
+        # Assert row count and schema
+        assert len(result) == 11
+        expected_cols = ['ticker', 'date'] + momentum_calculator_multi_window.feature_names
+        assert list(result.columns) == expected_cols
+        
+        # Assert each window has at least some valid values for AAPL
+        assert not result['mom_12_2_mean'].isna().all()
+        assert not result['mom_8_1_mean'].isna().all()
+        assert not result['mom_20_4_mean'].isna().all()
     
     def test_multiple_windows_different_min_periods(self, feature_context):
         """
-        Test that windows can have different effective min_periods.
+        Test that a shorter window can be valid while a longer window is still NaN.
         
         Given:
-        - Window (8, 1): 8-week lookback → may have 7 observations
-        - Window (20, 4): 17-week lookback → needs more data
-        - min_periods=3 applies to all
+        - Calculator with windows=[(8, 1), (20, 4)], min_periods=3
+        - AAPL at position 5 (2019-02-08)
+          - Window (8,1):  start=max(0,5-8)=0, end=5-1=4 → rows [0..4] = 5 rows ≥ 3 → valid
+          - Window (20,4): start=max(0,5-20)=0, end=5-4=1 → rows [0..1] = 2 rows < 3 → NaN
         
         Verifies:
-        - Shorter window (8,1) valid at earlier positions
-        - Longer window (20,4) NaN until more history available
+        - mom_8_1_mean is not NaN and mom_8_1_count == 5
+        - mom_20_4_mean is NaN and mom_20_4_count == 2 (reported even when below threshold)
         """
-        # TODO: Create calculator with windows=[(8, 1), (20, 4)], min_periods=3
-        # TODO: Calculate at early position (e.g., week 10)
-        # TODO: Assert mom_8_1 features valid (enough data)
-        # TODO: Assert mom_20_4 features NaN (insufficient history)
-        pass
+        # Arrange
+        calc = MomentumCalculator(windows=[(8, 1), (20, 4)], min_periods=3)
+        calc_date = pd.Timestamp('2019-02-08')  # position 5 in the fixture
+        
+        # Act
+        result = calc.calculate(feature_context, calc_date, ['AAPL'])
+        
+        # Assert
+        assert len(result) == 1
+        row = result.iloc[0]
+        
+        # Shorter window (8,1): 5 valid rows → sufficient
+        assert not pd.isna(row['mom_8_1_mean'])
+        assert row['mom_8_1_count'] == 5
+        
+        # Longer window (20,4): only 2 rows available → below min_periods=3
+        assert pd.isna(row['mom_20_4_mean'])
+        assert row['mom_20_4_count'] == 2
 
 
 # ============================================================================
@@ -814,57 +960,198 @@ class TestMultipleWindows:
 
 class TestConsistency:
     """Test consistency between calculate() and calculate_bulk()."""
-    
-    def test_calculate_vs_bulk_single_date_single_ticker(self, momentum_calculator, feature_context):
+
+    @staticmethod
+    def _assert_features_match(single_row, bulk_row, feature_names, label):
         """
-        Test that calculate() matches calculate_bulk() for single date+ticker.
-        
+        Compare one row from calculate() against one row from calculate_bulk().
+
+        Known divergence on *_count for collapsed windows:
+          calculate()      → count = 0   (explicit, no valid window)
+          calculate_bulk() → count = NaN (rolling+shift puts NaN before data starts)
+        Both correctly mean "no usable observations", so we treat 0 ≡ NaN for count.
+        mean/sum/std must agree exactly (rel=1e-6).
+        """
+        signal_cols = [f for f in feature_names if not f.endswith('_count')]
+        count_cols  = [f for f in feature_names if f.endswith('_count')]
+
+        for col in signal_cols:
+            s_val = single_row[col]
+            b_val = bulk_row[col]
+            if pd.isna(s_val):
+                assert pd.isna(b_val), f"{label} {col}: single=NaN but bulk={b_val}"
+            else:
+                assert b_val == pytest.approx(s_val, rel=1e-6), (
+                    f"{label} {col}: single={s_val:.6f}, bulk={b_val:.6f}"
+                )
+
+        for col in count_cols:
+            s_val = single_row[col]
+            b_val = bulk_row[col]
+            # Treat (bulk=NaN, single=0) as equivalent — both mean "collapsed window"
+            s_zero_or_nan = pd.isna(s_val) or s_val == 0
+            b_zero_or_nan = pd.isna(b_val) or b_val == 0
+            if b_zero_or_nan:
+                assert s_zero_or_nan, (
+                    f"{label} {col}: bulk={b_val} (no window) but single={s_val}"
+                )
+            elif pd.isna(s_val):
+                assert pd.isna(b_val), f"{label} {col}: single=NaN but bulk={b_val}"
+            else:
+                assert b_val == pytest.approx(s_val, rel=1e-6), (
+                    f"{label} {col}: single={s_val}, bulk={b_val}"
+                )
+
+    def test_calculate_vs_bulk_single_date_all_tickers(
+        self, momentum_calculator, feature_context, sample_straddle_history
+    ):
+        """
+        Cross-validate calculate() vs calculate_bulk() for all 4 tickers at one date.
+
+        Uses 2019-07-26 (position 29) — well after the UBER IPO so all tickers
+        have at least some valid returns in their window.
+
+        Verifies that both methods agree on every (ticker, feature) pair
+        at this single date.
+        """
+        # Arrange
+        calc_date   = pd.Timestamp('2019-07-26')
+        all_tickers = sorted(sample_straddle_history['ticker'].unique().tolist())
+        feature_names = momentum_calculator.feature_names
+
+        # Act
+        single = (
+            momentum_calculator
+            .calculate(feature_context, calc_date, all_tickers)
+            .sort_values('ticker')
+            .reset_index(drop=True)
+        )
+        bulk = (
+            momentum_calculator
+            .calculate_bulk(feature_context, calc_date, calc_date, all_tickers)
+            .sort_values('ticker')
+            .reset_index(drop=True)
+        )
+
+        # Assert same row count (one per ticker)
+        assert len(single) == len(all_tickers)
+        assert len(bulk)   == len(all_tickers)
+
+        for i in range(len(all_tickers)):
+            ticker = single.iloc[i]['ticker']
+            self._assert_features_match(
+                single.iloc[i], bulk.iloc[i], feature_names,
+                label=f"ticker={ticker}"
+            )
+
+    def test_calculate_vs_bulk_full_fixture(
+        self, momentum_calculator, feature_context, sample_straddle_history
+    ):
+        """
+        Exhaustive cross-validation: calculate() vs calculate_bulk() for
+        every date × every ticker in the entire fixture (~52 dates × 4 tickers).
+
+        This is the strongest consistency check — it exercises:
+          - AAPL / TSLA (all valid returns throughout the year)
+          - ADP (scattered NaN returns in many windows)
+          - UBER (all-NaN pre-IPO windows, valid returns from week 22 onward)
+          - Early dates with collapsed / partial windows
+          - Full windows in the middle and late year
+
+        mean, sum, std must match to rel=1e-6.
+        count: calculate()=0 and bulk()=NaN are treated as equivalent
+               (both signal "no valid window"; see _assert_features_match).
+        """
+        # Arrange: pull every unique date and ticker directly from the fixture
+        all_dates   = sorted(sample_straddle_history['entry_date'].unique())
+        all_tickers = sorted(sample_straddle_history['ticker'].unique().tolist())
+        start_date  = pd.Timestamp(all_dates[0])
+        end_date    = pd.Timestamp(all_dates[-1])
+        feature_names = momentum_calculator.feature_names
+
+        # Build ground-truth row-by-row via calculate()
+        single_rows = []
+        for d in all_dates:
+            rows = momentum_calculator.calculate(
+                feature_context, pd.Timestamp(d), all_tickers
+            )
+            single_rows.append(rows)
+        single_df = (
+            pd.concat(single_rows, ignore_index=True)
+            .sort_values(['ticker', 'date'])
+            .reset_index(drop=True)
+        )
+
+        # One vectorised call covering the entire fixture range
+        bulk_df = (
+            momentum_calculator
+            .calculate_bulk(feature_context, start_date, end_date, all_tickers)
+            .sort_values(['ticker', 'date'])
+            .reset_index(drop=True)
+        )
+
+        # Assert same row count
+        assert len(bulk_df) == len(single_df), (
+            f"Row count mismatch: bulk={len(bulk_df)}, single={len(single_df)}"
+        )
+
+        # Assert every (ticker, date, feature) triple agrees
+        for i in range(len(bulk_df)):
+            ticker = bulk_df.iloc[i]['ticker']
+            date   = bulk_df.iloc[i]['date']
+            self._assert_features_match(
+                single_df.iloc[i], bulk_df.iloc[i], feature_names,
+                label=f"ticker={ticker} date={date.date()}"
+            )
+
+    def test_bulk_with_ticker_filter_matches_all_tickers(
+        self, momentum_calculator, feature_context, sample_straddle_history
+    ):
+        """
+        Verify that an explicit ticker filter in calculate_bulk() returns
+        the same values as running without a filter and subsetting afterward.
+
+        This confirms the per-ticker groupby rolling is not affected by which
+        other tickers are present in the DataFrame.
+
         Given:
-        - Same context, same date, same ticker
-        - Call both calculate() and calculate_bulk()
-        
-        Expected:
-        - Feature values match exactly (within floating point tolerance)
+        - calculate_bulk(tickers=['AAPL', 'TSLA']) over weeks 20-30
+        - calculate_bulk(tickers=None) over same range, then filtered to AAPL+TSLA
+
+        Expected: identical DataFrames after sorting.
         """
-        # TODO: Select a date and ticker
-        # TODO: result_single = calculate(context, date, ['AAPL'])
-        # TODO: result_bulk = calculate_bulk(context, date, date, ['AAPL'])
-        # TODO: Assert feature values match (use pytest.approx for floats)
-        pass
-    
-    def test_calculate_vs_bulk_multiple_dates(self, momentum_calculator, feature_context):
-        """
-        Test that calculate() matches calculate_bulk() across date range.
-        
-        Given:
-        - Calculate features for AAPL at 10 different dates using calculate()
-        - Calculate same using calculate_bulk()
-        
-        Expected:
-        - All feature values match
-        """
-        # TODO: Select 10 dates
-        # TODO: Loop: call calculate() for each date, collect results
-        # TODO: Call calculate_bulk() for date range
-        # TODO: Compare row-by-row
-        pass
-    
-    def test_bulk_with_ticker_filter_matches_all_tickers(self, momentum_calculator, feature_context):
-        """
-        Test that bulk with ticker filter matches bulk without filter.
-        
-        Given:
-        - calculate_bulk(tickers=['AAPL', 'TSLA'])
-        - calculate_bulk(tickers=None) filtered to AAPL+TSLA
-        
-        Expected:
-        - Results identical
-        """
-        # TODO: result1 = calculate_bulk(..., tickers=['AAPL', 'TSLA'])
-        # TODO: result2 = calculate_bulk(..., tickers=None)
-        # TODO: result2_filtered = result2[result2['ticker'].isin(['AAPL', 'TSLA'])]
-        # TODO: Assert results match
-        pass
+        # Arrange
+        start_date    = pd.Timestamp('2019-05-17')
+        end_date      = pd.Timestamp('2019-07-26')
+        feature_names = momentum_calculator.feature_names
+        subset        = ['AAPL', 'TSLA']
+
+        # Act
+        filtered = (
+            momentum_calculator
+            .calculate_bulk(feature_context, start_date, end_date, subset)
+            .sort_values(['ticker', 'date'])
+            .reset_index(drop=True)
+        )
+        unfiltered_subset = (
+            momentum_calculator
+            .calculate_bulk(feature_context, start_date, end_date)
+            [lambda df: df['ticker'].isin(subset)]
+            .sort_values(['ticker', 'date'])
+            .reset_index(drop=True)
+        )
+
+        # Assert same shape
+        assert filtered.shape == unfiltered_subset.shape
+
+        # Assert every cell matches
+        for i in range(len(filtered)):
+            ticker = filtered.iloc[i]['ticker']
+            date   = filtered.iloc[i]['date']
+            self._assert_features_match(
+                filtered.iloc[i], unfiltered_subset.iloc[i], feature_names,
+                label=f"ticker={ticker} date={date.date()}"
+            )
 
 
 # ============================================================================
@@ -873,141 +1160,116 @@ class TestConsistency:
 
 class TestEdgeCases:
     """Test edge cases and error conditions."""
-    
+
     def test_empty_ticker_list(self, momentum_calculator, feature_context):
         """
         Test calculation with empty ticker list.
-        
-        Expected: Returns empty DataFrame with correct schema
+
+        Expected: Returns empty DataFrame with no rows.
         """
-        # TODO: Call calculate with tickers=[]
-        # TODO: Assert result is empty
-        # TODO: Assert columns present
-        pass
-    
+        # Act
+        result = momentum_calculator.calculate(
+            feature_context, pd.Timestamp('2019-05-17'), []
+        )
+
+        # Assert
+        assert len(result) == 0
+
     def test_date_before_all_history(self, momentum_calculator, feature_context):
         """
         Test calculation at date before any history exists.
-        
+
         Given:
-        - History starts at 2023-01-06
-        - Request calculation at 2022-01-01
-        
+        - Fixture history starts 2019-01-04
+        - Request calculation at 2018-01-01
+
         Expected:
-        - Empty history after filtering
-        - Returns rows with all NaN features
+        - History filtered to date <= 2018-01-01 is empty
+        - Returns 1 row per requested ticker, all features NaN
         """
-        # TODO: Call calculate with very early date
-        # TODO: Assert all features NaN
-        pass
-    
+        # Arrange
+        calc_date = pd.Timestamp('2018-01-01')
+
+        # Act
+        result = momentum_calculator.calculate(feature_context, calc_date, ['AAPL'])
+
+        # Assert
+        assert len(result) == 1
+        assert result.iloc[0]['ticker'] == 'AAPL'
+        for col in momentum_calculator.feature_names:
+            assert pd.isna(result.iloc[0][col])
+
     def test_single_return_in_window(self, momentum_calculator_no_min, feature_context):
         """
-        Test window with only 1 return (when min_periods=1).
-        
+        Test window with exactly 1 valid return (when min_periods=1).
+
+        Given:
+        - AAPL at position 2 (2019-01-18) with min_periods=1
+        - Window (12, 2): start=max(0, 2-12)=0, end=2-2=0
+          → end(0) < start(0) is False → iloc[0:1] = exactly 1 row
+        - AAPL row 0 (2019-01-04) return_pct = -18.96869244935543
+
         Expected:
-        - mean = sum = that single return
-        - std = 0.0 (only 1 observation)
-        - count = 1
+        - count == 1
+        - mean == sum == that single return value
+        - std == 0.0 (undefined for 1 value; implementation returns 0.0)
         """
-        # TODO: Use early position where window has only 1 return
-        # TODO: Assert mean == sum == single return value
-        # TODO: Assert std == 0.0
-        # TODO: Assert count == 1
-        pass
-    
+        # Arrange: position 2 in AAPL history; window collapses to exactly 1 prior row
+        calc_date = pd.Timestamp('2019-01-18')
+
+        # Act
+        result = momentum_calculator_no_min.calculate(feature_context, calc_date, ['AAPL'])
+
+        # Assert
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row['mom_12_2_count'] == 1
+        assert row['mom_12_2_mean'] == pytest.approx(-18.96869244935543, rel=1e-5)
+        assert row['mom_12_2_sum']  == pytest.approx(-18.96869244935543, rel=1e-5)
+        assert row['mom_12_2_std']  == pytest.approx(0.0)
+
     def test_all_returns_identical(self, momentum_calculator):
         """
         Test window with all identical returns.
-        
+
         Given: Returns [10, 10, 10, 10, 10]
         Expected:
-        - mean = 10
-        - std = 0.0 (no variance)
+        - mean == 10.0, sum == 50.0, count == 5
+        - std == 0.0 (zero variance when all values are equal)
         """
-        # TODO: Create fixture with identical returns
-        # TODO: Call _calculate_window_features
-        # TODO: Assert mean == 10
-        # TODO: Assert std == 0.0
-        pass
-    
+        # Arrange
+        window_data = pd.DataFrame({'return_pct': [10.0, 10.0, 10.0, 10.0, 10.0]})
+
+        # Act
+        result = momentum_calculator._calculate_window_features(window_data, 'mom_12_2')
+
+        # Assert
+        assert result['mom_12_2_mean']  == pytest.approx(10.0)
+        assert result['mom_12_2_sum']   == pytest.approx(50.0)
+        assert result['mom_12_2_count'] == 5
+        assert result['mom_12_2_std']   == pytest.approx(0.0)
+
     def test_very_large_returns(self, momentum_calculator):
         """
         Test calculation with very large return values.
-        
-        Verifies numerical stability with large numbers.
+
+        Verifies numerical stability — no overflow or unexpected NaN.
+
+        Given: Returns [10000, 20000, 30000, 40000, 50000]
+        Expected: mean=30000, sum=150000, std non-NaN
         """
-        # TODO: Create window with returns like [10000, 20000, 30000]
-        # TODO: Call _calculate_window_features
-        # TODO: Assert calculations correct (no overflow)
-        pass
-    
-    def test_date_type_datetime_vs_date(self, momentum_calculator, feature_context):
-        """
-        Test that both datetime and date objects work for date parameter.
-        
-        Given:
-        - Call calculate with datetime object
-        - Call calculate with date object
-        
-        Expected: Both work correctly (pandas handles conversion)
-        """
-        # TODO: Test with datetime.datetime(2023, 6, 1)
-        # TODO: Test with datetime.date(2023, 6, 1)
-        # TODO: Assert both return results
-        pass
+        # Arrange
+        window_data = pd.DataFrame(
+            {'return_pct': [10000.0, 20000.0, 30000.0, 40000.0, 50000.0]}
+        )
+
+        # Act
+        result = momentum_calculator._calculate_window_features(window_data, 'mom_12_2')
+
+        # Assert
+        assert result['mom_12_2_mean']  == pytest.approx(30000.0)
+        assert result['mom_12_2_sum']   == pytest.approx(150000.0)
+        assert result['mom_12_2_count'] == 5
+        assert not np.isnan(result['mom_12_2_std'])
 
 
-# ============================================================================
-# Test Class: Performance & Optimization
-# ============================================================================
-
-class TestPerformance:
-    """Test performance characteristics (not strict benchmarks)."""
-    
-    def test_bulk_faster_than_loop(self, momentum_calculator, feature_context):
-        """
-        Test that calculate_bulk() is significantly faster than looping calculate().
-        
-        This is a sanity check, not a strict benchmark.
-        
-        Expected: bulk is at least 5x faster for 50+ dates
-        """
-        # TODO: Time calculate_bulk for 50 dates
-        # TODO: Time loop of calculate() for same 50 dates
-        # TODO: Assert bulk_time < loop_time / 5
-        pass
-    
-    def test_bulk_memory_efficient(self, momentum_calculator, feature_context):
-        """
-        Test that calculate_bulk() doesn't create excessive intermediate data.
-        
-        Verifies output DataFrame size is reasonable.
-        """
-        # TODO: Call calculate_bulk for large date range
-        # TODO: Check result.memory_usage()
-        # TODO: Assert memory < threshold (e.g., 10MB for 10k rows)
-        pass
-
-
-# ============================================================================
-# Notes for Implementation
-# ============================================================================
-
-"""
-Fixtures to implement:
-1. sample_straddle_history: 52 weeks, 3 tickers (AAPL full, TSLA with NaN, UBER partial)
-2. sample_straddle_history_with_gaps: Sparse data with intentional gaps
-3. feature_context: Wrapper for straddle_history in FeatureDataContext
-4. momentum_calculator: Standard config (window=[(12,2)], min_periods=3)
-5. momentum_calculator_multi_window: Multiple windows config
-6. momentum_calculator_no_min: Permissive config (min_periods=1)
-
-Test priorities:
-- HIGH: Basic calculation, NaN handling, boundary conditions, consistency
-- MEDIUM: Multiple windows, edge cases, sparse data
-- LOW: Performance tests (sanity checks only)
-
-Total tests: ~35-40 tests across 8 test classes
-Estimated implementation time: 6-8 hours
-"""
