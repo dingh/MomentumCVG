@@ -316,10 +316,24 @@ def load_straddle_history(path: str) -> pd.DataFrame:
     df = pd.read_parquet(path)
     
     # Validate required columns
+    # return_pct is needed by MomentumCalculator;
+    # vol_gap (or realized_volatility + entry_iv) is needed by CVGCalculator.
     required = ['ticker', 'entry_date', 'return_pct']
     missing = set(required) - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
+
+    # CVGCalculator requires vol_gap (or its component columns).
+    # Check now so the error is clear and points here, not buried in the calculator.
+    has_vol_gap = 'vol_gap' in df.columns
+    has_components = ('realized_volatility' in df.columns and 'entry_iv' in df.columns)
+    if not has_vol_gap and not has_components:
+        raise ValueError(
+            "CVGCalculator requires either a 'vol_gap' column or both "
+            "'realized_volatility' and 'entry_iv' columns. "
+            "Neither found in the input file. "
+            "If you only want momentum features, re-run with --skip-cvg."
+        )
     
     # Convert dates
     df['entry_date'] = pd.to_datetime(df['entry_date'])
@@ -364,32 +378,42 @@ def validate_and_summarize(
                 completeness = (1 - df_features[feature].isna().mean()) * 100
                 logger.info(f"  {feature:40s}: {completeness:5.1f}% complete")
     
-    # CVG validation (if present)
-    if 'cvg_60_8' in df_features.columns:
-        cvg = df_features['cvg_60_8'].dropna()
-        logger.info("\nCVG Statistics (cvg_60_8):")
-        logger.info(f"  Count: {len(cvg):,}")
-        logger.info(f"  Mean: {cvg.mean():.3f} (paper: ~1.24)")
-        logger.info(f"  Std: {cvg.std():.3f}")
-        logger.info(f"  Median: {cvg.median():.3f}")
-        logger.info(f"  Min: {cvg.min():.3f}")
-        logger.info(f"  Max: {cvg.max():.3f}")
-        
-        # Validate range: 0 ≤ CVG ≤ 2
-        out_of_range = ((cvg < 0) | (cvg > 2)).sum()
-        if out_of_range > 0:
-            logger.warning(f"  ⚠️  {out_of_range} CVG values out of range [0, 2]!")
-    
-    # Momentum validation (if present)
-    if 'mom_60_8_mean' in df_features.columns:
-        mom = df_features['mom_60_8_mean'].dropna()
-        logger.info("\nMomentum Statistics (mom_60_8_mean):")
-        logger.info(f"  Count: {len(mom):,}")
-        logger.info(f"  Mean: {mom.mean():.4f}")
-        logger.info(f"  Std: {mom.std():.4f}")
-        logger.info(f"  Median: {mom.median():.4f}")
-        logger.info(f"  Min: {mom.min():.4f}")
-        logger.info(f"  Max: {mom.max():.4f}")
+    # CVG validation (if CVGCalculator was used)
+    for calc in calculators:
+        if calc.__class__.__name__ == 'CVGCalculator' and calc.feature_names:
+            # Pick the first cvg_* feature as the representative column
+            cvg_col = next((f for f in calc.feature_names if f.startswith('cvg_') and 'count' not in f), None)
+            if cvg_col and cvg_col in df_features.columns:
+                cvg = df_features[cvg_col].dropna()
+                logger.info(f"\nCVG Statistics ({cvg_col}):")
+                logger.info(f"  Count: {len(cvg):,}")
+                logger.info(f"  Mean: {cvg.mean():.3f} (paper: ~1.24)")
+                logger.info(f"  Std: {cvg.std():.3f}")
+                logger.info(f"  Median: {cvg.median():.3f}")
+                logger.info(f"  Min: {cvg.min():.3f}")
+                logger.info(f"  Max: {cvg.max():.3f}")
+
+                # Validate range: 0 ≤ CVG ≤ 2
+                out_of_range = ((cvg < 0) | (cvg > 2)).sum()
+                if out_of_range > 0:
+                    logger.warning(f"  ⚠️  {out_of_range} CVG values out of range [0, 2]!")
+            break
+
+    # Momentum validation (if MomentumCalculator was used)
+    for calc in calculators:
+        if calc.__class__.__name__ == 'MomentumCalculator' and calc.feature_names:
+            # Pick the first *_mean feature as the representative column
+            mom_col = next((f for f in calc.feature_names if f.endswith('_mean')), None)
+            if mom_col and mom_col in df_features.columns:
+                mom = df_features[mom_col].dropna()
+                logger.info(f"\nMomentum Statistics ({mom_col}):")
+                logger.info(f"  Count: {len(mom):,}")
+                logger.info(f"  Mean: {mom.mean():.4f}")
+                logger.info(f"  Std: {mom.std():.4f}")
+                logger.info(f"  Median: {mom.median():.4f}")
+                logger.info(f"  Min: {mom.min():.4f}")
+                logger.info(f"  Max: {mom.max():.4f}")
+            break
 
 
 def save_features(df_features: pd.DataFrame, output_path: str) -> None:
