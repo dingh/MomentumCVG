@@ -4,11 +4,43 @@ CVG (Continuous Volatility Gap) Feature Calculator
 Calculates CVG features from historical volatility gaps (Realized Vol - Implied Vol).
 Implements the IFeatureCalculator protocol.
 
-This implements the methodology from the academic paper on option momentum:
-1. Calculate volatility gap: RV - IV
-2. Apply cross-sectional median adjustment per date (removes market-wide variation)
-3. Calculate cumulative gap (cgap) and percentages of positive/negative gaps
-4. Compute DVG (Discontinuous Volatility Gap) and CVG = 1 - DVG
+This module computes CVG/DVG features from a panel of monthly (or weekly)
+volatility gaps:
+
+    vol_gap = realized_volatility - implied_volatility
+
+The core definitions follow *Mind the Gap: Continuous Volatility Gaps and Option
+Momentum* (Gan & Nguyen). In particular (their Eq. 1):
+
+    DVG = sign(cgap) * (%neg - %pos)   if cgap > 0
+        = sign(cgap) * (%pos - %neg)   if cgap < 0
+        = 0                             if cgap == 0
+    CVG = 1 - DVG
+
+Where:
+  - %pos/%neg are computed from monthly volatility gaps after subtracting the
+    cross-sectional median in each month (to remove market-wide shifts).
+  - cgap is the *cumulative* volatility gap over the formation window,
+    **then** adjusted by subtracting the cross-sectional median of cgap.
+
+Important implementation notes / fixes vs the previous version:
+
+Fix #1 - Correct cgap adjustment (paper definition):
+    The paper defines cgap as the cumulative RAW volatility gap over the window,
+    and then subtracts the cross-sectional median of that cumulative quantity.
+    The previous implementation summed per-month median-adjusted gaps, which is
+    not generally equal. This file now implements the paper definition.
+
+Fix #2 - Correct handling of sign(cgap) when cgap == 0:
+    sign(0) = 0 -> DVG should be 0 -> CVG should be 1.
+    The previous implementation fell into the "negative" branch and could
+    produce nonzero DVG when cgap was exactly 0.
+
+Fix #3 - BUGFIX in calculate_bulk(): groupwise shift:
+    After groupby().rolling(), pandas returns a MultiIndex series.
+    Calling .shift(min_lag) shifts the *entire* series, which can leak values
+    across ticker boundaries. We now shift *within* each ticker via
+    .groupby(level=0).shift(min_lag).
 
 CVG measures trend continuity:
 - High CVG (>1): Continuous trend (all gaps same sign as cumulative)
@@ -20,11 +52,11 @@ Both longs and shorts prefer HIGH CVG (continuous trends).
 Features computed per window:
 - cvg: Continuous Volatility Gap (primary signal for trend quality)
 - dvg: Discontinuous Volatility Gap (cvg = 1 - dvg)
-- cgap: Cumulative adjusted volatility gap
-- pct_pos: Percentage of positive adjusted gaps
-- pct_neg: Percentage of negative adjusted gaps
-- volgap_mean: Mean adjusted volatility gap
-- volgap_std: Std dev of adjusted volatility gap
+- cgap: Cumulative adjusted volatility gap (paper definition: raw cgap minus
+        cross-sectional median, NOT sum of per-month-adjusted gaps)
+- pct_pos: Percentage of positive per-month-adjusted gaps
+- pct_neg: Percentage of negative per-month-adjusted gaps
+- volgap_mean: Mean per-month-adjusted volatility gap
 - cvg_count: Number of observations
 
 Example:
@@ -56,23 +88,33 @@ class CVGCalculator:
     """
     Calculate CVG (Continuous Volatility Gap) features from historical vol gaps.
     
-    Implements IFeatureCalculator protocol to compute CVG metrics that measure
-    the continuity/smoothness of volatility trends.
+    Implements IFeatureCalculator protocol following the paper definition from
+    Gan & Nguyen ("Mind the Gap"):
+    
+        DVG = sign(cgap) * (%neg - %pos)   [cgap > 0]
+            = sign(cgap) * (%pos - %neg)   [cgap < 0]
+            = 0                             [cgap == 0]  <- Fix #2
+        CVG = 1 - DVG
+    
+    cgap is the cumulative RAW vol_gap over the window, cross-sectionally
+    adjusted by subtracting the median cgap across all tickers on that date.
+    (Fix #1: NOT the sum of per-date median-adjusted gaps.)
+    %pos/%neg are derived from per-date median-adjusted vol_gap values.
     
     Attributes:
         windows: List of (max_lag, min_lag) tuples defining lookback periods.
             Example: [(12, 2)] means use data from t-12 to t-2 weeks.
         min_periods: Minimum observations required for valid calculation.
-            Default 2 (need at least 2 to determine trend direction).
+        vol_gap_col: Column name for raw volatility gap (RV - IV).
     
     Example:
         >>> calculator = CVGCalculator(
-        ...     windows=[(12, 2), (8, 1)],  # Two CVG windows
+        ...     windows=[(12, 2), (8, 1)],
         ...     min_periods=2
         ... )
         >>> calculator.feature_names
-        ['cvg_12_2', 'dvg_12_2', 'cgap_12_2', 'pct_pos_12_2', 
-         'pct_neg_12_2', 'volgap_mean_12_2', 'volgap_std_12_2', 'cvg_count_12_2',
+        ['cvg_12_2', 'dvg_12_2', 'cgap_12_2', 'pct_pos_12_2',
+         'pct_neg_12_2', 'volgap_mean_12_2', 'cvg_count_12_2',
          'cvg_8_1', 'dvg_8_1', ...]
     """
     
@@ -157,7 +199,24 @@ class CVGCalculator:
             ['straddle_history'] - requires historical straddle data with vol gaps
         """
         return ['straddle_history']
-    
+
+    def _resolve_vol_gap_col(self, history: pd.DataFrame) -> str:
+        """
+        Resolve the vol_gap column name, computing vol_gap = RV - IV if needed.
+
+        Modifies history in-place when computing from component columns.
+        Raises ValueError if neither source is available.
+        """
+        if self.vol_gap_col in history.columns:
+            return self.vol_gap_col
+        if 'realized_volatility' in history.columns and 'entry_iv' in history.columns:
+            history['vol_gap'] = history['realized_volatility'] - history['entry_iv']
+            return 'vol_gap'
+        raise ValueError(
+            f"Need either '{self.vol_gap_col}' column or "
+            "'realized_volatility' and 'entry_iv' columns"
+        )
+
     def calculate(
         self,
         context: FeatureDataContext,
@@ -166,122 +225,117 @@ class CVGCalculator:
     ) -> pd.DataFrame:
         """
         Calculate CVG features for specified tickers at a single date.
-        
-        For each ticker, applies cross-sectional median adjustment and computes
-        CVG metrics from the lookback window.
-        
+
+        Two-stage pipeline (paper definition):
+
+        Stage 1 — Per-date median adjustment (removes market-wide shifts):
+            vol_gap_adjusted = vol_gap - median(vol_gap per date)
+            Used for: %pos, %neg, volgap_mean
+
+        Stage 2 — Cross-sectional cgap adjustment (Fix #1):
+            raw_cgap = sum(RAW vol_gap) over window  [NOT sum of adjusted gaps]
+            cgap = raw_cgap - median(raw_cgap across all tickers)
+            Used for: DVG sign determination
+
+        DVG sign rules (Fix #2):
+            cgap > 0  -> DVG = %neg - %pos
+            cgap < 0  -> DVG = %pos - %neg
+            cgap == 0 -> DVG = 0, CVG = 1  (sign(0) = 0)
+
         Args:
-            context: Data context containing 'straddle_history' DataFrame with:
-                - ticker (str): Stock ticker
-                - entry_date (datetime): Trade entry date
-                - vol_gap (float): Volatility gap (RV - IV)
-                  OR realized_volatility and entry_iv to compute gap
-                
-            date: Target date for feature calculation (features use data BEFORE this)
-            
-            tickers: List of ticker symbols to calculate features for
-            
+            context: Data context with 'straddle_history' DataFrame.
+            date: Target date; features use history up to and including this date.
+            tickers: List of ticker symbols.
+
         Returns:
-            DataFrame with columns:
-                - ticker: Stock ticker
-                - date: Feature calculation date
-                - cvg_{w1}_{w2}: Continuous Volatility Gap
-                - dvg_{w1}_{w2}: Discontinuous Volatility Gap
-                - cgap_{w1}_{w2}: Cumulative adjusted gap
-                - pct_pos_{w1}_{w2}: % positive gaps
-                - pct_neg_{w1}_{w2}: % negative gaps
-                - volgap_mean_{w1}_{w2}: Mean adjusted gap
-                - volgap_std_{w1}_{w2}: Std adjusted gap
-                - cvg_count_{w1}_{w2}: Number of observations
-                
-            NaN values indicate insufficient data (< min_periods observations).
-            
-        Example:
-            >>> features = calculator.calculate(context, datetime(2024, 1, 5), ['AAPL', 'TSLA'])
-            >>> print(features)
-                ticker       date  cvg_12_2  dvg_12_2  cgap_12_2
-            0    AAPL 2024-01-05     1.35     -0.35       2.5
-            1    TSLA 2024-01-05     0.82      0.18      -1.2
+            DataFrame with one row per ticker and CVG feature columns.
         """
-        # Convert tickers to uppercase
         tickers = [t.upper() for t in tickers]
-        
-        # Get straddle history
         history = context.get('straddle_history').copy()
-        
-        # Ensure vol_gap column exists
-        if self.vol_gap_col not in history.columns:
-            if 'realized_volatility' in history.columns and 'entry_iv' in history.columns:
-                history['vol_gap'] = history['realized_volatility'] - history['entry_iv']
-                vol_gap_col = 'vol_gap'
-            else:
-                raise ValueError(
-                    f"Need either '{self.vol_gap_col}' column or "
-                    "'realized_volatility' and 'entry_iv' columns"
-                )
-        else:
-            vol_gap_col = self.vol_gap_col
-        
-        # Filter to data before target date
+
+        if not pd.api.types.is_datetime64_any_dtype(history['entry_date']):
+            history['entry_date'] = pd.to_datetime(history['entry_date'])
+
+        vol_gap_col = self._resolve_vol_gap_col(history)
+
+        # Filter to data up to and including target date
         history = history[history['entry_date'] <= date].copy()
-        
-        # Handle empty history - return NaN features for all tickers
+
         if len(history) == 0:
             return pd.DataFrame([
                 {'ticker': ticker, 'date': date, **{fn: np.nan for fn in self.feature_names}}
                 for ticker in tickers
             ])
-        
-        # CRITICAL: Apply cross-sectional median adjustment per date
-        # This removes market-wide volatility shifts and accounts for skewness
+
+        # Stage 1: Per-date cross-sectional median adjustment
+        # Used for %pos / %neg / volgap_mean (not for cgap)
         history['vol_gap_adjusted'] = history.groupby('entry_date')[vol_gap_col].transform(
             lambda x: x - x.median()
         )
-        
-        # Sort by ticker and date
+
         history = history.sort_values(['ticker', 'entry_date'])
-        
-        results = []
-        
+
+        # --- Pass 1: collect window data and raw_cgap for all tickers ---
+        # raw_cgap uses RAW vol_gap (Fix #1 — NOT sum of adjusted gaps)
+        ticker_info = {}
         for ticker in tickers:
-            # Filter to this ticker
             ticker_data = history[history['ticker'] == ticker].copy()
-            
+            ticker_info[ticker] = {'data': ticker_data, 'windows': {}}
+
             if len(ticker_data) == 0:
-                # No history for this ticker
-                row = {'ticker': ticker, 'date': date}
-                row.update({fn: np.nan for fn in self.feature_names})
-                results.append(row)
                 continue
-            
-            # Find the row for the target date
+
             target_rows = ticker_data[ticker_data['entry_date'] == date]
-            
             if len(target_rows) == 0:
-                # Target date not in history for this ticker
-                row = {'ticker': ticker, 'date': date}
-                row.update({fn: np.nan for fn in self.feature_names})
-                results.append(row)
                 continue
-            
-            # Get position of target date in ticker's history
+
             target_position = ticker_data.index.get_loc(target_rows.index[0])
-            
-            # Calculate features for each window
-            row = {'ticker': ticker, 'date': date}
-            
+
             for max_lag, min_lag in self.windows:
                 suffix = f'{max_lag}_{min_lag}'
-                
-                # Row-based lookback (same as momentum calculator)
-                start_idx = target_position - max_lag
+                start_idx = max(0, target_position - max_lag)
                 end_idx = target_position - min_lag
-                
-                # Ensure indices are valid
-                if start_idx < 0:
-                    start_idx = 0
-                if end_idx <= start_idx:
-                    # No valid window
+
+                if end_idx < start_idx:
+                    ticker_info[ticker]['windows'][suffix] = None  # collapsed
+                    continue
+
+                window_data = ticker_data.iloc[start_idx:end_idx + 1]
+                raw_cgap = window_data[vol_gap_col].sum(min_count=1)  # NaN when all values NaN
+                ticker_info[ticker]['windows'][suffix] = {
+                    'window_data': window_data,
+                    'raw_cgap': raw_cgap
+                }
+
+        # --- Stage 2: cross-sectional median of raw_cgap per window (Fix #1) ---
+        cgap_medians = {}
+        for max_lag, min_lag in self.windows:
+            suffix = f'{max_lag}_{min_lag}'
+            raw_cgaps = [
+                info['windows'][suffix]['raw_cgap']
+                for info in ticker_info.values()
+                if (info['windows'].get(suffix) is not None and
+                    not pd.isna(info['windows'][suffix]['raw_cgap']))
+            ]
+            cgap_medians[suffix] = float(np.median(raw_cgaps)) if raw_cgaps else np.nan
+
+        # --- Pass 2: build result rows with adjusted cgap ---
+        results = []
+        for ticker in tickers:
+            row = {'ticker': ticker, 'date': date}
+            info = ticker_info[ticker]
+
+            # No data or target date missing
+            if len(info['data']) == 0 or not info['data']['entry_date'].eq(date).any():
+                row.update({fn: np.nan for fn in self.feature_names})
+                results.append(row)
+                continue
+
+            for max_lag, min_lag in self.windows:
+                suffix = f'{max_lag}_{min_lag}'
+                w = info['windows'].get(suffix)
+
+                if w is None:  # collapsed window
                     row.update({
                         f'cvg_{suffix}': np.nan,
                         f'dvg_{suffix}': np.nan,
@@ -289,42 +343,52 @@ class CVGCalculator:
                         f'pct_pos_{suffix}': np.nan,
                         f'pct_neg_{suffix}': np.nan,
                         f'volgap_mean_{suffix}': np.nan,
-                        #f'volgap_std_{suffix}': np.nan,
                         f'cvg_count_{suffix}': 0
                     })
                     continue
-                
-                # Get window data (inclusive)
-                window_data = ticker_data.iloc[start_idx:end_idx + 1]
-                
-                # Calculate features
-                suffix = f'{max_lag}_{min_lag}'
-                features = self._calculate_window_features(window_data, suffix)
+
+                # Fix #1: cgap = raw_cgap minus cross-sectional median
+                median = cgap_medians.get(suffix, np.nan)
+                adjusted_cgap = w['raw_cgap'] - (median if not np.isnan(median) else 0.0)
+
+                features = self._calculate_window_features(
+                    w['window_data'], suffix, adjusted_cgap
+                )
                 row.update(features)
-            
+
             results.append(row)
-        
+
         return pd.DataFrame(results)
     
     def _calculate_window_features(
         self,
         window_data: pd.DataFrame,
-        suffix: str
+        suffix: str,
+        adjusted_cgap: float
     ) -> dict:
         """
         Calculate CVG features for a single window.
-        
+
         Args:
-            window_data: DataFrame with 'vol_gap_adjusted' column
-            suffix: Feature name suffix (e.g., '12_2')
-            
+            window_data: DataFrame slice with 'vol_gap_adjusted' column
+                (per-date median-adjusted vol gaps — used for %pos/%neg/mean).
+            suffix: Feature name suffix (e.g., '12_2').
+            adjusted_cgap: Pre-computed cross-sectionally-adjusted cumulative gap
+                (raw_cgap minus cross-sectional median). Implements Fix #1:
+                paper definition of cgap, NOT sum of per-date-adjusted gaps.
+
         Returns:
-            Dict of features with NaN if insufficient data
+            Dict of features. NaN if count < min_periods.
+
+        DVG / CVG rules (Fix #2):
+            cgap > 0  -> DVG = %neg - %pos
+            cgap < 0  -> DVG = %pos - %neg
+            cgap == 0 -> DVG = 0, CVG = 1  (previously fell into negative branch)
         """
+        # %pos/%neg/mean from per-date-adjusted gaps (Stage 1)
         adjusted_gaps = window_data['vol_gap_adjusted'].dropna().values
         count = len(adjusted_gaps)
-        
-        # Initialize features as NaN
+
         features = {
             f'cvg_{suffix}': np.nan,
             f'dvg_{suffix}': np.nan,
@@ -332,48 +396,37 @@ class CVGCalculator:
             f'pct_pos_{suffix}': np.nan,
             f'pct_neg_{suffix}': np.nan,
             f'volgap_mean_{suffix}': np.nan,
-           # f'volgap_std_{suffix}': np.nan,
             f'cvg_count_{suffix}': count
         }
-        
-        # Need minimum observations for valid statistics
+
         if count < self.min_periods:
             return features
-        
-        # Calculate basic statistics
-        cgap = np.sum(adjusted_gaps)  # Cumulative adjusted gap
-        mean_gap = np.mean(adjusted_gaps)
-        std_gap = np.std(adjusted_gaps, ddof=1) if count > 1 else 0.0
-        
-        # Count positive and negative gaps
+
         pos_count = np.sum(adjusted_gaps >= 0)
         neg_count = np.sum(adjusted_gaps < 0)
-        
         pct_pos = pos_count / count
         pct_neg = neg_count / count
-        
-        # Calculate DVG based on sign of cumulative gap
-        # DVG = sign(cgap) × (%neg - %pos) if cgap > 0
-        #     = sign(cgap) × (%pos - %neg) if cgap <= 0
-        if cgap > 0:
-            dvg = pct_neg - pct_pos  # Positive cumulative case
+        mean_gap = np.mean(adjusted_gaps)
+
+        # DVG using sign(adjusted_cgap) — Fix #2: explicit cgap == 0 branch
+        if adjusted_cgap > 0:
+            dvg = pct_neg - pct_pos
+        elif adjusted_cgap < 0:
+            dvg = pct_pos - pct_neg
         else:
-            dvg = pct_pos - pct_neg  # Negative cumulative case
-        
-        # CVG = 1 - DVG
-        cvg = 1 - dvg
-        
-        # Update features
+            dvg = 0.0  # sign(0) = 0 -> DVG = 0 -> CVG = 1
+
+        cvg = 1.0 - dvg
+
         features.update({
             f'cvg_{suffix}': cvg,
             f'dvg_{suffix}': dvg,
-            f'cgap_{suffix}': cgap,
+            f'cgap_{suffix}': adjusted_cgap,
             f'pct_pos_{suffix}': pct_pos,
             f'pct_neg_{suffix}': pct_neg,
             f'volgap_mean_{suffix}': mean_gap,
-           # f'volgap_std_{suffix}': std_gap
         })
-        
+
         return features
     
     def calculate_bulk(
@@ -385,202 +438,165 @@ class CVGCalculator:
     ) -> pd.DataFrame:
         """
         Calculate CVG features for a date range efficiently (vectorized).
-        
-        Uses pandas rolling windows + shift (same as add_cvg_features),
-        which is 20-100x faster than looping through dates.
-        
-        CRITICAL: Applies cross-sectional median adjustment per date to remove
-        market-wide volatility shifts.
-        
+
+        Two-stage pipeline (paper definition):
+
+        Stage 1 — Per-date median adjustment (applied globally before windowing):
+            vol_gap_adjusted = vol_gap - median(vol_gap) per date
+            Used for: %pos, %neg, volgap_mean (rolling on adjusted column)
+
+        Stage 2 — cgap cross-sectional adjustment per date (Fix #1):
+            cgap_raw = rolling sum of RAW vol_gap per ticker (NOT adjusted)
+            cgap = cgap_raw - median(cgap_raw across tickers) per date
+
+        Fix #2 — DVG when cgap == 0: explicitly yields DVG = 0, CVG = 1.
+
+        Fix #3 — Groupwise shift: uses .groupby(level=0).shift(min_lag) after
+            groupby().rolling() to prevent cross-ticker value leakage across
+            the (ticker, position) MultiIndex boundary.
+
         Args:
-            context: Data context containing 'straddle_history' DataFrame with:
-                - ticker (str): Stock ticker
-                - entry_date (datetime): Trade entry date
-                - vol_gap (float): Volatility gap (RV - IV)
-                  OR realized_volatility and entry_iv to compute gap
-                
-            start_date: Start date for feature calculation (inclusive)
-            
-            end_date: End date for feature calculation (inclusive)
-            
-            tickers: Optional list of tickers. If None, uses all tickers in data.
-            
+            context: Data context with 'straddle_history' DataFrame.
+            start_date: Start date (inclusive).
+            end_date: End date (inclusive).
+            tickers: Optional ticker filter. None = all tickers.
+
         Returns:
-            DataFrame with columns:
-                - ticker (str): Stock ticker
-                - date (datetime): Feature calculation date
-                - cvg_{max_lag}_{min_lag} (float): Continuous Volatility Gap
-                - dvg_{max_lag}_{min_lag} (float): Discontinuous Volatility Gap
-                - cgap_{max_lag}_{min_lag} (float): Cumulative adjusted gap
-                - pct_pos_{max_lag}_{min_lag} (float): % positive gaps
-                - pct_neg_{max_lag}_{min_lag} (float): % negative gaps
-                - volgap_mean_{max_lag}_{min_lag} (float): Mean adjusted gap
-                - volgap_std_{max_lag}_{min_lag} (float): Std adjusted gap
-                - cvg_count_{max_lag}_{min_lag} (int): Number of observations
-                
-            One row per (ticker, date) where ticker has data on that date.
-            NaN values indicate insufficient data (< min_periods).
-            
-        Example:
-            >>> # Calculate for all tickers in 2024
-            >>> features = calculator.calculate_bulk(
-            ...     context,
-            ...     start_date=datetime(2024, 1, 1),
-            ...     end_date=datetime(2024, 12, 31)
-            ... )
-            >>> print(f"Generated {len(features):,} feature records")
+            DataFrame with ticker, date, and CVG feature columns.
         """
-        # Get straddle history
         history = context.get('straddle_history').copy()
-        
-        # Convert dates to datetime if needed
+
         if not pd.api.types.is_datetime64_any_dtype(history['entry_date']):
             history['entry_date'] = pd.to_datetime(history['entry_date'])
-        
-        # Convert tickers to uppercase and filter if provided
+
         if tickers is not None:
             tickers = [t.upper() for t in tickers]
             history = history[history['ticker'].isin(tickers)].copy()
-        
-        # Ensure vol_gap column exists
-        if self.vol_gap_col not in history.columns:
-            if 'realized_volatility' in history.columns and 'entry_iv' in history.columns:
-                history['vol_gap'] = history['realized_volatility'] - history['entry_iv']
-                vol_gap_col = 'vol_gap'
-            else:
-                raise ValueError(
-                    f"Need either '{self.vol_gap_col}' column or "
-                    "'realized_volatility' and 'entry_iv' columns"
-                )
-        else:
-            vol_gap_col = self.vol_gap_col
-        
-        # Convert dates to datetime if needed
-        if not pd.api.types.is_datetime64_any_dtype(history['entry_date']):
-            history['entry_date'] = pd.to_datetime(history['entry_date'])
-        
-        # Sort by ticker and date (required for rolling windows)
+
+        vol_gap_col = self._resolve_vol_gap_col(history)
+
         history = history.sort_values(['ticker', 'entry_date'])
-        
-        # CRITICAL: Apply cross-sectional median adjustment per date
-        # This removes market-wide volatility shifts and accounts for skewness
+
+        # Stage 1: Per-date cross-sectional median adjustment of raw vol_gap
+        # Used for %pos / %neg / volgap_mean rolling calculations
         history['vol_gap_adjusted'] = history.groupby('entry_date')[vol_gap_col].transform(
             lambda x: x - x.median()
         )
-        
-        # Calculate features for each window using vectorized rolling + shift
+
         for max_lag, min_lag in self.windows:
             window_size = max_lag - min_lag + 1
             suffix = f'{max_lag}_{min_lag}'
-            
-            # Group by ticker for per-ticker rolling calculations
-            grouped = history.groupby('ticker')['vol_gap_adjusted']
-            
-            # Cumulative gap (cgap): rolling sum + shift
-            history[f'cgap_{suffix}'] = (
-                grouped
-                .rolling(window=window_size, min_periods=1)
-                .sum()
-                .shift(min_lag)
-                .reset_index(level=0, drop=True)
-            )
-            
-            # Count: rolling count + shift
+
+            grouped_adjusted = history.groupby('ticker')['vol_gap_adjusted']
+            grouped_raw = history.groupby('ticker')[vol_gap_col]
+
+            # Count (NaN-aware, from adjusted column)
             history[f'cvg_count_{suffix}'] = (
-                grouped
+                grouped_adjusted
                 .rolling(window=window_size, min_periods=1)
                 .count()
-                .shift(min_lag)
+                .groupby(level=0).shift(min_lag)           # Fix #3
                 .reset_index(level=0, drop=True)
             )
-            
-            # Mean: rolling mean + shift
+
+            # Mean adjusted gap
             history[f'volgap_mean_{suffix}'] = (
-                grouped
+                grouped_adjusted
                 .rolling(window=window_size, min_periods=1)
                 .mean()
-                .shift(min_lag)
+                .groupby(level=0).shift(min_lag)           # Fix #3
                 .reset_index(level=0, drop=True)
             )
-            
-            # Std: rolling std + shift
-            #history[f'volgap_std_{suffix}'] = (
-            #    grouped
-            #    .rolling(window=window_size, min_periods=max(2, self.min_periods))
-            #    .std(ddof=1)
-            #    .shift(min_lag)
-            #    .reset_index(level=0, drop=True)
-            #)
-            
-            # Count positive gaps: rolling apply
-            history[f'pos_count_{suffix}'] = (
-                grouped
+
+            # Count positive adjusted gaps
+            history[f'_pos_count_{suffix}'] = (
+                grouped_adjusted
                 .rolling(window=window_size, min_periods=1)
                 .apply(lambda x: (x >= 0).sum(), raw=True)
-                .shift(min_lag)
+                .groupby(level=0).shift(min_lag)           # Fix #3
                 .reset_index(level=0, drop=True)
             )
-            
-            # Count negative gaps: rolling apply
-            history[f'neg_count_{suffix}'] = (
-                grouped
+
+            # Count negative adjusted gaps
+            history[f'_neg_count_{suffix}'] = (
+                grouped_adjusted
                 .rolling(window=window_size, min_periods=1)
                 .apply(lambda x: (x < 0).sum(), raw=True)
-                .shift(min_lag)
+                .groupby(level=0).shift(min_lag)           # Fix #3
                 .reset_index(level=0, drop=True)
             )
-            
-            # Calculate percentages
+
             history[f'pct_pos_{suffix}'] = np.where(
                 history[f'cvg_count_{suffix}'] > 0,
-                history[f'pos_count_{suffix}'] / history[f'cvg_count_{suffix}'],
+                history[f'_pos_count_{suffix}'] / history[f'cvg_count_{suffix}'],
                 np.nan
             )
-            
             history[f'pct_neg_{suffix}'] = np.where(
                 history[f'cvg_count_{suffix}'] > 0,
-                history[f'neg_count_{suffix}'] / history[f'cvg_count_{suffix}'],
+                history[f'_neg_count_{suffix}'] / history[f'cvg_count_{suffix}'],
                 np.nan
             )
-            
-            # Calculate DVG based on sign of cgap
-            # DVG = sign(cgap) × (%neg - %pos) if cgap > 0
-            #     = sign(cgap) × (%pos - %neg) if cgap <= 0
+
+            # Fix #1: cgap = rolling sum of RAW vol_gap, then cross-sectionally adjusted
+            # Step A: per-ticker rolling sum of raw vol_gap
+            history[f'_cgap_raw_{suffix}'] = (
+                grouped_raw
+                .rolling(window=window_size, min_periods=1)
+                .sum()
+                .groupby(level=0).shift(min_lag)           # Fix #3
+                .reset_index(level=0, drop=True)
+            )
+            # Step B: cross-sectional median subtraction per date
+            history[f'cgap_{suffix}'] = history.groupby('entry_date')[f'_cgap_raw_{suffix}'].transform(
+                lambda x: x - x.median()
+            )
+
+            # Fix #2: DVG with explicit cgap == 0 branch -> DVG = 0 -> CVG = 1
+            count_ok = history[f'cvg_count_{suffix}'] >= self.min_periods
             history[f'dvg_{suffix}'] = np.where(
-                history[f'cvg_count_{suffix}'] >= self.min_periods,
+                count_ok,
                 np.where(
                     history[f'cgap_{suffix}'] > 0,
-                    history[f'pct_neg_{suffix}'] - history[f'pct_pos_{suffix}'],  # Positive cumulative
-                    history[f'pct_pos_{suffix}'] - history[f'pct_neg_{suffix}']   # Negative cumulative
+                    history[f'pct_neg_{suffix}'] - history[f'pct_pos_{suffix}'],
+                    np.where(
+                        history[f'cgap_{suffix}'] < 0,
+                        history[f'pct_pos_{suffix}'] - history[f'pct_neg_{suffix}'],
+                        0.0     # Fix #2: cgap == 0 -> DVG = 0
+                    )
                 ),
                 np.nan
             )
-            
-            # CVG = 1 - DVG
-            history[f'cvg_{suffix}'] = 1 - history[f'dvg_{suffix}']
-            
+            history[f'cvg_{suffix}'] = np.where(
+                history[f'dvg_{suffix}'].notna(),
+                1.0 - history[f'dvg_{suffix}'],
+                np.nan
+            )
+
             # Set all features to NaN where count < min_periods
             mask = history[f'cvg_count_{suffix}'] < self.min_periods
-            for feat in ['cvg', 'dvg', 'cgap', 'pct_pos', 'pct_neg', 'volgap_mean', 'volgap_std']:
-                history.loc[mask, f'{feat}_{suffix}'] = np.nan
-            
+            for feat in [f'cvg_{suffix}', f'dvg_{suffix}', f'cgap_{suffix}',
+                         f'pct_pos_{suffix}', f'pct_neg_{suffix}', f'volgap_mean_{suffix}']:
+                history.loc[mask, feat] = np.nan
+
             # Drop intermediate columns
-            history = history.drop(columns=[f'pos_count_{suffix}', f'neg_count_{suffix}'])
-        
-        # Drop adjusted column
+            history = history.drop(columns=[
+                f'_pos_count_{suffix}',
+                f'_neg_count_{suffix}',
+                f'_cgap_raw_{suffix}'
+            ])
+
+        # Drop Stage 1 helper column
         history = history.drop(columns=['vol_gap_adjusted'])
-        
+
         # Filter to target date range (inclusive)
         result = history[
-            (history['entry_date'] >= start_date) & 
+            (history['entry_date'] >= start_date) &
             (history['entry_date'] <= end_date)
         ].copy()
-        
-        # Select output columns
+
+        # Select and rename output columns
         output_cols = ['ticker', 'entry_date'] + self.feature_names
         result = result[output_cols].copy()
-        
-        # Rename entry_date to date
         result = result.rename(columns={'entry_date': 'date'})
-        
+
         return result

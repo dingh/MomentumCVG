@@ -12,12 +12,12 @@
 |-------|--------|---------------|----------|------------|-------|
 | **Layer 1: Core Models** | ✅ Complete | 45/45 | 100% | __h / 15h | All model classes tested |
 | **Layer 2: Builders & Analyzers** | ✅ Complete | 37/37 | 100% | __h / 18h | StraddleBuilder ✅, SpotPriceDB ✅, Analyzer ✅ |
-| **Layer 3: Feature Calculators** | 🟡 In Progress | 42/49 | ~86% | __h / 8h | MomentumCalculator: 42/42 ✅ (2 source bugs found & fixed); CVG: 0/7 not started |
+| **Layer 3: Feature Calculators** | ✅ Complete | 80/80 | 100% | __h / 8h | MomentumCalculator: 42/42 ✅ (2 source bugs found & fixed); CVGCalculator: 38/38 ✅ (1 source bug found & fixed) |
 | **Layer 4: Optimizer** | ⬜ Not Started | 0/12 | 0% | 0h / 12h | |
 | **Layer 5: Executor** | ⬜ Not Started | 0/6 | 0% | 0h / 4h | |
 | **Layer 6: Strategy** | ⬜ Not Started | 0/10 | 0% | 0h / 8h | |
 | **Setup & Infrastructure** | ✅ Complete | - | - | __h / 5h | pytest.ini + conftest.py |
-| **TOTAL** | **78%** | **124/159** | **~78%** | **__h / 70h** | |
+| **TOTAL** | **85%** | **162/190** | **~85%** | **__h / 70h** | |
 
 **Status Legend:** ⬜ Not Started | 🟡 In Progress | ✅ Complete | ⚠️ Blocked
 
@@ -242,16 +242,66 @@
 
 **Coverage Target:** 90% | **Actual:** 100% ✅
 
-### CVGCalculator (4h) — 0/7
-- [ ] `test_calculate_cvg_continuous_gains` - Positive CVG score
-- [ ] `test_calculate_cvg_continuous_losses` - Negative CVG score
-- [ ] `test_calculate_cvg_mixed_performance` - Lower CVG with reversals
-- [ ] `test_calculate_cvg_insufficient_data` - Returns NaN
-- [ ] `test_calculate_cvg_all_zeros` - Handles zero returns
-- [ ] `test_cvg_momentum_correlation` - High momentum → high CVG tendency
-- [ ] `test_cvg_filtering_threshold` - Top percentile selection
+### CVGCalculator — 38/38 ✅
+**File:** `tests/unit/test_cvg_calculator.py`
 
-**Coverage Target:** 90% | **Actual:** ___%
+#### TestCVGCalculatorInit ✅ (7/7)
+- [x] `test_init_default_parameters` - Default window [(12,2)], min_periods=1, vol_gap_col='vol_gap', 7 feature names
+- [x] `test_init_custom_windows` - 3 windows → 21 features (7 stats × 3 windows); all prefixes present
+- [x] `test_init_invalid_window_max_equal_to_min` - ValueError when max_lag == min_lag
+- [x] `test_init_invalid_window_max_less_than_min` - ValueError when max_lag < min_lag
+- [x] `test_init_invalid_window_negative_min_lag` - ValueError when min_lag < 0
+- [x] `test_feature_names_order_consistent` - Stats grouped by window: cvg, dvg, cgap, pct_pos, pct_neg, volgap_mean, cvg_count
+- [x] `test_required_data_sources` - Returns ['straddle_history']
+
+#### TestCrossMedianAdjustment ✅ (4/4)
+- [x] `test_stage1_per_date_median_subtracted_from_pct_signals` - 3-ticker inline: AAPL adjusted all-neg → pct_neg=1; ADP all-pos → pct_pos=1; TSLA all-zero → pct_pos=1
+- [x] `test_fix1_cgap_differs_from_sum_of_adjusted_gaps` - Rank-reversal design: paper cgap(AAPL)=0.0 ≠ old sum-of-adjusted=4.0; cvg=1.0
+- [x] `test_cgap_cross_sectional_median_is_zero_across_tickers` - median(cgap_8_2 at PRIMARY_DATE across 4 tickers) ≈ 0.0 (abs<1e-10)
+- [x] `test_vol_gap_resolved_from_components` - RV−IV context produces identical output to pre-computed vol_gap context
+
+#### TestWindowFeatureCalculation ✅ (6/6)
+- [x] `test_positive_cgap_dvg_is_neg_minus_pos` - cgap=+5, [3,−1,2,−2,4] → dvg=−0.2, cvg=1.2
+- [x] `test_negative_cgap_dvg_is_pos_minus_neg` - cgap=−5 → dvg=+0.2, cvg=0.8
+- [x] `test_zero_cgap_dvg_is_zero_cvg_is_one` - Fix #2 regression: cgap=0 → dvg=0.0 exactly (not 0.2)
+- [x] `test_all_gaps_positive_maximum_continuity` - all-positive, cgap=+15 → pct_pos=1, dvg=−1, cvg=2.0
+- [x] `test_insufficient_data_returns_nan` - 2 rows, min_periods=3 → count=2, all 6 signal features NaN
+- [x] `test_nan_gaps_excluded_from_pct_calculations` - [3,NaN,−1,NaN,2] → count=3, pct_pos=2/3, pct_neg=1/3
+
+#### TestCalculateSingleDate ✅ (7/7)
+- [x] `test_calculate_basic_single_ticker` - AAPL at PRIMARY_DATE: exact pct_pos=5/7, pct_neg=2/7, volgap_mean=0.02862; single-ticker → cgap=0, dvg=0, cvg=1
+- [x] `test_calculate_multiple_tickers` - [AAPL, TSLA, ADP] at PRIMARY_DATE → 3 rows, cvg==1−dvg all, UBER absent
+- [x] `test_calculate_fix1_cgap_exact_value` - 4-ticker: expected_cgap derived directly from fixture sums+median; asserts to rel=1e-5
+- [x] `test_calculate_fix2_zero_adjusted_cgap` - Inline: TSLA raw_cgap=9=median([15,9,3]) → cgap=0, dvg=0, cvg=1
+- [x] `test_calculate_collapsed_window` - Position 1 (2019-01-11): end_idx=−1 < start_idx → count=0, all NaN
+- [x] `test_calculate_ticker_not_in_history` - 'XYZ' → 1 row, all 7 features NaN
+- [x] `test_calculate_empty_ticker_list` - tickers=[] → len=0
+
+#### TestCalculateBulk ✅ (6/6)
+- [x] `test_calculate_bulk_output_schema` - Columns exactly ['ticker','date'] + feature_names; 'entry_date' absent
+- [x] `test_calculate_bulk_date_filtering` - Positions 7–11 (5 dates) × 2 tickers; min==start, max==end, no out-of-range
+- [x] `test_calculate_bulk_empty_date_range` - Future 2025 dates → len=0, schema preserved
+- [x] `test_calculate_bulk_cvg_identity_all_rows` - All 4 tickers × 52 dates: abs(cvg−(1−dvg))<1e-10 for every non-NaN row
+- [x] `test_calculate_bulk_fix3_no_cross_ticker_leakage` - [AAPL,ADP] positions 0–2: p0+p1 NaN; cross-validated vs calculate() with same 2-ticker set
+- [x] `test_calculate_bulk_cgap_median_zero_per_date` - All 4 tickers at PRIMARY_DATE: np.median(cgap_8_2) ≈ 0.0 (abs<1e-10)
+
+#### TestConsistency ✅ (4/4)
+- [x] `_assert_features_match` (helper) - Signal cols: rel=1e-6 or both NaN; count: (single=0, bulk=NaN) treated equivalent
+- [x] `test_calculate_vs_bulk_single_date_all_tickers` - All 4 tickers at PRIMARY_DATE: every (ticker, feature) pair matches
+- [x] `test_calculate_vs_bulk_full_fixture` - Exhaustive 52 dates × 4 tickers (208 pairs); caught bug: `.sum()` returns 0.0 for all-NaN windows → fixed to `.sum(min_count=1)`
+- [x] `test_cgap_cross_sectional_depends_on_ticker_universe` - AAPL cgap_8_2 differs between 2-ticker and 4-ticker calls at PRIMARY_DATE
+
+#### TestEdgeCases ✅ (5/5)
+- [x] `test_empty_ticker_list` - calculate([], …) → len=0
+- [x] `test_date_before_all_history` - 2018-01-01 (pre-fixture) → 1 row, all 7 features NaN
+- [x] `test_single_observation_min_periods_one` - AAPL pos 2 (2019-01-18) with min_periods=1 → count=1, non-NaN, cvg==1−dvg
+- [x] `test_all_nan_vol_gaps_returns_zero_count` - Inline all-NaN ticker, window (4,1) → count=0, all NaN
+- [x] `test_vol_gap_missing_raises_value_error` - Wrong schema (return_pct only) → ValueError matching 'vol_gap'
+
+**Source bug found and fixed during TestConsistency:**
+- `calculate()` used `.sum()` (returns 0.0 for all-NaN windows) while `calculate_bulk()` used rolling `.sum()` (returns NaN). Fixed to `.sum(min_count=1)` + NaN filter before cross-sectional median.
+
+**Coverage Target:** 90% | **Actual:** 100% ✅
 
 ---
 
@@ -392,6 +442,8 @@ _Record any new bugs discovered during testing_
 - **Bug: `calculate()` off-by-one in collapsed window check** (`momentum_calculator.py`) — `if end_idx <= start_idx` incorrectly collapsed a valid 1-element window when `end==start==0`. Fixed: `<=` → `<`. Caught by `TestConsistency.test_calculate_vs_bulk_full_fixture` (AAPL 2019-01-18, count=0 vs bulk count=1).
 
 - **Bug: `calculate_bulk()` cross-ticker shift contamination** (`momentum_calculator.py`) — `groupby('ticker').rolling().sum()` returns a `(ticker, pos)` MultiIndex; plain `.shift(min_lag)` shifted across the entire concatenated series, so ADP's first rows received AAPL's last rolling values. Fixed: `.groupby(level=0).shift(min_lag)` for all 3 stat chains (sum, count, std). Caught by same exhaustive consistency test.
+
+- **Bug: `calculate()` all-NaN window sum returns 0.0 instead of NaN** (`cvg_calculator.py`) — `pandas.Series.sum()` returns `0.0` for all-NaN series by default (`skipna=True`). UBER's pre-IPO windows (positions 0–20, all NaN) injected a spurious `0.0` into the cross-sectional `raw_cgap` list, shifting the Stage 2 median and producing different `cgap`/`cvg` values than `calculate_bulk()`. Fixed: `.sum(min_count=1)` + NaN filter before `np.median()`. Caught by `TestConsistency.test_calculate_vs_bulk_full_fixture` (AAPL 2019-02-01, cvg=0.667 vs bulk cvg=1.0).
 
 ### Testing Patterns Learned
 _Document useful pytest patterns as you learn them_
