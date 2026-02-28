@@ -300,35 +300,97 @@ class OratsCorporateActionsFetcher:
 
 # ── universe helpers ───────────────────────────────────────────────────────────
 
-def get_all_unique_tickers(parquet_root: str | Path) -> List[str]:
-    """Scan a partitioned ORATS parquet store and return every unique ticker.
+def get_all_unique_tickers(
+    data_root: str | Path,
+    output_path: Optional[str | Path] = None,
+    ticker_col: str = "ticker",
+) -> List[str]:
+    """Scan every ZIP in a partitioned ORATS raw-data store and return unique tickers.
 
-    Walks ``parquet_root/{YYYY}/ORATS_SMV_Strikes_*.parquet`` and reads only
-    the ``ticker`` column from each file for efficiency.
+    Walks ``data_root/{YYYY}/ORATS_SMV_Strikes_*.zip``, opens each ZIP in-memory,
+    and reads only the ticker column from the CSV inside for efficiency.
+    Intended as a one-time scan; results can be persisted via ``output_path``.
 
     Parameters
     ----------
-    parquet_root : str or Path
-        Root directory of the ORATS adjusted data store,
-        e.g. ``C:/ORATS/data/ORATS_Adjusted``.
+    data_root : str or Path
+        Root directory of the ORATS raw data store,
+        e.g. ``C:/ORATS/data/ORATS_Data``.
+    output_path : str or Path, optional
+        If provided, saves the resulting ticker list as a single-column parquet
+        file at this path (directories are created as needed).
+    ticker_col : str
+        Name of the ticker column inside the CSV (default ``"ticker"``).
 
     Returns
     -------
     list[str]
         Sorted list of unique tickers found across all files.
     """
-    parquet_root = Path(parquet_root)
+    import zipfile
+
+    data_root = Path(data_root)
     tickers: set[str] = set()
 
-    for year_dir in sorted(parquet_root.iterdir()):
-        if not year_dir.is_dir():
-            continue
-        files = sorted(year_dir.glob("*.parquet"))
-        for file_path in tqdm(files, desc=f"Scanning {year_dir.name}"):
-            try:
-                df = pd.read_parquet(file_path, columns=["ticker"])
-                tickers.update(df["ticker"].unique())
-            except Exception as exc:
-                logger.warning("Failed to read %s: %s", file_path.name, exc)
+    year_dirs = sorted([d for d in data_root.iterdir() if d.is_dir()])
 
-    return sorted(tickers)
+    # Pre-count total ZIP files across all years so the outer bar shows accurate ETA
+    all_zip_files: list[tuple[Path, list[Path]]] = []
+    for year_dir in year_dirs:
+        zips = sorted(year_dir.glob("*.zip"))
+        if zips:
+            all_zip_files.append((year_dir, zips))
+
+    total_files = sum(len(zips) for _, zips in all_zip_files)
+
+    # Temp file sits next to the final output (or in cwd if no output_path given)
+    if output_path:
+        temp_path = Path(output_path).with_suffix(".tmp.parquet")
+    else:
+        temp_path = data_root / "_tickers_tmp.parquet"
+
+    outer = tqdm(all_zip_files, desc="Years", unit="yr", position=0, leave=True)
+    inner = tqdm(total=total_files, desc="Files", unit="file", position=1, leave=True)
+
+    try:
+        for year_dir, zip_files in outer:
+            outer.set_postfix(year=year_dir.name, tickers=len(tickers))
+
+            for zip_path in zip_files:
+                inner.set_postfix(file=zip_path.name)
+                try:
+                    with zipfile.ZipFile(zip_path, "r") as zf:
+                        csv_names = [n for n in zf.namelist() if n.endswith((".csv", ".txt"))]
+                        if not csv_names:
+                            logger.warning("No CSV/TXT found inside %s", zip_path.name)
+                        else:
+                            with zf.open(csv_names[0]) as f:
+                                df = pd.read_csv(f, usecols=[ticker_col], dtype={ticker_col: str})
+                                tickers.update(df[ticker_col].dropna().unique())
+                except Exception as exc:
+                    logger.warning("Failed to read %s: %s", zip_path.name, exc)
+                finally:
+                    inner.update(1)
+
+            # ── save incremental result after each year ────────────────────────
+            temp_path.parent.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame({"ticker": sorted(tickers)}).to_parquet(temp_path, index=False)
+            logger.info("Year %s done — %d tickers so far (temp saved)", year_dir.name, len(tickers))
+
+    finally:
+        outer.close()
+        inner.close()
+
+    result = sorted(tickers)
+    logger.info("Scan complete — %d unique tickers across %s", len(result), data_root)
+
+    if output_path:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame({"ticker": result}).to_parquet(output_path, index=False)
+        logger.info("Ticker list saved to %s", output_path)
+        # Clean up temp file once final output is written
+        if temp_path.exists():
+            temp_path.unlink()
+
+    return result
