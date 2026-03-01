@@ -170,7 +170,7 @@ def main():
         start_year = end_year = args.year
     else:
         start_year = args.start_year or 2018
-        end_year = args.end_year or 2025
+        end_year = args.end_year or 2026
     
     logger.info(f"Extracting spot prices from {start_year} to {end_year}")
     logger.info(f"Data root: {args.data_root}")

@@ -292,7 +292,7 @@ def main():
     
     # Generate trade dates using improved logic (handles holidays)
     start_date = datetime(args.start_year, 1, 1)
-    end_date = datetime(args.end_year, 4, 30)
+    end_date = datetime(args.end_year, 2, 20)
     trade_dates = generate_trade_dates(
         start_date,
         end_date,

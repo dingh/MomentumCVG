@@ -64,7 +64,7 @@ class OratsCorporateActionsFetcher:
         max_retries: int = 5,
         timeout: int = 30,
     ) -> None:
-        resolved = token or os.environ.get("ORATS_API_TOKEN")
+        resolved = token # or os.environ.get("ORATS_API_TOKEN")
         if not resolved:
             raise ValueError(
                 "ORATS API token not provided. Pass `token=` or set the "
