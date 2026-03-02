@@ -10,12 +10,12 @@ which creates all combinations of (max_lag, min_lag) within specified ranges.
 Usage:
     # Basic usage with default ranges (short: 2-24, long: 6-60, step: 2)
     python scripts/build_features.py \
-        --input cache/straddle_history_weekly_2018_2024.parquet \
-        --output cache/straddle_features_weekly_2018_2024.parquet
+        --input cache/straddle_history_weekly_2018_2026.parquet \
+        --output cache/straddle_features_weekly_2018_2026.parquet
 
     # Custom ranges for narrow testing
     python scripts/build_features.py \
-        --input cache/straddle_history_weekly_2018_2024.parquet \
+        --input cache/straddle_history_weekly_2018_2026.parquet \
         --output cache/features_narrow.parquet \
         --short-min 4 --short-max 12 \
         --long-min 12 --long-max 30 \
@@ -23,7 +23,7 @@ Usage:
         
     # Date range filtering
     python scripts/build_features.py \
-        --input cache/straddle_history_weekly_2018_2024.parquet \
+        --input cache/straddle_history_weekly_2018_2026.parquet \
         --output cache/features_2023.parquet \
         --start-date 2023-01-01 \
         --end-date 2023-12-31
