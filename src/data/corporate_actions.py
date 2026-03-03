@@ -154,15 +154,20 @@ class OratsCorporateActionsFetcher:
         if not payload or "data" not in payload or not payload["data"]:
             return pd.DataFrame()
 
-        rows = [
-            {
-                "ticker":     row.get("ticker", ticker),
-                "earn_date":  pd.to_datetime(row.get("earnDate")).date(),
-                "annc_tod":   row.get("anncTod"),          # e.g. "1630" (HHMM string)
-                "updated_at": pd.to_datetime(row.get("updatedAt"), errors="coerce"),
-            }
-            for row in payload["data"]
-        ]
+        rows = []
+        for row in payload["data"]:
+            earn_dt = pd.to_datetime(row.get("earnDate"), errors="coerce")
+            if pd.isna(earn_dt):
+                logger.debug("Skipping row with unparseable earnDate=%r for %s", row.get("earnDate"), ticker)
+                continue
+            rows.append(
+                {
+                    "ticker":     row.get("ticker", ticker),
+                    "earn_date":  earn_dt.date(),
+                    "annc_tod":   row.get("anncTod"),          # e.g. "1630" (HHMM string)
+                    "updated_at": pd.to_datetime(row.get("updatedAt"), errors="coerce"),
+                }
+            )
         return pd.DataFrame(rows)
 
     # ── checkpoint helpers ─────────────────────────────────────────────────────
