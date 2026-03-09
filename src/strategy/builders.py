@@ -276,3 +276,117 @@ class StraddleBuilder:
                 return opt
         
         return None
+
+
+class IronCondorBuilder:
+    """
+    Build iron condor strategies using delta-targeted strike selection.
+
+    A standard iron condor consists of four legs (same expiry):
+    - Short put  (nearer-to-money put)
+    - Long put   (farther OTM put, lower strike)
+    - Short call (nearer-to-money call)
+    - Long call  (farther OTM call, higher strike)
+
+    Strike selection is delta-based:
+    - Short legs target +/- short_delta
+    - Long legs target +/- long_delta
+    """
+
+    def __init__(self, short_delta: float = 0.30, long_delta: float = 0.15):
+        if not (0 < long_delta < short_delta < 1):
+            raise ValueError(
+                "Expected 0 < long_delta < short_delta < 1 for iron condor builder"
+            )
+
+        self.short_delta = short_delta
+        self.long_delta = long_delta
+
+    def build_strategy(
+        self,
+        ticker: str,
+        trade_date: date,
+        expiry_date: date,
+        option_chain: List[OptionQuote],
+        spot_price: Decimal,
+    ) -> OptionStrategy:
+        """Build a unit iron condor from market data."""
+        del spot_price  # Delta-based builder does not currently use spot.
+
+        if not option_chain:
+            raise ValueError(f"Empty option chain for {ticker} on {trade_date}")
+
+        expiries = {opt.expiry_date for opt in option_chain}
+        if len(expiries) > 1:
+            raise ValueError(
+                f"Option chain contains multiple expiries: {sorted(expiries)}. "
+                f"Expected single expiry: {expiry_date}"
+            )
+
+        actual_expiry = next(iter(expiries))
+        if actual_expiry != expiry_date:
+            raise ValueError(
+                f"Option chain expiry mismatch. Expected {expiry_date}, got {actual_expiry}"
+            )
+
+        puts = [opt for opt in option_chain if opt.option_type == 'put']
+        calls = [opt for opt in option_chain if opt.option_type == 'call']
+
+        short_put_candidates = [
+            opt for opt in puts if any(other.strike < opt.strike for other in puts)
+        ]
+        short_call_candidates = [
+            opt for opt in calls if any(other.strike > opt.strike for other in calls)
+        ]
+
+        short_put = self._find_by_target_delta(
+            short_put_candidates, -self.short_delta, "short put"
+        )
+        short_call = self._find_by_target_delta(
+            short_call_candidates, self.short_delta, "short call"
+        )
+
+        long_put_candidates = [opt for opt in puts if opt.strike < short_put.strike]
+        long_call_candidates = [opt for opt in calls if opt.strike > short_call.strike]
+
+        long_put = self._find_by_target_delta(
+            long_put_candidates, -self.long_delta, "long put"
+        )
+        long_call = self._find_by_target_delta(
+            long_call_candidates, self.long_delta, "long call"
+        )
+
+        for leg_name, option in {
+            "short put": short_put,
+            "long put": long_put,
+            "short call": short_call,
+            "long call": long_call,
+        }.items():
+            if option.mid <= 0:
+                raise ValueError(
+                    f"Invalid {leg_name} premium ${option.mid} at strike ${option.strike}. "
+                    "Check data quality filters."
+                )
+
+        return OptionStrategy(
+            ticker=ticker,
+            strategy_type=StrategyType.IRON_CONDOR,
+            legs=(
+                OptionLeg(option=short_put, quantity=-1),
+                OptionLeg(option=long_put, quantity=1),
+                OptionLeg(option=short_call, quantity=-1),
+                OptionLeg(option=long_call, quantity=1),
+            ),
+            trade_date=trade_date,
+        )
+
+    def _find_by_target_delta(
+        self,
+        options: List[OptionQuote],
+        target_delta: float,
+        leg_name: str,
+    ) -> OptionQuote:
+        if not options:
+            raise ValueError(f"No candidates available for {leg_name} leg")
+
+        return min(options, key=lambda opt: abs(opt.delta - target_delta))

@@ -18,7 +18,7 @@ from decimal import Decimal
 from typing import List
 
 from src.core.models import OptionQuote, OptionStrategy, OptionLeg, StrategyType
-from src.strategy.builders import StraddleBuilder
+from src.strategy.builders import StraddleBuilder, IronCondorBuilder
 
 
 # =============================================================================
@@ -581,3 +581,96 @@ class TestStraddleAnalyzer:
     TODO: Implement after StraddleBuilder tests are complete.
     """
     pass
+
+
+# =============================================================================
+# IronCondorBuilder Tests
+# =============================================================================
+
+
+class TestIronCondorBuilder:
+    """Test delta-based iron condor construction."""
+
+    def test_build_strategy_happy_path(self, sample_option_chain_atm, trade_date, expiry_date, ticker):
+        builder = IronCondorBuilder(short_delta=0.30, long_delta=0.15)
+
+        strategy = builder.build_strategy(
+            ticker=ticker,
+            trade_date=trade_date,
+            expiry_date=expiry_date,
+            option_chain=sample_option_chain_atm,
+            spot_price=Decimal('44.50'),
+        )
+
+        assert strategy.strategy_type == StrategyType.IRON_CONDOR
+        assert len(strategy.legs) == 4
+
+        short_put = strategy.legs[0]
+        long_put = strategy.legs[1]
+        short_call = strategy.legs[2]
+        long_call = strategy.legs[3]
+
+        assert short_put.option.option_type == 'put'
+        assert short_put.quantity == -1
+        assert long_put.option.option_type == 'put'
+        assert long_put.quantity == 1
+        assert short_call.option.option_type == 'call'
+        assert short_call.quantity == -1
+        assert long_call.option.option_type == 'call'
+        assert long_call.quantity == 1
+
+        assert long_put.option.strike < short_put.option.strike
+        assert short_call.option.strike < long_call.option.strike
+
+    def test_init_validates_deltas(self):
+        with pytest.raises(ValueError, match="long_delta < short_delta"):
+            IronCondorBuilder(short_delta=0.15, long_delta=0.30)
+
+    def test_build_strategy_rejects_missing_outer_wings(self, trade_date, expiry_date, ticker):
+        chain = [
+            OptionQuote(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                strike=Decimal('44.5'),
+                option_type='put',
+                bid=Decimal('0.40'),
+                ask=Decimal('0.42'),
+                mid=Decimal('0.41'),
+                iv=0.2,
+                delta=-0.3,
+                gamma=0.1,
+                vega=0.1,
+                theta=-0.01,
+                volume=100,
+                open_interest=100,
+            ),
+            OptionQuote(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                strike=Decimal('44.5'),
+                option_type='call',
+                bid=Decimal('0.40'),
+                ask=Decimal('0.42'),
+                mid=Decimal('0.41'),
+                iv=0.2,
+                delta=0.3,
+                gamma=0.1,
+                vega=0.1,
+                theta=-0.01,
+                volume=100,
+                open_interest=100,
+            ),
+        ]
+
+        builder = IronCondorBuilder(short_delta=0.30, long_delta=0.15)
+
+        with pytest.raises(ValueError, match="No candidates available"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=chain,
+                spot_price=Decimal('44.50'),
+            )
