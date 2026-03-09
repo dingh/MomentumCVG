@@ -8,9 +8,9 @@ for all tickers in the ORATS dataset. The output CSV enables:
 3. Performance analytics and charting
 
 Output Format:
-    date,ticker,adj_spot_price
-    2018-01-02,AAPL,42.54
-    2018-01-02,MSFT,85.95
+    date,ticker,adj_spot_price,spot_price
+    2018-01-02,AAPL,42.54,170.16
+    2018-01-02,MSFT,85.95,85.95
     ...
 
 File Size Estimate:
@@ -112,14 +112,15 @@ def extract_spot_prices_for_date(
         
         # Get unique tickers and their spot prices
         # Each ticker appears multiple times (one row per strike), so take first
-        ticker_spots = df.groupby('ticker')['adj_stkPx'].first()
+        ticker_spots = df.groupby('ticker')[['adj_stkPx', 'stkPx']].first()
         
         # Create records
-        for ticker, spot_price in ticker_spots.items():
+        for ticker, row in ticker_spots.iterrows():
             records.append({
                 'date': trade_date,
                 'ticker': ticker,
-                'adj_spot_price': float(spot_price)
+                'adj_spot_price': float(row['adj_stkPx']),
+                'spot_price': float(row['stkPx']),
             })
         
     except FileNotFoundError:
