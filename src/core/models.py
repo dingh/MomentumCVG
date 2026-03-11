@@ -22,6 +22,7 @@ class StrategyType(Enum):
     STRANGLE = "strangle"
     BUTTERFLY = "butterfly"
     IRON_CONDOR = "iron_condor"
+    IRON_BUTTERFLY = "iron_butterfly"
     VERTICAL_SPREAD = "vertical_spread"
     CALENDAR_SPREAD = "calendar_spread"
     DIAGONAL_SPREAD = "diagonal_spread"
