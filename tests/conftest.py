@@ -156,6 +156,115 @@ def sample_option_chain_invalid_put_premium() -> List[OptionQuote]:
 
 
 # =============================================================================
+# IronButterflyBuilder Fixtures (stubs — implement before running IBF tests)
+# =============================================================================
+
+@pytest.fixture
+def sample_ibf_chain_atm() -> List[OptionQuote]:
+    """
+    Minimal clean chain suitable for a valid iron butterfly construction.
+
+    Source: AAPL, trade_date=2026-02-13, expiry_date=2026-02-20 (7 DTE)
+    Use with ibf_ticker / ibf_trade_date / ibf_expiry_date fixtures.
+
+    Strikes (3 × 2 options = 6 rows):
+      245.0  call + put  (long put wing  — OTM put, |delta|≈0.169)
+      255.0  call + put  (body — ATM, call delta≈0.546, put delta≈-0.454)
+      265.0  call + put  (long call wing — OTM call, delta≈0.171)
+
+    Economics (wing width = 10.0):
+      net_credit = (4.65 + 3.65) − (0.87 + 1.19) = 6.24
+      yield_on_capital = 6.24 / 10.0 = 62.4%  ✓ > 5% threshold
+
+    Spread quality: all legs < 3% spread_pct  ✓ < 25% threshold
+    """
+    return load_option_chain_from_csv("sample_ibf_chain_atm.csv")
+
+
+@pytest.fixture
+def sample_ibf_chain_multi_width() -> List[OptionQuote]:
+    """
+    Chain with TWO valid symmetric wing pairs around the same body at 255.0,
+    each pair at a different width and therefore different long-wing |delta|.
+
+    Source: AAPL, trade_date=2026-02-13, expiry_date=2026-02-20 (7 DTE)
+    Use with ibf_ticker / ibf_trade_date / ibf_expiry_date fixtures.
+
+    Body (short legs):
+      255.0  call + put  (delta ≈ +0.546 / −0.454)
+
+    Pair A — width 2.5  (higher delta wings):
+      257.5  call  delta ≈ +0.450
+      252.5  put   delta ≈ −0.365
+      avg |delta| ≈ 0.408
+
+    Pair B — width 5.0  (lower delta wings):
+      260.0  call  delta ≈ +0.350
+      250.0  put   delta ≈ −0.286
+      avg |delta| ≈ 0.318
+
+    Design intent:
+      wing_delta=0.408  → builder selects Pair A (width=2.5)
+      wing_delta=0.318  → builder selects Pair B (width=5.0)
+      (any wing_delta between 0.363 and 0.408 selects Pair A;
+       any wing_delta below 0.363 selects Pair B)
+
+    Both pairs: net_credit > 0, all spreads < 25%.
+    """
+    return load_option_chain_from_csv("sample_ibf_chain_multi_width.csv")
+
+
+@pytest.fixture
+def sample_ibf_chain_no_mirror() -> List[OptionQuote]:
+    """
+    Chain where OTM call wings exist but NO mirrored put strikes exist,
+    so no symmetric wing pair can be formed.
+
+    Required content
+    ----------------
+      - 44.5 call  (body)
+      - 44.5 put   (body)
+      - 45.0 call  (OTM call candidate only — NO 44.0 put present)
+
+    Purpose: verifies that _select_wing_pair() raises ValueError when
+    symmetry cannot be satisfied even though OTM calls are available.
+
+    Store as:  tests/fixtures/sample_ibf_chain_no_mirror.csv
+    Format: same columns as sample_option_chain_atm.csv
+    """
+    pass
+
+
+# =============================================================================
+# IronButterflyBuilder — AAPL-specific date/ticker fixtures
+# (IBF fixtures use AAPL 2026-02-13/2026-02-20, not the VZ fixtures above)
+# =============================================================================
+
+@pytest.fixture
+def ibf_ticker() -> str:
+    """Ticker for IBF fixtures: AAPL"""
+    return "AAPL"
+
+
+@pytest.fixture
+def ibf_trade_date() -> date:
+    """Trade date for IBF fixtures: 2026-02-13"""
+    return date(2026, 2, 13)
+
+
+@pytest.fixture
+def ibf_expiry_date() -> date:
+    """Expiry date for IBF fixtures: 2026-02-20 (7 DTE)"""
+    return date(2026, 2, 20)
+
+
+@pytest.fixture
+def ibf_spot_price() -> Decimal:
+    """Spot price for IBF fixtures: 255.81 (AAPL spot; ATM body strike = 255.0)"""
+    return Decimal("255.81")
+
+
+# =============================================================================
 # Shared Constants
 # =============================================================================
 

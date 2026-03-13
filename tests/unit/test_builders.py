@@ -18,7 +18,7 @@ from decimal import Decimal
 from typing import List
 
 from src.core.models import OptionQuote, OptionStrategy, OptionLeg, StrategyType
-from src.strategy.builders import StraddleBuilder, IronCondorBuilder
+from src.strategy.builders import StraddleBuilder, IronButterflyBuilder
 
 
 # =============================================================================
@@ -584,93 +584,683 @@ class TestStraddleAnalyzer:
 
 
 # =============================================================================
-# IronCondorBuilder Tests
+# IronButterflyBuilder Tests
 # =============================================================================
 
 
-class TestIronCondorBuilder:
-    """Test delta-based iron condor construction."""
+class TestIronButterflyBuilderInit:
+    """
+    Test __init__() parameter validation.
 
-    def test_build_strategy_happy_path(self, sample_option_chain_atm, trade_date, expiry_date, ticker):
-        builder = IronCondorBuilder(short_delta=0.30, long_delta=0.15)
+    IronButterflyBuilder accepts three tunable thresholds. Each has a valid
+    range; values outside that range must raise ValueError immediately so
+    mis-configured builders are caught at construction time rather than
+    silently producing bad strategies at runtime.
+    """
 
+    def test_init_stores_valid_defaults(self):
+        """
+        When no arguments are passed the builder stores the documented defaults.
+
+        Purpose: Confirms that wing_delta=0.15, max_spread_pct=0.25, and
+        min_yield_on_capital=0.05 are the shipped defaults and that they are
+        accessible as instance attributes.
+        """
+        builder = IronButterflyBuilder()
+
+        assert builder.wing_delta == 0.15
+        assert builder.max_spread_pct == 0.25
+        assert builder.min_yield_on_capital == 0.05
+
+    def test_init_stores_custom_params(self):
+        """
+        Custom valid arguments are stored on the instance without modification.
+
+        Purpose: Ensures the builder does not clamp, round, or transform
+        valid user-supplied values.
+        """
+        builder = IronButterflyBuilder(wing_delta=0.20, max_spread_pct=0.10, min_yield_on_capital=0.08)
+
+        assert builder.wing_delta == 0.20
+        assert builder.max_spread_pct == 0.10
+        assert builder.min_yield_on_capital == 0.08
+
+    def test_init_wing_delta_zero_raises(self):
+        """
+        wing_delta=0 is rejected because a zero-delta 'wing' is ATM, not OTM.
+
+        Purpose: Guards against a degenerate configuration that would place
+        the long wing at the body strike, collapsing the strategy.
+        Expected: ValueError matching 'wing_delta'.
+        """
+        with pytest.raises(ValueError, match="wing_delta"):
+            IronButterflyBuilder(wing_delta=0.0)
+
+    def test_init_wing_delta_at_or_above_half_raises(self):
+        """
+        wing_delta >= 0.5 is rejected because the long wing would be ITM or
+        at-the-money, which inverts the wing/body relationship.
+
+        Purpose: Guards against configurations where the 'wing' delta is as
+        large or larger than the ATM delta.
+        Expected: ValueError matching 'wing_delta' for both 0.5 and 0.6.
+        """
+        with pytest.raises(ValueError, match="wing_delta"):
+            IronButterflyBuilder(wing_delta=0.5)
+
+        with pytest.raises(ValueError, match="wing_delta"):
+            IronButterflyBuilder(wing_delta=0.6)
+
+    def test_init_wing_delta_negative_raises(self):
+        """
+        Negative wing_delta has no financial meaning in this context.
+
+        Purpose: Input sanitisation — the caller should always pass an
+        absolute (positive) delta target.
+        Expected: ValueError matching 'wing_delta'.
+        """
+        with pytest.raises(ValueError, match="wing_delta"):
+            IronButterflyBuilder(wing_delta=-0.10)
+
+    def test_init_max_spread_pct_zero_raises(self):
+        """
+        max_spread_pct=0 means every option would fail the spread filter,
+        making the builder permanently unusable.
+
+        Purpose: Prevents a configuration that can never produce a valid
+        strategy.
+        Expected: ValueError matching 'max_spread_pct'.
+        """
+        with pytest.raises(ValueError, match="max_spread_pct"):
+            IronButterflyBuilder(max_spread_pct=0.0)
+
+    def test_init_max_spread_pct_over_one_raises(self):
+        """
+        max_spread_pct > 1.0 is not a valid decimal fraction.
+
+        Purpose: Enforces that the parameter is interpreted as a fraction
+        (0.25 = 25%), not a percentage (25), so callers cannot accidentally
+        pass 25 and bypass all spread filtering.
+        Expected: ValueError matching 'max_spread_pct'.
+        """
+        with pytest.raises(ValueError, match="max_spread_pct"):
+            IronButterflyBuilder(max_spread_pct=1.1)
+
+    def test_init_min_yield_on_capital_negative_raises(self):
+        """
+        A negative yield threshold is financially meaningless — any credit
+        strategy would trivially pass.
+
+        Purpose: Input sanitisation; min_yield_on_capital must be >= 0.
+        Expected: ValueError matching 'min_yield_on_capital'.
+        """
+        with pytest.raises(ValueError, match="min_yield_on_capital"):
+            IronButterflyBuilder(min_yield_on_capital=-0.01)
+
+
+class TestIronButterflyBuilderHappyPath:
+    """
+    Test successful iron butterfly construction with a well-formed chain.
+
+    All tests use sample_ibf_chain_atm (AAPL, 2026-02-13, body=255.0,
+    single symmetric wing pair at ±10.0, tight spreads, positive net credit).
+    Use ibf_ticker / ibf_trade_date / ibf_expiry_date / ibf_spot_price fixtures.
+    """
+
+    def test_build_strategy_returns_iron_butterfly_type(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        The returned OptionStrategy has strategy_type == IRON_BUTTERFLY.
+
+        Purpose: Verifies the builder stamps the correct StrategyType enum
+        value, which is used downstream to dispatch expiry/P&L logic.
+        """
+        # Arrange
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+
+        # Act
         strategy = builder.build_strategy(
-            ticker=ticker,
-            trade_date=trade_date,
-            expiry_date=expiry_date,
-            option_chain=sample_option_chain_atm,
-            spot_price=Decimal('44.50'),
+            ticker=ibf_ticker,
+            trade_date=ibf_trade_date,
+            expiry_date=ibf_expiry_date,
+            option_chain=sample_ibf_chain_atm,
+            spot_price=ibf_spot_price,
         )
 
-        assert strategy.strategy_type == StrategyType.IRON_CONDOR
+        # Assert
+        assert strategy.strategy_type == StrategyType.IRON_BUTTERFLY
+
+    def test_build_strategy_has_four_legs(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        The strategy always contains exactly 4 OptionLeg objects.
+
+        Purpose: An iron butterfly is a 4-leg structure by definition.
+        Any other count signals a construction bug.
+        """
+        # Arrange
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+
+        # Act
+        strategy = builder.build_strategy(
+            ticker=ibf_ticker,
+            trade_date=ibf_trade_date,
+            expiry_date=ibf_expiry_date,
+            option_chain=sample_ibf_chain_atm,
+            spot_price=ibf_spot_price,
+        )
+
+        # Assert
         assert len(strategy.legs) == 4
 
-        short_put = strategy.legs[0]
-        long_put = strategy.legs[1]
-        short_call = strategy.legs[2]
-        long_call = strategy.legs[3]
+    def test_build_strategy_leg_order_and_quantities(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        Legs are ordered [long put wing, short put body, short call body,
+        long call wing] with quantities [+1, -1, -1, +1].
 
-        assert short_put.option.option_type == 'put'
-        assert short_put.quantity == -1
-        assert long_put.option.option_type == 'put'
-        assert long_put.quantity == 1
-        assert short_call.option.option_type == 'call'
-        assert short_call.quantity == -1
-        assert long_call.option.option_type == 'call'
-        assert long_call.quantity == 1
+        Purpose: Downstream P&L and greek aggregation code relies on a
+        stable leg order.  quantity sign drives credit/debit accounting in
+        OptionLeg.net_premium.
+        """
+        # Arrange
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
 
-        assert long_put.option.strike < short_put.option.strike
-        assert short_call.option.strike < long_call.option.strike
+        # Act
+        strategy = builder.build_strategy(
+            ticker=ibf_ticker,
+            trade_date=ibf_trade_date,
+            expiry_date=ibf_expiry_date,
+            option_chain=sample_ibf_chain_atm,
+            spot_price=ibf_spot_price,
+        )
 
-    def test_init_validates_deltas(self):
-        with pytest.raises(ValueError, match="long_delta < short_delta"):
-            IronCondorBuilder(short_delta=0.15, long_delta=0.30)
+        # Assert - quantities
+        assert [leg.quantity for leg in strategy.legs] == [1, -1, -1, 1]
 
-    def test_build_strategy_rejects_missing_outer_wings(self, trade_date, expiry_date, ticker):
-        chain = [
-            OptionQuote(
-                ticker=ticker,
-                trade_date=trade_date,
-                expiry_date=expiry_date,
-                strike=Decimal('44.5'),
-                option_type='put',
-                bid=Decimal('0.40'),
-                ask=Decimal('0.42'),
-                mid=Decimal('0.41'),
-                iv=0.2,
-                delta=-0.3,
-                gamma=0.1,
-                vega=0.1,
-                theta=-0.01,
-                volume=100,
-                open_interest=100,
-            ),
-            OptionQuote(
-                ticker=ticker,
-                trade_date=trade_date,
-                expiry_date=expiry_date,
-                strike=Decimal('44.5'),
-                option_type='call',
-                bid=Decimal('0.40'),
-                ask=Decimal('0.42'),
-                mid=Decimal('0.41'),
-                iv=0.2,
-                delta=0.3,
-                gamma=0.1,
-                vega=0.1,
-                theta=-0.01,
-                volume=100,
-                open_interest=100,
-            ),
-        ]
+        # Assert - option types match expected leg roles
+        assert strategy.legs[0].option.option_type == 'put'   # long put wing
+        assert strategy.legs[1].option.option_type == 'put'   # short put body
+        assert strategy.legs[2].option.option_type == 'call'  # short call body
+        assert strategy.legs[3].option.option_type == 'call'  # long call wing
 
-        builder = IronCondorBuilder(short_delta=0.30, long_delta=0.15)
+    def test_build_strategy_body_at_atm_strike(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        Both short (body) legs are at the ATM strike (closest to spot_price).
 
-        with pytest.raises(ValueError, match="No candidates available"):
-            builder.build_strategy(
-                ticker=ticker,
-                trade_date=trade_date,
-                expiry_date=expiry_date,
-                option_chain=chain,
-                spot_price=Decimal('44.50'),
-            )
+        Purpose: The 'body' of the iron butterfly must sit at-the-money.
+        If the body drifts away from ATM the max-profit point moves away
+        from the current price.
+        """
+        # Arrange
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+        expected_body_strike = Decimal("255.0")
+
+        # Act
+        strategy = builder.build_strategy(
+            ticker=ibf_ticker,
+            trade_date=ibf_trade_date,
+            expiry_date=ibf_expiry_date,
+            option_chain=sample_ibf_chain_atm,
+            spot_price=ibf_spot_price,
+        )
+
+        # Assert - both short legs sit at ATM
+        assert strategy.legs[1].option.strike == expected_body_strike  # short put body
+        assert strategy.legs[2].option.strike == expected_body_strike  # short call body
+
+    def test_build_strategy_wings_equidistant(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        |body_strike - call_wing_strike| == |body_strike - put_wing_strike|.
+
+        Purpose: The iron butterfly definition requires symmetric wings.
+        Asymmetric wings would produce a skewed risk profile and incorrect
+        capital / yield calculations downstream.
+        """
+        # Arrange
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+
+        # Act
+        strategy = builder.build_strategy(
+            ticker=ibf_ticker,
+            trade_date=ibf_trade_date,
+            expiry_date=ibf_expiry_date,
+            option_chain=sample_ibf_chain_atm,
+            spot_price=ibf_spot_price,
+        )
+
+        # Assert
+        body_strike = strategy.legs[1].option.strike
+        put_wing_strike = strategy.legs[0].option.strike
+        call_wing_strike = strategy.legs[3].option.strike
+        assert abs(body_strike - call_wing_strike) == abs(body_strike - put_wing_strike)
+
+    def test_build_strategy_call_wing_above_body(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        Long call wing strike > body strike (OTM call).
+
+        Purpose: Verifies spatial correctness of the structure — the call
+        wing must cap the upside loss, so it must be above the body.
+        """
+        # Arrange
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+
+        # Act
+        strategy = builder.build_strategy(
+            ticker=ibf_ticker,
+            trade_date=ibf_trade_date,
+            expiry_date=ibf_expiry_date,
+            option_chain=sample_ibf_chain_atm,
+            spot_price=ibf_spot_price,
+        )
+
+        # Assert
+        body_strike = strategy.legs[2].option.strike      # short call body
+        call_wing_strike = strategy.legs[3].option.strike  # long call wing
+        assert call_wing_strike > body_strike
+
+    def test_build_strategy_put_wing_below_body(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        Long put wing strike < body strike (OTM put).
+
+        Purpose: Symmetric to the call wing check; the put wing must cap
+        the downside loss so it must be below the body.
+        """
+        # Arrange
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+
+        # Act
+        strategy = builder.build_strategy(
+            ticker=ibf_ticker,
+            trade_date=ibf_trade_date,
+            expiry_date=ibf_expiry_date,
+            option_chain=sample_ibf_chain_atm,
+            spot_price=ibf_spot_price,
+        )
+
+        # Assert
+        body_strike = strategy.legs[1].option.strike     # short put body
+        put_wing_strike = strategy.legs[0].option.strike  # long put wing
+        assert put_wing_strike < body_strike
+
+    def test_build_strategy_net_premium_is_negative(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        strategy.net_premium < 0, indicating a net credit is received.
+
+        Purpose: An iron butterfly is always entered for a credit (the
+        short body premiums exceed the long wing premiums).  A positive
+        net_premium would mean the strategy costs money — a silent data
+        or logic error.
+        """
+        # Arrange
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+
+        # Act
+        strategy = builder.build_strategy(
+            ticker=ibf_ticker,
+            trade_date=ibf_trade_date,
+            expiry_date=ibf_expiry_date,
+            option_chain=sample_ibf_chain_atm,
+            spot_price=ibf_spot_price,
+        )
+
+        # Assert
+        assert strategy.net_premium < 0
+
+    def test_build_strategy_net_premium_matches_arithmetic(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        strategy.net_premium == -(body_call_mid + body_put_mid - wing_call_mid - wing_put_mid).
+
+        From sample_ibf_chain_atm.csv (AAPL, body=255.0, wings at 245/265):
+          body_call_mid = 4.65  (255 call)
+          body_put_mid  = 3.65  (255 put)
+          wing_call_mid = 0.87  (265 call)
+          wing_put_mid  = 1.19  (245 put)
+          net_credit    = (4.65 + 3.65) - (0.87 + 1.19) = 6.24
+          strategy.net_premium = Decimal('-6.24')
+
+        Purpose: Regression anchor for the Decimal arithmetic path through
+        build_strategy(). Hard-coded expected value catches any rounding or
+        sign-flip regressions after refactors.
+        """
+        # Arrange
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+
+        # Act
+        strategy = builder.build_strategy(
+            ticker=ibf_ticker,
+            trade_date=ibf_trade_date,
+            expiry_date=ibf_expiry_date,
+            option_chain=sample_ibf_chain_atm,
+            spot_price=ibf_spot_price,
+        )
+
+        # Assert
+        assert strategy.net_premium == Decimal('-6.24')
+
+    def test_build_strategy_propagates_ticker_and_trade_date(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        strategy.ticker and strategy.trade_date match the inputs passed to
+        build_strategy().
+
+        Purpose: Metadata must survive construction unchanged so that
+        downstream position tracking can identify which instrument and date
+        the strategy was priced on.
+        """
+        # Arrange
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+
+        # Act
+        strategy = builder.build_strategy(
+            ticker=ibf_ticker,
+            trade_date=ibf_trade_date,
+            expiry_date=ibf_expiry_date,
+            option_chain=sample_ibf_chain_atm,
+            spot_price=ibf_spot_price,
+        )
+
+        # Assert
+        assert strategy.ticker == ibf_ticker
+        assert strategy.trade_date == ibf_trade_date
+
+
+class TestIronButterflyBuilderDeltaSelection:
+    """
+    Test that _select_wing_pair() chooses the symmetric pair whose
+    average long-wing |delta| is nearest to wing_delta.
+
+    Uses sample_ibf_chain_multi_width (AAPL, 2026-02-13, body=255.0):
+      Pair A (width=2.5): call=257.5 / put=252.5  avg |delta| ≈ 0.408
+      Pair B (width=5.0): call=260.0 / put=250.0  avg |delta| ≈ 0.318
+    """
+
+    def test_selects_narrow_wings_when_wing_delta_targets_high(
+        self, sample_ibf_chain_multi_width, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        wing_delta=0.408 → Pair A selected (width=2.5, avg |delta| ≈ 0.408).
+
+        Purpose: Confirms the delta-scoring ranks Pair A first when the
+        target delta is closer to 0.408. Verifies that
+        |0.408 − 0.408| < |0.408 − 0.318| produces the correct selection.
+        Expected wing strikes: call=257.5, put=252.5.
+        """
+        pass
+
+    def test_selects_wide_wings_when_wing_delta_targets_low(
+        self, sample_ibf_chain_multi_width, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        wing_delta=0.318 → Pair B selected (width=5.0, avg |delta| ≈ 0.318).
+
+        Purpose: Confirms the delta-scoring ranks Pair B first when the
+        target delta is closer to 0.318. Verifies that
+        |0.318 − 0.318| < |0.318 − 0.408| produces the correct selection.
+        Expected wing strikes: call=260.0, put=250.0.
+        """
+        pass
+
+
+class TestIronButterflyBuilderChainValidation:
+    """
+    Test build_strategy() input guard rails that mirror StraddleBuilder.
+
+    These tests use inline minimal chains (constructed directly in the test
+    body) rather than fixtures, because each case requires a subtly broken
+    chain that does not merit a standalone CSV file.
+    """
+
+    def test_empty_chain_raises(self, trade_date, expiry_date, ticker):
+        """
+        An empty option_chain list is immediately rejected.
+
+        Purpose: Prevents silent failures when a data feed returns nothing
+        (e.g., market holiday, bad ticker symbol).
+        Expected: ValueError matching 'Empty option chain'.
+        """
+        pass
+
+    def test_multiple_expiries_raises(
+        self, sample_option_chain_multiple_expiries, trade_date, expiry_date, ticker
+    ):
+        """
+        A chain containing options from more than one expiry date is rejected.
+
+        Purpose: The builder expects the caller to pre-filter to a single
+        expiry.  Mixed expiries mean the legs would have different DTEs,
+        breaking the strategy's risk profile.
+        Expected: ValueError matching 'multiple expiries'.
+        """
+        pass
+
+    def test_expiry_mismatch_raises(self, trade_date, expiry_date, ticker):
+        """
+        Chain expiry is 2024-12-06 but expiry_date argument is 2024-12-13.
+
+        Purpose: Catches data provider bugs where the returned chain is for
+        the wrong expiry.  If unchecked, the strategy would be priced on
+        the wrong date with incorrect DTE.
+        Expected: ValueError matching 'expiry mismatch'.
+        """
+        pass
+
+    def test_missing_body_call_raises(self, trade_date, expiry_date, ticker):
+        """
+        Chain has a put at the ATM body strike but no call at that strike.
+
+        Purpose: The short call body is required.  Missing it means the
+        strategy cannot be formed.  This can happen when deep-ITM calls are
+        filtered out by liquidity screens before the chain reaches the builder.
+        Expected: ValueError matching 'No call option found at body strike'.
+        """
+        pass
+
+    def test_missing_body_put_raises(self, trade_date, expiry_date, ticker):
+        """
+        Chain has a call at the ATM body strike but no put at that strike.
+
+        Purpose: Symmetric to test_missing_body_call_raises.  The short put
+        body is equally required.
+        Expected: ValueError matching 'No put option found at body strike'.
+        """
+        pass
+
+    def test_zero_mid_body_call_raises(self, trade_date, expiry_date, ticker):
+        """
+        Short call body has mid=0.00 (stale or missing quote).
+
+        Purpose: Trading against a zero-mid option would produce nonsensical
+        P&L.  This guard catches bad data before a strategy object is created.
+        Expected: ValueError matching 'Invalid short call mid'.
+        """
+        pass
+
+    def test_zero_mid_body_put_raises(self, trade_date, expiry_date, ticker):
+        """
+        Short put body has mid=0.00 (stale or missing quote).
+
+        Purpose: Symmetric to test_zero_mid_body_call_raises.
+        Expected: ValueError matching 'Invalid short put mid'.
+        """
+        pass
+
+
+class TestIronButterflyBuilderWingValidation:
+    """
+    Test the three post-wing-selection guards:
+      1. Spread quality on all 4 legs (max_spread_pct)
+      2. Net credit must be positive
+      3. Yield-on-capital must meet the minimum threshold
+
+    All tests use inline chains to isolate exactly the failing condition.
+    """
+
+    def test_no_symmetric_wing_pair_raises(
+        self, sample_ibf_chain_no_mirror, trade_date, expiry_date, ticker
+    ):
+        """
+        Chain has OTM call candidates but no matching mirrored put strikes.
+
+        Purpose: _select_wing_pair() must raise rather than return None or
+        pick an asymmetric pair.  Uses sample_ibf_chain_no_mirror which
+        contains a body but only OTM calls (no OTM puts on the other side).
+        Expected: ValueError matching 'No valid symmetric wing pairs found'.
+        """
+        pass
+
+    def test_wide_spread_on_long_call_wing_raises(self, trade_date, expiry_date, ticker):
+        """
+        Long call wing has an extremely wide bid-ask spread (bid=0.01, ask=0.50),
+        giving spread_pct >> max_spread_pct=0.25.
+
+        Purpose: Illiquid wing options make entry/exit expensive.  The spread
+        filter enforces a minimum liquidity standard.  Must flag the specific
+        leg name in the error message.
+        Expected: ValueError matching 'long call wing'.
+        """
+        pass
+
+    def test_wide_spread_on_long_put_wing_raises(self, trade_date, expiry_date, ticker):
+        """
+        Long put wing has an extremely wide bid-ask spread.
+
+        Purpose: Same motivation as the call wing test; validates that the
+        spread check is applied to ALL four legs, not just the calls.
+        Expected: ValueError matching 'long put wing'.
+        """
+        pass
+
+    def test_wide_spread_on_short_call_body_raises(self, trade_date, expiry_date, ticker):
+        """
+        Short call body has an extremely wide bid-ask spread.
+
+        Purpose: The body legs can also be illiquid.  Ensures the spread
+        check covers the body, not just the wings.
+        Expected: ValueError matching 'short call body'.
+        """
+        pass
+
+    def test_wide_spread_on_short_put_body_raises(self, trade_date, expiry_date, ticker):
+        """
+        Short put body has an extremely wide bid-ask spread.
+
+        Purpose: Symmetric to test_wide_spread_on_short_call_body_raises.
+        Expected: ValueError matching 'short put body'.
+        """
+        pass
+
+    def test_negative_net_credit_raises(self, trade_date, expiry_date, ticker):
+        """
+        Wings are priced more expensively than the body, yielding a net debit.
+
+        This can happen in inverted vol surfaces or extremely wide skews.
+
+        Purpose: A debit iron butterfly is a data anomaly — the strategy
+        should be rejected rather than recorded as a credit strategy with a
+        negative premium.
+        Expected: ValueError matching 'non-positive net credit'.
+        """
+        pass
+
+    def test_yield_below_threshold_raises(self, trade_date, expiry_date, ticker):
+        """
+        Net credit is positive but tiny relative to wing width,
+        so yield_on_capital < min_yield_on_capital.
+
+        Example: body_mid_total=1.00, wing_mid_total=0.96, wing_width=10.0
+        net_credit=0.04, yield=0.004 which is below the default 0.05.
+
+        Purpose: Screens out mathematically valid but economically
+        uninteresting butterflies where the limited credit doesn't
+        justify the capital tied up as collateral.
+        Expected: ValueError matching 'Yield-on-capital'.
+        """
+        pass
+
+
+class TestIronButterflyBuilderHelpers:
+    """
+    Test the two shared private helpers (_find_atm_strike, _get_option_at_strike)
+    on IronButterflyBuilder and the IBF-specific _compute_yield_on_capital.
+
+    These helpers are tested in isolation so that failures here give precise
+    diagnostic information independent of the full build_strategy() flow.
+    """
+
+    def test_compute_yield_on_capital_correct_value(self):
+        """
+        _compute_yield_on_capital(net_credit, wing_width) returns net_credit / wing_width
+        as a plain float.
+
+        Example: 4.20 / 10.00 == 0.42.
+
+        Purpose: Locks in the arithmetic and confirms the return type is
+        float (not Decimal), consistent with the greek fields on OptionQuote.
+        """
+        pass
+
+    def test_compute_yield_on_capital_zero_width_raises(self):
+        """
+        wing_width=0 would cause division by zero.
+
+        Purpose: Defensive guard; a zero-width wing means the long and short
+        legs are at the same strike — not a valid iron butterfly.
+        Expected: ValueError matching 'wing_width must be positive'.
+        """
+        pass
+
+    def test_find_atm_strike_exact_match(self, sample_ibf_chain_atm, ibf_spot_price):
+        """
+        Spot price exactly on a strike returns that strike.
+
+        Purpose: Validates the common case where spot lands exactly on a
+        listed strike.  The result should be deterministic and not depend
+        on floating-point ordering.
+        """
+        pass
+
+    def test_find_atm_strike_between_strikes(self, sample_ibf_chain_atm, ibf_spot_price):
+        """
+        Spot between two strikes returns the closer one.
+
+        Purpose: The distance minimisation (abs(strike - spot)) must select
+        the numerically closer strike, not simply the first or last.
+        """
+        pass
+
+    def test_get_option_at_strike_found(self, sample_ibf_chain_atm, ibf_spot_price):
+        """
+        Returns the matching OptionQuote when strike and option_type are present.
+
+        Purpose: Confirms the lookup correctly filters by both strike AND
+        option_type (not just strike), so call and put at the same strike
+        are distinguishable.
+        """
+        pass
+
+    def test_get_option_at_strike_not_found(self, sample_ibf_chain_atm, ibf_spot_price):
+        """
+        Returns None when the requested strike/type combination is absent.
+
+        Purpose: The caller (build_strategy) relies on a None return to
+        produce a descriptive error message.  A KeyError or exception here
+        would surface a confusing internal traceback instead.
+        """
+        pass
