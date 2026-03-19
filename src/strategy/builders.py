@@ -10,7 +10,8 @@ Key Design Principle:
 - Same code used in historical analysis AND live execution
 """
 
-from typing import Protocol, List, Optional
+from dataclasses import dataclass
+from typing import Protocol, List, Optional, Tuple
 from datetime import date
 from decimal import Decimal
 
@@ -278,6 +279,47 @@ class StraddleBuilder:
         return None
 
 
+@dataclass(frozen=True)
+class IronButterflyCandidate:
+    """
+    Immutable snapshot of one valid symmetric wing candidate.
+
+    Computed once by ``enumerate_candidates()`` and returned to callers.
+    Enables post-hoc analysis scripts to persist the full wing surface for
+    a fixed body/expiry without rebuilding the chain repeatedly.
+
+    All Decimal fields are per-share (matching OptionQuote.mid convention).
+    Greeks are net across all 4 legs (signed by qty: short=-1, long=+1).
+    Note: put deltas on OptionQuote are already negative (e.g. -0.15),
+    so net_delta arithmetic works directly with raw delta values.
+    """
+    # Wing geometry
+    body_strike: Decimal
+    wing_width: Decimal          # call_wing_strike - body_strike (symmetric)
+    call_wing_strike: Decimal
+    put_wing_strike: Decimal
+
+    # Economics
+    net_credit: Decimal          # short body premium - long wing cost  (> 0)
+    credit_to_width: float       # net_credit / wing_width  (= return on max-loss capital)
+    return_on_max_loss: float    # alias for credit_to_width (for clarity in analysis)
+
+    # Wing delta score
+    avg_wing_delta: float        # (|long_call.delta| + |long_put.delta|) / 2
+
+    # Net greeks across all 4 legs
+    net_delta: float
+    net_gamma: float
+    net_vega: float
+    net_theta: float
+
+    # Underlying option quotes
+    short_call: OptionQuote
+    short_put: OptionQuote
+    long_call: OptionQuote
+    long_put: OptionQuote
+
+
 class IronButterflyBuilder:
     """
     Build ATM iron butterfly strategies from market data.
@@ -335,6 +377,7 @@ class IronButterflyBuilder:
         wing_delta: float = 0.15,
         max_spread_pct: float = 0.25,
         min_yield_on_capital: float = 0.05,
+        selection_mode: str = "closest_delta",
     ):
         """
         Initialize iron butterfly builder.
@@ -343,6 +386,12 @@ class IronButterflyBuilder:
             wing_delta:           Target |delta| for OTM long wings (default 0.15).
             max_spread_pct:       Max bid-ask spread / mid per leg (default 0.25).
             min_yield_on_capital: Min net_credit / wing_width (default 0.05).
+            selection_mode:       How to pick among valid candidates:
+                                  ``'closest_delta'``  – wing whose avg |delta| is
+                                      nearest to ``wing_delta`` (default).
+                                  ``'max_credit_to_width'`` – highest net_credit /
+                                      wing_width ratio.
+                                  ``'max_credit'`` – highest absolute net credit.
         """
         if not 0 < wing_delta < 0.5:
             raise ValueError(
@@ -357,9 +406,15 @@ class IronButterflyBuilder:
             raise ValueError(
                 f"min_yield_on_capital must be non-negative, got {min_yield_on_capital}."
             )
+        valid_modes = {"closest_delta", "max_credit_to_width", "max_credit"}
+        if selection_mode not in valid_modes:
+            raise ValueError(
+                f"selection_mode must be one of {valid_modes}, got {selection_mode!r}."
+            )
         self.wing_delta = wing_delta
         self.max_spread_pct = max_spread_pct
         self.min_yield_on_capital = min_yield_on_capital
+        self.selection_mode = selection_mode
 
     # ------------------------------------------------------------------
     # IStrategyBuilder interface
@@ -426,28 +481,51 @@ class IronButterflyBuilder:
             >>> [leg.quantity for leg in strategy.legs]
             [1, -1, -1, 1]
         """
-        # ── Step 1: Validate chain ────────────────────────────────────────
-        if not option_chain:
-            raise ValueError(f"Empty option chain for {ticker} on {trade_date}")
-
-        expiries = {opt.expiry_date for opt in option_chain}
-        if len(expiries) > 1:
-            raise ValueError(
-                f"Option chain contains multiple expiries: {sorted(expiries)}. "
-                f"Expected single expiry: {expiry_date}"
-            )
-
-        actual_expiry = next(iter(expiries))
-        if actual_expiry != expiry_date:
-            raise ValueError(
-                f"Option chain expiry mismatch. Expected {expiry_date}, "
-                f"got {actual_expiry}"
-            )
-
-        # ── Step 2: Find body (ATM) strike ───────────────────────────────
+        # Validate then delegate — keeps IStrategyBuilder contract intact
+        self._validate_chain(ticker, trade_date, expiry_date, option_chain)
         body_strike = self._find_atm_strike(option_chain, spot_price)
+        return self.build_strategy_at_body(
+            ticker=ticker,
+            trade_date=trade_date,
+            expiry_date=expiry_date,
+            option_chain=option_chain,
+            body_strike=body_strike,
+        )
 
-        # ── Step 3: Short body legs ──────────────────────────────────────
+    def build_strategy_at_body(
+        self,
+        ticker: str,
+        trade_date: date,
+        expiry_date: date,
+        option_chain: List[OptionQuote],
+        body_strike: Decimal,
+    ) -> OptionStrategy:
+        """
+        Build iron butterfly around an explicitly supplied body strike.
+
+        Useful when comparing straddle vs iron butterfly on the same
+        opportunity: both builders can be forced to use the identical body
+        strike instead of independently snapping to ATM.
+
+        Chain validation is the caller's responsibility (call
+        ``_validate_chain()`` first, or use ``build_strategy()`` which
+        does both steps automatically).
+
+        Args:
+            ticker:       Underlying ticker symbol.
+            trade_date:   Date the strategy is being constructed.
+            expiry_date:  Target expiration date.
+            option_chain: Pre-validated option chain (single expiry).
+            body_strike:  Strike to use as the short body (ATM centre).
+
+        Returns:
+            OptionStrategy with 4 legs ordered
+            [long put wing, short put body, short call body, long call wing].
+
+        Raises:
+            ValueError: Missing/invalid body options or no valid wing pair
+                        after spread and yield filters.
+        """
         short_call = self._get_option_at_strike(option_chain, body_strike, 'call')
         short_put  = self._get_option_at_strike(option_chain, body_strike, 'put')
 
@@ -470,55 +548,36 @@ class IronButterflyBuilder:
                 f"Invalid short put mid ${short_put.mid} at body strike ${body_strike}."
             )
 
-        # ── Step 4–5: Find best symmetric wing pair ──────────────────────
-        long_call_wing, long_put_wing = self._select_wing_pair(
-            option_chain, body_strike, ticker, expiry_date
+        candidates = self.enumerate_candidates(
+            option_chain=option_chain,
+            body_strike=body_strike,
+            short_call=short_call,
+            short_put=short_put,
         )
 
-        # ── Step 6: Spread quality check (all 4 legs) ────────────────────
-        for leg_opt, label in [
-            (short_call, "short call body"),
-            (short_put,  "short put body"),
-            (long_call_wing, "long call wing"),
-            (long_put_wing,  "long put wing"),
-        ]:
-            if leg_opt.spread_pct > self.max_spread_pct:
-                raise ValueError(
-                    f"Leg '{label}' at strike ${leg_opt.strike} has spread "
-                    f"{leg_opt.spread_pct:.1%} > max_spread_pct "
-                    f"{self.max_spread_pct:.1%}. Chain may be illiquid."
-                )
-
-        # ── Step 7: Yield-on-capital check ───────────────────────────────
-        wing_width = long_call_wing.strike - body_strike  # always positive
-        net_credit = (
-            (short_call.mid + short_put.mid)
-            - (long_call_wing.mid + long_put_wing.mid)
-        )
-
-        if net_credit <= 0:
+        if not candidates:
             raise ValueError(
-                f"Iron butterfly has non-positive net credit ({net_credit}) "
-                f"at body ${body_strike}, wings ±${wing_width}. "
-                "Body premium must exceed wing cost."
+                f"No valid symmetric wing pairs found for {ticker} "
+                f"expiring {expiry_date} around body strike ${body_strike}. "
+                "Check that the chain has OTM strikes on both sides with "
+                "positive mid prices, acceptable spreads, and sufficient yield."
             )
 
-        yield_on_capital = float(net_credit / wing_width)
-        if yield_on_capital < self.min_yield_on_capital:
-            raise ValueError(
-                f"Yield-on-capital {yield_on_capital:.1%} is below threshold "
-                f"{self.min_yield_on_capital:.1%} "
-                f"(net_credit={net_credit}, wing_width={wing_width})."
-            )
+        # Select best candidate based on selection_mode
+        if self.selection_mode == "closest_delta":
+            best = min(candidates, key=lambda c: abs(c.avg_wing_delta - self.wing_delta))
+        elif self.selection_mode == "max_credit_to_width":
+            best = max(candidates, key=lambda c: c.credit_to_width)
+        elif self.selection_mode == "max_credit":
+            best = max(candidates, key=lambda c: c.net_credit)
+        else:
+            raise ValueError(f"Unknown selection_mode: {self.selection_mode!r}")
 
-        # ── Step 8: Assemble strategy ─────────────────────────────────────
-        # Legs ordered: long put wing, short put body, short call body, long call wing
-        # Short legs use qty=-1 (credit received); long wings use qty=+1 (debit paid)
         legs = (
-            OptionLeg(option=long_put_wing,  quantity=1),
-            OptionLeg(option=short_put,       quantity=-1),
-            OptionLeg(option=short_call,      quantity=-1),
-            OptionLeg(option=long_call_wing,  quantity=1),
+            OptionLeg(option=best.long_put,   quantity=1),
+            OptionLeg(option=best.short_put,   quantity=-1),
+            OptionLeg(option=best.short_call,  quantity=-1),
+            OptionLeg(option=best.long_call,   quantity=1),
         )
 
         return OptionStrategy(
@@ -528,9 +587,149 @@ class IronButterflyBuilder:
             trade_date=trade_date,
         )
 
+    def enumerate_candidates(
+        self,
+        option_chain: List[OptionQuote],
+        body_strike: Decimal,
+        short_call: OptionQuote,
+        short_put: OptionQuote,
+    ) -> List[IronButterflyCandidate]:
+        """
+        Return all valid symmetric wing candidates around ``body_strike``.
+
+        Candidates that fail spread quality or yield-on-capital filters are
+        silently excluded — the caller sees only structurally buildable wings.
+        This lets analysis scripts iterate over the full candidate surface
+        without the builder raising exceptions.
+
+        Args:
+            option_chain: Full pre-validated option chain.
+            body_strike:  ATM body strike (shared by short_call and short_put).
+            short_call:   Short call body leg (already fetched and validated).
+            short_put:    Short put body leg (already fetched and validated).
+
+        Returns:
+            List of ``IronButterflyCandidate`` objects, one per valid symmetric
+            wing pair, sorted ascending by wing_width.
+        """
+        chain_lookup: dict = {
+            (opt.strike, opt.option_type): opt for opt in option_chain
+        }
+        otm_call_strikes = sorted(
+            {opt.strike for opt in option_chain if opt.strike > body_strike}
+        )
+
+        candidates: List[IronButterflyCandidate] = []
+        for call_strike in otm_call_strikes:
+            wing_width = call_strike - body_strike
+            put_strike = body_strike - wing_width  # mirror strike
+
+            long_call = chain_lookup.get((call_strike, 'call'))
+            long_put  = chain_lookup.get((put_strike,  'put'))
+
+            # Both symmetric legs must exist with tradeable premiums
+            if long_call is None or long_put is None:
+                continue
+            if long_call.mid <= 0 or long_put.mid <= 0:
+                continue
+
+            # Spread filter — silently skip illiquid candidates
+            all_legs = [short_call, short_put, long_call, long_put]
+            if any(opt.spread_pct > self.max_spread_pct for opt in all_legs):
+                continue
+
+            # Yield filter — silently skip uneconomical candidates
+            net_credit = (
+                (short_call.mid + short_put.mid)
+                - (long_call.mid + long_put.mid)
+            )
+            if net_credit <= 0:
+                continue
+            credit_to_width = float(net_credit / wing_width)
+            if credit_to_width < self.min_yield_on_capital:
+                continue
+
+            avg_wing_delta = (abs(long_call.delta) + abs(long_put.delta)) / 2.0
+
+            # Net greeks across all 4 legs (signed by qty).
+            # Put deltas on OptionQuote are already negative (e.g. -0.15)
+            # so arithmetic works directly with raw delta values.
+            net_delta = (
+                long_put.delta  * 1
+                + short_put.delta  * -1
+                + short_call.delta * -1
+                + long_call.delta  * 1
+            )
+            net_gamma = (
+                long_put.gamma + long_call.gamma
+                - short_put.gamma - short_call.gamma
+            )
+            net_vega = (
+                long_put.vega + long_call.vega
+                - short_put.vega - short_call.vega
+            )
+            net_theta = (
+                long_put.theta + long_call.theta
+                - short_put.theta - short_call.theta
+            )
+
+            candidates.append(IronButterflyCandidate(
+                body_strike=body_strike,
+                wing_width=wing_width,
+                call_wing_strike=call_strike,
+                put_wing_strike=put_strike,
+                net_credit=net_credit,
+                credit_to_width=credit_to_width,
+                return_on_max_loss=credit_to_width,
+                avg_wing_delta=avg_wing_delta,
+                net_delta=net_delta,
+                net_gamma=net_gamma,
+                net_vega=net_vega,
+                net_theta=net_theta,
+                short_call=short_call,
+                short_put=short_put,
+                long_call=long_call,
+                long_put=long_put,
+            ))
+
+        return candidates
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _validate_chain(
+        self,
+        ticker: str,
+        trade_date: date,
+        expiry_date: date,
+        option_chain: List[OptionQuote],
+    ) -> None:
+        """
+        Validate that the option chain satisfies the builder's preconditions.
+
+        Extracted so ``build_strategy()`` and any future public entry points
+        share a single validation path without duplication.
+
+        Raises:
+            ValueError: Empty chain, multiple expiries, or expiry mismatch.
+        """
+        if not option_chain:
+            raise ValueError(f"Empty option chain for {ticker} on {trade_date}")
+
+        expiries = {opt.expiry_date for opt in option_chain}
+        if len(expiries) > 1:
+            raise ValueError(
+                f"Option chain contains multiple expiries: {sorted(expiries)}. "
+                f"Expected single expiry: {expiry_date}"
+            )
+
+        actual_expiry = next(iter(expiries))
+        if actual_expiry != expiry_date:
+            raise ValueError(
+                f"Option chain expiry mismatch. Expected {expiry_date}, "
+                f"got {actual_expiry}"
+            )
 
     def _find_atm_strike(
         self,
