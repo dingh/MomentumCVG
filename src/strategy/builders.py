@@ -303,6 +303,8 @@ class IronButterflyCandidate:
     net_credit: Decimal          # short body premium - long wing cost  (> 0)
     credit_to_width: float       # net_credit / wing_width  (= return on max-loss capital)
     return_on_max_loss: float    # alias for credit_to_width (for clarity in analysis)
+    total_spread: Decimal        # sum of (ask - bid) across all 4 legs (entry slippage budget)
+    spread_cost_ratio: float     # total_spread / net_credit  (e.g. 0.10 = spread costs 10% of credit)
 
     # Wing delta score
     avg_wing_delta: float        # (|long_call.delta| + |long_put.delta|) / 2
@@ -651,6 +653,14 @@ class IronButterflyBuilder:
 
             avg_wing_delta = (abs(long_call.delta) + abs(long_put.delta)) / 2.0
 
+            total_spread = (
+                (short_call.ask - short_call.bid)
+                + (short_put.ask  - short_put.bid)
+                + (long_call.ask  - long_call.bid)
+                + (long_put.ask   - long_put.bid)
+            )
+            spread_cost_ratio = float(total_spread / net_credit)
+
             # Net greeks across all 4 legs (signed by qty).
             # Put deltas on OptionQuote are already negative (e.g. -0.15)
             # so arithmetic works directly with raw delta values.
@@ -681,6 +691,8 @@ class IronButterflyBuilder:
                 net_credit=net_credit,
                 credit_to_width=credit_to_width,
                 return_on_max_loss=credit_to_width,
+                total_spread=total_spread,
+                spread_cost_ratio=spread_cost_ratio,
                 avg_wing_delta=avg_wing_delta,
                 net_delta=net_delta,
                 net_gamma=net_gamma,
@@ -711,6 +723,7 @@ class IronButterflyBuilder:
         Extracted so ``build_strategy()`` and any future public entry points
         share a single validation path without duplication.
 
+        
         Raises:
             ValueError: Empty chain, multiple expiries, or expiry mismatch.
         """
