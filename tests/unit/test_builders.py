@@ -18,7 +18,7 @@ from decimal import Decimal
 from typing import List
 
 from src.core.models import OptionQuote, OptionStrategy, OptionLeg, StrategyType
-from src.strategy.builders import StraddleBuilder, IronButterflyBuilder
+from src.strategy.builders import StraddleBuilder, IronButterflyBuilder, IronButterflyCandidate
 
 
 # =============================================================================
@@ -979,6 +979,423 @@ class TestIronButterflyBuilderHappyPath:
         # Assert
         assert strategy.ticker == ibf_ticker
         assert strategy.trade_date == ibf_trade_date
+
+
+# =============================================================================
+# TestEnumerateCandidates
+# =============================================================================
+
+
+class TestEnumerateCandidates:
+    """
+    Test enumerate_candidates() — the two-phase bucketing algorithm that
+    returns at most one symmetric wing candidate per delta-target level.
+
+    Phase 1: build full pool (spread filter, yield filter, mirror check).
+    Phase 2: nearest-neighbour bucketing — each candidate claims the closest
+             target; strict < tie-breaking means insertion order (ascending
+             wing_width = narrower wing) wins on equal distance.
+    """
+
+    # ── Shared dates / ticker for all inline chains ────────────────────────
+    TRADE  = date(2026, 2, 13)
+    EXPIRY = date(2026, 2, 20)
+    TKTR   = "AAPL"
+
+    def _opt(
+        self,
+        strike: float,
+        option_type: str,
+        bid: float,
+        ask: float,
+        mid: float,
+        delta: float,
+        gamma: float = 0.02,
+        vega: float  = 0.10,
+        theta: float = -0.20,
+    ) -> OptionQuote:
+        """Minimal OptionQuote factory for inline chain construction."""
+        return OptionQuote(
+            ticker=self.TKTR,
+            trade_date=self.TRADE,
+            expiry_date=self.EXPIRY,
+            strike=Decimal(str(strike)),
+            option_type=option_type,
+            bid=Decimal(str(bid)),
+            ask=Decimal(str(ask)),
+            mid=Decimal(str(mid)),
+            iv=0.30,
+            delta=delta,
+            gamma=gamma,
+            vega=vega,
+            theta=theta,
+            volume=100,
+            open_interest=100,
+        )
+
+    def _body_pair(self, strike: float = 100.0):
+        """Return (short_call, short_put) body pair at the given ATM strike."""
+        sc = self._opt(strike, "call", bid=5.00, ask=5.10, mid=5.05, delta=0.55,
+                       gamma=0.04, vega=0.15, theta=-0.35)
+        sp = self._opt(strike, "put",  bid=4.90, ask=5.00, mid=4.95, delta=-0.45,
+                       gamma=0.04, vega=0.15, theta=-0.35)
+        return sc, sp
+
+    # ── Phase 1 filter tests ───────────────────────────────────────────────
+
+    def test_returns_empty_list_when_no_otm_strikes(self):
+        """
+        Pool is empty when chain contains only the body (no OTM strikes).
+        No OTM calls → no candidates → empty list returned.
+        """
+        sc, sp = self._body_pair()
+        chain = [sc, sp]
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+
+        result = builder.enumerate_candidates(
+            chain, Decimal("100"), sc, sp
+        )
+
+        assert result == []
+
+    def test_returns_empty_list_when_no_mirror_put(self, sample_ibf_chain_no_mirror,
+                                                    ibf_trade_date, ibf_expiry_date):
+        """
+        OTM call strikes exist but no symmetric put strike present.
+        enumerate_candidates() silently skips unmatched calls — empty list.
+        Uses sample_ibf_chain_no_mirror (body call+put at 255.0, OTM calls at
+        245 and 265 but puts at those strikes removed).
+        """
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        body_strike = Decimal("255.0")
+        sc = next(q for q in sample_ibf_chain_no_mirror
+                  if q.strike == body_strike and q.option_type == "call")
+        sp = next(q for q in sample_ibf_chain_no_mirror
+                  if q.strike == body_strike and q.option_type == "put")
+
+        result = builder.enumerate_candidates(
+            sample_ibf_chain_no_mirror, body_strike, sc, sp
+        )
+
+        assert result == []
+
+    def test_returns_empty_list_when_net_credit_zero(self):
+        """
+        Wing cost equals body premium → net_credit == 0 → filtered out.
+        The filter is strict (net_credit <= 0), so exactly zero is excluded.
+        """
+        sc, sp = self._body_pair()   # body total mid = 5.05 + 4.95 = 10.00
+        # Wing mids sum to exactly body mids sum → net_credit = 0
+        lc = self._opt(110.0, "call", bid=4.99, ask=5.01, mid=5.00, delta=0.15)
+        lp = self._opt( 90.0, "put",  bid=4.99, ask=5.01, mid=5.00, delta=-0.15)
+        chain = [sc, sp, lc, lp]
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+
+        result = builder.enumerate_candidates(
+            chain, Decimal("100"), sc, sp
+        )
+
+        assert result == []
+
+    def test_returns_empty_list_when_spread_too_wide(self):
+        """
+        One wing leg has bid/ask spread > max_spread_pct → silently filtered.
+        builder.max_spread_pct=0.25; long_call has spread_pct ≈ 1.99 (>> 0.25).
+        """
+        sc, sp = self._body_pair()
+        # Wide spread: mid=2.505, spread=4.99 → spread_pct ≈ 1.99
+        lc = self._opt(110.0, "call", bid=0.01, ask=5.00, mid=2.505, delta=0.15)
+        lp = self._opt( 90.0, "put",  bid=0.95, ask=0.97, mid=0.960, delta=-0.15)
+        chain = [sc, sp, lc, lp]
+        builder = IronButterflyBuilder(max_spread_pct=0.25, min_yield_on_capital=0.0)
+
+        result = builder.enumerate_candidates(
+            chain, Decimal("100"), sc, sp
+        )
+
+        assert result == []
+
+    def test_returns_empty_list_when_yield_below_threshold(self):
+        """
+        net_credit / wing_width < min_yield_on_capital → silently filtered.
+        wing_width=10, net_credit=0.20, yield=0.02 < min_yield=0.05.
+        """
+        # body total mid = 3.0 + 2.0 = 5.0
+        sc = self._opt(100.0, "call", bid=2.95, ask=3.05, mid=3.00, delta=0.55)
+        sp = self._opt(100.0, "put",  bid=1.95, ask=2.05, mid=2.00, delta=-0.45)
+        # wing total mid = 2.40 + 2.40 = 4.80 → net_credit = 0.20 → yield = 0.02
+        lc = self._opt(110.0, "call", bid=2.35, ask=2.45, mid=2.40, delta=0.15)
+        lp = self._opt( 90.0, "put",  bid=2.35, ask=2.45, mid=2.40, delta=-0.15)
+        chain = [sc, sp, lc, lp]
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.05)
+
+        result = builder.enumerate_candidates(
+            chain, Decimal("100"), sc, sp
+        )
+
+        assert result == []
+
+    # ── Happy path / structure tests ───────────────────────────────────────
+
+    def test_single_valid_pair_returns_one_candidate(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date
+    ):
+        """
+        Chain with exactly one symmetric pair → list of exactly 1 candidate.
+        sample_ibf_chain_atm has body=255.0 and one wing pair ±10.
+        """
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        body_strike = Decimal("255.0")
+        sc = next(q for q in sample_ibf_chain_atm
+                  if q.strike == body_strike and q.option_type == "call")
+        sp = next(q for q in sample_ibf_chain_atm
+                  if q.strike == body_strike and q.option_type == "put")
+
+        result = builder.enumerate_candidates(sample_ibf_chain_atm, body_strike, sc, sp)
+
+        assert len(result) == 1
+        assert isinstance(result[0], IronButterflyCandidate)
+
+    def test_candidate_fields_correct(self):
+        """
+        All 14 fields of the returned IronButterflyCandidate are correct.
+        Values are computed manually from a single inline pair.
+
+        Body  @100: call mid=5.05 (bid=5.00, ask=5.10), delta=+0.55, gamma=0.04, vega=0.15, theta=-0.35
+                    put  mid=4.95 (bid=4.90, ask=5.00), delta=-0.45, gamma=0.04, vega=0.15, theta=-0.35
+        Wings @110/90: call mid=1.01 (bid=1.00, ask=1.02), delta=+0.15, gamma=0.02, vega=0.10, theta=-0.20
+                       put  mid=0.96 (bid=0.95, ask=0.97), delta=-0.15, gamma=0.02, vega=0.10, theta=-0.20
+
+        net_credit       = (5.05+4.95) - (1.01+0.96) = 8.03
+        credit_to_width  = 8.03 / 10 = 0.803
+        avg_wing_delta   = (0.15 + 0.15) / 2 = 0.15
+        net_delta        = (-0.15) + -(-0.45) + -(0.55) + 0.15 = -0.10
+        net_gamma        = 0.02+0.02 - 0.04-0.04 = -0.04
+        net_vega         = 0.10+0.10 - 0.15-0.15 = -0.10
+        net_theta        = (-0.20)+(-0.20) - (-0.35)-(-0.35) = 0.30
+        """
+        sc, sp = self._body_pair()   # strike=100, call mid=5.05, put mid=4.95
+        lc = self._opt(110.0, "call", bid=1.00, ask=1.02, mid=1.01, delta=0.15,
+                       gamma=0.02, vega=0.10, theta=-0.20)
+        lp = self._opt( 90.0, "put",  bid=0.95, ask=0.97, mid=0.96, delta=-0.15,
+                       gamma=0.02, vega=0.10, theta=-0.20)
+        chain = [sc, sp, lc, lp]
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+
+        result = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
+
+        assert len(result) == 1
+        c = result[0]
+
+        assert c.body_strike       == Decimal("100")
+        assert c.wing_width        == Decimal("10")
+        assert c.call_wing_strike  == Decimal("110.0")
+        assert c.put_wing_strike   == Decimal("90.0")
+        assert c.net_credit        == Decimal("8.03")
+        assert abs(c.credit_to_width  - 0.803)  < 1e-9
+        assert abs(c.avg_wing_delta   - 0.15)   < 1e-9
+        assert c.short_call is sc
+        assert c.short_put  is sp
+        assert c.long_call  is lc
+        assert c.long_put   is lp
+
+    # ── Net greeks test ────────────────────────────────────────────────────
+
+    def test_net_greeks_computed_correctly(self):
+        """
+        Net greeks across all 4 legs use signed quantities (+1 long, -1 short).
+
+        net_delta = lp.delta*+1 + sp.delta*-1 + sc.delta*-1 + lc.delta*+1
+        net_gamma = lp.gamma + lc.gamma - sp.gamma - sc.gamma
+        net_vega  = lp.vega  + lc.vega  - sp.vega  - sc.vega
+        net_theta = lp.theta + lc.theta - sp.theta - sc.theta
+        """
+        sc, sp = self._body_pair()   # delta ±0.55/−0.45, gamma=0.04, vega=0.15, theta=-0.35
+        lc = self._opt(110.0, "call", bid=1.00, ask=1.02, mid=1.01, delta=0.15,
+                       gamma=0.02, vega=0.10, theta=-0.20)
+        lp = self._opt( 90.0, "put",  bid=0.95, ask=0.97, mid=0.96, delta=-0.15,
+                       gamma=0.02, vega=0.10, theta=-0.20)
+        chain = [sc, sp, lc, lp]
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+
+        c = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)[0]
+
+        expected_net_delta = (-0.15) + -(-0.45) + -(0.55) + 0.15        # = -0.10
+        expected_net_gamma = 0.02 + 0.02 - 0.04 - 0.04                  # = -0.04
+        expected_net_vega  = 0.10 + 0.10 - 0.15 - 0.15                  # = -0.10
+        expected_net_theta = (-0.20) + (-0.20) - (-0.35) - (-0.35)      # = +0.30
+
+        assert abs(c.net_delta - expected_net_delta) < 1e-9
+        assert abs(c.net_gamma - expected_net_gamma) < 1e-9
+        assert abs(c.net_vega  - expected_net_vega)  < 1e-9
+        assert abs(c.net_theta - expected_net_theta) < 1e-9
+
+    # ── Bucketing algorithm tests ──────────────────────────────────────────
+
+    def test_bucketing_two_candidates_same_bucket_closer_wins(self):
+        """
+        Two candidates that both claim the 0.15 target; the closer one wins.
+
+        Pair A (width=10): avg_delta=0.134  → dist to 0.15 = 0.016
+        Pair B (width= 8): avg_delta=0.152  → dist to 0.15 = 0.002  ← wins
+
+        Pool insertion order is ascending wing_width (Pair A first), so
+        Pair A does NOT win the tie even if considered first — Pair B is
+        strictly closer and beats it.
+        Result: [Pair B] only.
+        """
+        sc, sp = self._body_pair()
+        # Pair A  (width=10)
+        lc_a = self._opt(110.0, "call", bid=0.95, ask=0.97, mid=0.96, delta= 0.134)
+        lp_a = self._opt( 90.0, "put",  bid=0.90, ask=0.92, mid=0.91, delta=-0.134)
+        # Pair B  (width=8)
+        lc_b = self._opt(108.0, "call", bid=1.00, ask=1.02, mid=1.01, delta= 0.152)
+        lp_b = self._opt( 92.0, "put",  bid=0.95, ask=0.97, mid=0.96, delta=-0.152)
+        chain = [sc, sp, lc_a, lp_a, lc_b, lp_b]
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+
+        result = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
+
+        assert len(result) == 1
+        assert abs(result[0].avg_wing_delta - 0.152) < 1e-9
+        assert result[0].call_wing_strike == Decimal("108.0")
+
+    def test_bucketing_two_candidates_different_buckets(self):
+        """
+        Two candidates that claim different target buckets → both returned.
+
+        Pair A (width=8 ): avg_delta=0.12 → nearest 0.10 (dist=0.02)
+        Pair B (width=10): avg_delta=0.22 → nearest 0.20 (dist=0.02)
+
+        Each wins its own bucket; result has 2 candidates sorted by width.
+        """
+        sc, sp = self._body_pair()
+        # Pair A — claims 0.10 bucket
+        lc_a = self._opt(108.0, "call", bid=0.95, ask=0.97, mid=0.96, delta= 0.12)
+        lp_a = self._opt( 92.0, "put",  bid=0.90, ask=0.92, mid=0.91, delta=-0.12)
+        # Pair B — claims 0.20 bucket
+        lc_b = self._opt(110.0, "call", bid=0.85, ask=0.87, mid=0.86, delta= 0.22)
+        lp_b = self._opt( 90.0, "put",  bid=0.80, ask=0.82, mid=0.81, delta=-0.22)
+        chain = [sc, sp, lc_a, lp_a, lc_b, lp_b]
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+
+        result = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
+
+        assert len(result) == 2
+        widths = [c.wing_width for c in result]
+        assert widths[0] <= widths[1],  "results must be sorted ascending by wing_width"
+        deltas = {round(c.avg_wing_delta, 2) for c in result}
+        assert deltas == {0.12, 0.22}
+
+    def test_bucketing_returns_at_most_one_per_target(self):
+        """
+        Five candidates all nearest to the 0.15 target; only the closest wins.
+
+        Deltas: 0.140, 0.145, 0.150, 0.155, 0.160 — all claim 0.15.
+        0.150 is equidistant to 0.15 and... it IS 0.15, so dist=0.000 wins.
+        Result: exactly 1 candidate with avg_wing_delta ≈ 0.150.
+        """
+        sc, sp = self._body_pair()
+        pairs = [
+            (106.0, 94.0, 0.140),
+            (107.0, 93.0, 0.145),
+            (108.0, 92.0, 0.150),
+            (109.0, 91.0, 0.155),
+            (110.0, 90.0, 0.160),
+        ]
+        chain = [sc, sp]
+        for call_k, put_k, delta in pairs:
+            chain.append(self._opt(call_k, "call", bid=0.95, ask=0.97, mid=0.96, delta= delta))
+            chain.append(self._opt(put_k,  "put",  bid=0.90, ask=0.92, mid=0.91, delta=-delta))
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+
+        result = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
+
+        assert len(result) == 1
+        assert abs(result[0].avg_wing_delta - 0.150) < 1e-9
+
+    def test_custom_wing_delta_targets_respected(self):
+        """
+        Passing wing_delta_targets changes which candidates survive bucketing.
+
+        Chain has two pairs:
+          Pair A (width=8):  avg_delta=0.12 — with default targets claims 0.10
+          Pair B (width=10): avg_delta=0.28 — with default targets claims 0.30
+
+        Default [0.10, 0.15, 0.20, 0.30] → 2 results (each wins its bucket).
+        Custom  [0.15]                    → 1 result (both claim 0.15; Pair A
+                                             wins at dist=0.03 vs Pair B at 0.13).
+        """
+        sc, sp = self._body_pair()
+        lc_a = self._opt(108.0, "call", bid=0.95, ask=0.97, mid=0.96, delta= 0.12)
+        lp_a = self._opt( 92.0, "put",  bid=0.90, ask=0.92, mid=0.91, delta=-0.12)
+        lc_b = self._opt(110.0, "call", bid=0.85, ask=0.87, mid=0.86, delta= 0.28)
+        lp_b = self._opt( 90.0, "put",  bid=0.80, ask=0.82, mid=0.81, delta=-0.28)
+        chain = [sc, sp, lc_a, lp_a, lc_b, lp_b]
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+
+        result_default = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
+        result_custom  = builder.enumerate_candidates(
+            chain, Decimal("100"), sc, sp, wing_delta_targets=[0.15]
+        )
+
+        assert len(result_default) == 2
+        assert len(result_custom)  == 1
+        assert abs(result_custom[0].avg_wing_delta - 0.12) < 1e-9
+
+    def test_sorted_ascending_by_wing_width(self):
+        """
+        Returned list is sorted ascending by wing_width regardless of pool
+        construction order.
+
+        Three pairs at widths 8, 10, 12 with deltas claiming three different
+        target buckets — all three survive bucketing and must come back
+        ordered 8 < 10 < 12.
+        """
+        sc, sp = self._body_pair()
+        # width 8  → delta 0.12 → claims 0.10
+        lc_a = self._opt(108.0, "call", bid=0.95, ask=0.97, mid=0.96, delta= 0.12)
+        lp_a = self._opt( 92.0, "put",  bid=0.90, ask=0.92, mid=0.91, delta=-0.12)
+        # width 10 → delta 0.20 → claims 0.20
+        lc_b = self._opt(110.0, "call", bid=0.85, ask=0.87, mid=0.86, delta= 0.20)
+        lp_b = self._opt( 90.0, "put",  bid=0.80, ask=0.82, mid=0.81, delta=-0.20)
+        # width 12 → delta 0.29 → claims 0.30
+        lc_c = self._opt(112.0, "call", bid=0.75, ask=0.77, mid=0.76, delta= 0.29)
+        lp_c = self._opt( 88.0, "put",  bid=0.70, ask=0.72, mid=0.71, delta=-0.29)
+        chain = [sc, sp, lc_a, lp_a, lc_b, lp_b, lc_c, lp_c]
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+
+        result = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
+
+        assert len(result) == 3
+        widths = [c.wing_width for c in result]
+        assert widths == sorted(widths), f"Expected ascending widths, got {widths}"
+
+    def test_default_targets_are_10_15_20_30(
+        self, sample_ibf_chain_multi_width, ibf_trade_date, ibf_expiry_date
+    ):
+        """
+        Calling enumerate_candidates() without wing_delta_targets uses the
+        default [0.10, 0.15, 0.20, 0.30], so at most 4 candidates are returned.
+        Uses sample_ibf_chain_multi_width (many available symmetric pairs).
+        """
+        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        body_strike = Decimal("255.0")
+        sc = next(q for q in sample_ibf_chain_multi_width
+                  if q.strike == body_strike and q.option_type == "call")
+        sp = next(q for q in sample_ibf_chain_multi_width
+                  if q.strike == body_strike and q.option_type == "put")
+
+        result = builder.enumerate_candidates(sample_ibf_chain_multi_width, body_strike, sc, sp)
+
+        assert len(result) <= 4, (
+            f"Default targets have 4 buckets, got {len(result)} candidates"
+        )
+        # All results must be valid IronButterflyCandidate instances
+        assert all(isinstance(c, IronButterflyCandidate) for c in result)
+        # Widths must be ascending
+        widths = [c.wing_width for c in result]
+        assert widths == sorted(widths)
 
 
 class TestIronButterflyBuilderDeltaSelection:

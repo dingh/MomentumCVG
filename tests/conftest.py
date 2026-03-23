@@ -220,19 +220,20 @@ def sample_ibf_chain_no_mirror() -> List[OptionQuote]:
     Chain where OTM call wings exist but NO mirrored put strikes exist,
     so no symmetric wing pair can be formed.
 
-    Required content
-    ----------------
-      - 44.5 call  (body)
-      - 44.5 put   (body)
-      - 45.0 call  (OTM call candidate only — NO 44.0 put present)
+    Derived from sample_ibf_chain_atm.csv with the OTM put (245.0) removed:
+      - 245.0 call  (OTM call candidate — present)
+      - 245.0 put   (mirror put — REMOVED)
+      - 255.0 call  (body)
+      - 255.0 put   (body)
+      - 265.0 call  (OTM call candidate — present)
+      - 265.0 put   (mirror put — REMOVED)
 
-    Purpose: verifies that _select_wing_pair() raises ValueError when
-    symmetry cannot be satisfied even though OTM calls are available.
-
-    Store as:  tests/fixtures/sample_ibf_chain_no_mirror.csv
-    Format: same columns as sample_option_chain_atm.csv
+    Both OTM puts are absent, so enumerate_candidates() finds no symmetric
+    pairs and build_strategy_at_body() raises ValueError("No valid symmetric
+    wing pairs").
     """
-    pass
+    chain = load_option_chain_from_csv("sample_ibf_chain_atm.csv")
+    return [q for q in chain if not (q.option_type == "put" and q.strike != Decimal("255.0"))]
 
 
 # =============================================================================

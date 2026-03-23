@@ -595,25 +595,54 @@ class IronButterflyBuilder:
         body_strike: Decimal,
         short_call: OptionQuote,
         short_put: OptionQuote,
+        wing_delta_targets: Optional[List[float]] = None,
     ) -> List[IronButterflyCandidate]:
         """
-        Return all valid symmetric wing candidates around ``body_strike``.
+        Return up to one candidate per target delta level in ``WING_DELTA_TARGETS``.
+
+        **Selection algorithm (nearest-neighbor bucketing):**
+
+        1. Build the full pool of structurally valid, spread-filtered,
+           yield-filtered symmetric wing pairs (same logic as before).
+        2. For each candidate, determine its *nearest target delta*
+           (the element of ``WING_DELTA_TARGETS`` closest to
+           ``candidate.avg_wing_delta``).  This is the candidate's "claim".
+        3. Group candidates by the target they claimed.  For each target
+           group keep only the single candidate with the smallest
+           ``|avg_wing_delta - target|``.
+        4. Candidates that lost to a closer rival in the same bucket are
+           dropped entirely — they are NOT reassigned to a second-choice
+           target.
+
+        **Example:** available deltas are 13.4 and 15.2; targets are
+        ``[0.10, 0.15, 0.20, 0.30]``.
+
+        * 13.4 → nearest target 0.15 (|13.4-15|=1.6 < |13.4-10|=3.4)
+        * 15.2 → nearest target 0.15 (|15.2-15|=0.2)
+
+        Both contest 0.15.  15.2 wins (closer).  13.4 is unassigned — the
+        0.10 bucket stays empty.  Result: ``[cand@15.2]``.
 
         Candidates that fail spread quality or yield-on-capital filters are
-        silently excluded — the caller sees only structurally buildable wings.
-        This lets analysis scripts iterate over the full candidate surface
-        without the builder raising exceptions.
+        silently excluded before bucketing.
 
         Args:
-            option_chain: Full pre-validated option chain.
-            body_strike:  ATM body strike (shared by short_call and short_put).
-            short_call:   Short call body leg (already fetched and validated).
-            short_put:    Short put body leg (already fetched and validated).
+            option_chain:       Full pre-validated option chain.
+            body_strike:        ATM body strike (shared by short_call and short_put).
+            short_call:         Short call body leg (already fetched and validated).
+            short_put:          Short put body leg (already fetched and validated).
+            wing_delta_targets: Ordered list of target |delta| levels used for
+                                nearest-neighbor bucketing.  At most one candidate
+                                is returned per level.  Defaults to
+                                ``[0.10, 0.15, 0.20, 0.30]``.
 
         Returns:
-            List of ``IronButterflyCandidate`` objects, one per valid symmetric
-            wing pair, sorted ascending by wing_width.
+            List of ``IronButterflyCandidate`` objects — at most one per
+            element of ``wing_delta_targets`` — sorted ascending by
+            wing_width.
         """
+        if wing_delta_targets is None:
+            wing_delta_targets = [0.10, 0.15, 0.20, 0.30]
         chain_lookup: dict = {
             (opt.strike, opt.option_type): opt for opt in option_chain
         }
@@ -621,7 +650,8 @@ class IronButterflyBuilder:
             {opt.strike for opt in option_chain if opt.strike > body_strike}
         )
 
-        candidates: List[IronButterflyCandidate] = []
+        # ── Step 1: Build the full candidate pool ──────────────────────────
+        pool: List[IronButterflyCandidate] = []
         for call_strike in otm_call_strikes:
             wing_width = call_strike - body_strike
             put_strike = body_strike - wing_width  # mirror strike
@@ -683,7 +713,7 @@ class IronButterflyBuilder:
                 - short_put.theta - short_call.theta
             )
 
-            candidates.append(IronButterflyCandidate(
+            pool.append(IronButterflyCandidate(
                 body_strike=body_strike,
                 wing_width=wing_width,
                 call_wing_strike=call_strike,
@@ -704,6 +734,28 @@ class IronButterflyBuilder:
                 long_put=long_put,
             ))
 
+        if not pool:
+            return []
+
+        # ── Step 2: Nearest-neighbour bucketing by target delta ────────────
+        # Each candidate claims the target it is closest to.  Within each
+        # target bucket only the single best (smallest distance) wins.
+        # Losers are dropped — they are NOT reassigned to a secondary target.
+        buckets: dict = {}   # target_delta -> (distance, candidate)
+        for cand in pool:
+            nearest = min(
+                wing_delta_targets,
+                key=lambda t: abs(cand.avg_wing_delta - t),
+            )
+            dist = abs(cand.avg_wing_delta - nearest)
+            if nearest not in buckets or dist < buckets[nearest][0]:
+                buckets[nearest] = (dist, cand)
+            # Note: strict < means ties are broken by pool insertion order
+            # (ascending wing_width), so the narrower wing wins on equal distance.
+
+        # Collect winners and sort ascending by wing_width
+        candidates = [cand for (_dist, cand) in buckets.values()]
+        candidates.sort(key=lambda c: c.wing_width)
         return candidates
 
     # ------------------------------------------------------------------
