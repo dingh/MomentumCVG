@@ -289,10 +289,10 @@ class IronFlyHistoryBuilder:
         self,
         data_root: str,
         spot_db: SpotPriceDB,
-        dte_target: int = 30,
+        dte_target: int = 7,
         max_spread_pct: float = 0.99,
         min_yield_on_capital: float = 0.0,
-        min_volume: int = 0,
+        min_volume: int = 10,
         min_oi: int = 0,
         frequency: str = 'monthly',
     ):
