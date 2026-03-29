@@ -12,7 +12,7 @@ Configuration:
 - Frequency: Weekly (hardcoded)
 - Target DTE: 7 days (hardcoded)
 - Workers: 24 parallel jobs (hardcoded)
-- Tickers: S&P 500 from C:\ORATS\data\meta_data\SP500.csv
+- Tickers: Liquid universe from C:/MomentumCVG_env/cache/liquid_tickers.csv
 
 Usage:
     python scripts/precompute_straddle_history.py
@@ -42,11 +42,11 @@ from src.data.spot_price_db import SpotPriceDB
 # These are fixed for the weekly momentum strategy
 FREQUENCY = 'weekly'
 DTE_TARGET = 7
-N_WORKERS = 24
+N_WORKERS = 16
 MAX_SPREAD_PCT = 0.50
 MIN_VOLUME = 10
 MIN_OI = 0
-SP500_FILE = Path('C:/ORATS/data/meta_data/SP500.csv')
+TRADE_UNIVERSE_FILE = Path('C:/MomentumCVG_env/cache/liquid_tickers.csv')
 
 
 def process_date_batch(
@@ -277,14 +277,15 @@ def main():
     logger.info("="*80)
     logger.info(f"Using SpotPriceDB: {SPOT_DB_PATH}")
     
-    # Load tickers from SP500.csv
-    if not SP500_FILE.exists():
-        logger.error(f"SP500.csv not found: {SP500_FILE}")
+    # Load tickers from trade universe file
+    if not TRADE_UNIVERSE_FILE.exists():
+        logger.error(f"Trade universe file not found: {TRADE_UNIVERSE_FILE}")
+        logger.error("Please run the build_universe_panel notebook first!")
         return
     
-    df_sp500 = pd.read_csv(SP500_FILE)
-    tickers = df_sp500['Ticker'].tolist()
-    logger.info(f"Loaded {len(tickers)} tickers from {SP500_FILE}")
+    df_universe = pd.read_csv(TRADE_UNIVERSE_FILE)
+    tickers = df_universe['Ticker'].tolist()
+    logger.info(f"Loaded {len(tickers)} tickers from {TRADE_UNIVERSE_FILE}")
     
     logger.info(f"Tickers: {len(tickers)} ({', '.join(tickers[:5])}...)")
     logger.info(f"Frequency: {FREQUENCY}")
@@ -375,7 +376,7 @@ def main():
             logger.info(f"  Avg spread: {tradeable_df['avg_spread_pct'].mean()*100:.1f}%")
     
     # Save results (include frequency, start year, and end year in filename)
-    output_path = Path(f'C:/MomentumCVG_env/cache/straddle_history_{FREQUENCY}_{args.start_year}_{args.end_year}.parquet')
+    output_path = Path(f'C:/MomentumCVG_env/cache/straddle_history_{FREQUENCY}_{args.start_year}_{args.end_year}_liquidity.parquet')
     df.to_parquet(output_path, compression='gzip', index=False)
     
     logger.info(f"Results saved to: {output_path}")
