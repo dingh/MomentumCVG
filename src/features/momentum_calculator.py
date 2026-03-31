@@ -421,9 +421,11 @@ class MomentumCalculator:
             )
             
             # Std: rolling std + per-ticker shift (need at least 2 for std calculation)
+            # Cap min_periods at window_size so pandas never raises "min_periods > window"
+            std_min_periods = min(window_size, max(2, self.min_periods))
             history[f'{prefix}_std'] = (
                 grouped
-                .rolling(window=window_size, min_periods=max(2, self.min_periods))
+                .rolling(window=window_size, min_periods=std_min_periods)
                 .std(ddof=1)
                 .groupby(level=0)
                 .shift(min_lag)

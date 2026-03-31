@@ -206,6 +206,7 @@ class StraddleHistoryBuilder:
         self,
         ticker: str,
         entry_date: date,
+        expiry_date: Optional[date] = None,
     ) -> Dict:
         """
         Process single straddle: build at entry, calculate P&L at expiry.
@@ -213,6 +214,8 @@ class StraddleHistoryBuilder:
         Args:
             ticker: Stock ticker
             entry_date: Trade entry date
+            expiry_date: Optional expiry date. When provided, _find_best_expiry
+                         is skipped and this date is used directly.
         
         Returns:
             Dictionary with all straddle metrics
@@ -269,8 +272,9 @@ class StraddleHistoryBuilder:
             
             result['entry_spot'] = float(entry_spot)
             
-            # Find expiry closest to target DTE
-            expiry_date = self._find_best_expiry(ticker, entry_date, self.dte_target)
+            # Find expiry closest to target DTE (skip if caller supplied one)
+            if expiry_date is None:
+                expiry_date = self._find_best_expiry(ticker, entry_date, self.dte_target)
             if expiry_date is None:
                 result['failure_reason'] = 'no_expiry_found'
                 return result

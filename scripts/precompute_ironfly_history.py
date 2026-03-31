@@ -57,7 +57,7 @@ MAX_SPREAD_PCT = 0.99
 MIN_YIELD      = 0.05  # net_credit / wing_width floor -- ensures minimum return on capital deployed
 MIN_VOLUME     = 10
 MIN_OI         = 0
-SP500_FILE     = Path('C:/ORATS/data/meta_data/SP500.csv')
+SP500_FILE     = Path('C:/MomentumCVG_env/cache/liquid_tickers.csv')
 SPOT_DB_PATH   = 'C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet'
 
 
@@ -387,7 +387,7 @@ def main() -> None:
     # -- Save final output ---------------------------------------------------
     output_path = Path(
         f'C:/MomentumCVG_env/cache/'
-        f'ironfly_history_{args.frequency}_{args.start_year}_{args.end_year}.parquet'
+        f'ironfly_history_{args.frequency}_{args.start_year}_{args.end_year}_liquidity.parquet'
     )
     df.to_parquet(output_path, compression='gzip', index=False)
     logger.info(f"\nFinal output saved: {output_path}")

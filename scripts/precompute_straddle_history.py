@@ -23,7 +23,7 @@ Usage:
 import sys
 import logging
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 from typing import List, Dict
 import argparse
 
@@ -46,14 +46,17 @@ N_WORKERS = 16
 MAX_SPREAD_PCT = 0.50
 MIN_VOLUME = 10
 MIN_OI = 0
-TRADE_UNIVERSE_FILE = Path('C:/MomentumCVG_env/cache/liquid_tickers.csv')
+TRADE_UNIVERSE_FILE  = Path('C:/MomentumCVG_env/cache/liquid_tickers.csv')
+LIQUID_EXPIRY_FILE   = Path('C:/MomentumCVG_env/cache/liquid_expiry_dates.csv')
 
 
 def process_date_batch(
     data_root: str,
     spot_db_path: str,
-    trade_date: datetime,
-    tickers: List[str]
+    trade_date: date,
+    tickers: List[str],
+    expiry_date: date = None,
+    dte_target: int = DTE_TARGET,
 ) -> List[Dict]:
     """
     Process all tickers for ONE date in ONE worker.
@@ -68,6 +71,9 @@ def process_date_batch(
         spot_db_path: Path to SpotPriceDB parquet file
         trade_date: Trade date to process
         tickers: List of tickers to process
+        expiry_date: Optional expiry date. When provided (monthly mode), passed
+                     directly to process_single_straddle, bypassing expiry search.
+        dte_target: DTE target passed to the builder (7=weekly, 30=monthly).
     
     Returns:
         List of result dictionaries (one per ticker)
@@ -79,7 +85,7 @@ def process_date_batch(
     builder = StraddleHistoryBuilder(
         data_root=data_root,
         spot_db=spot_db,
-        dte_target=DTE_TARGET,
+        dte_target=dte_target,
         max_spread_pct=MAX_SPREAD_PCT,
         min_volume=MIN_VOLUME,
         min_oi=MIN_OI
@@ -91,7 +97,7 @@ def process_date_batch(
     # Process all tickers - benefits from LRU cache
     results = []
     for ticker in tickers:
-        result = builder.process_single_straddle(ticker, trade_date)
+        result = builder.process_single_straddle(ticker, trade_date, expiry_date=expiry_date)
         results.append(result)
     
     return results
@@ -233,6 +239,46 @@ def generate_trade_dates(
     return trade_dates
 
 
+def generate_monthly_scan_pairs(
+    csv_path: Path,
+    start_year: int,
+    end_year: int,
+) -> List[tuple]:
+    """
+    Build (trade_date, expiry_date) pairs from liquid_expiry_dates.csv.
+
+    trade_date  = row[i].expirDate   (third Friday of month i)
+    expiry_date = row[i+1].expirDate (third Friday of month i+1)
+
+    The last CSV row is skipped — it has no following row to use as expiry.
+    Only pairs where trade_date falls within [start_year, end_year] are kept.
+
+    Args:
+        csv_path:   Path to liquid_expiry_dates.csv
+        start_year: Inclusive start year filter
+        end_year:   Inclusive end year filter
+
+    Returns:
+        List of (trade_date, expiry_date) tuples (Python date objects), ascending.
+    """
+    df = pd.read_csv(csv_path, parse_dates=["expirDate"])
+    df["expirDate"] = df["expirDate"].dt.date
+    dates = df["expirDate"].tolist()
+
+    pairs = []
+    for i in range(len(dates) - 1):   # skip final row — no next-row expiry
+        trade_d  = dates[i]
+        expiry_d = dates[i + 1]
+        if start_year <= trade_d.year <= end_year:
+            pairs.append((trade_d, expiry_d))
+
+    logger.info(
+        f"Generated {len(pairs)} monthly (trade_date, expiry_date) pairs "
+        f"from {csv_path}  [{start_year}-{end_year}]"
+    )
+    return pairs
+
+
 def save_checkpoint(results: List[Dict], checkpoint_path: Path):
     """Save intermediate results to checkpoint file."""
     if not results:
@@ -256,6 +302,14 @@ def main():
                         help='Start year (default: 2018)')
     parser.add_argument('--end-year', type=int, default=2024,
                         help='End year (default: 2024)')
+    parser.add_argument(
+        '--frequency', choices=['weekly', 'monthly'], default='weekly',
+        help=(
+            "'weekly': every Friday, 7 DTE, expiry found by straddle_analyzer. "
+            "'monthly': third-Friday entry+expiry pairs from liquid_expiry_dates.csv, ~30 DTE. "
+            "Default: weekly"
+        ),
+    )
     
     args = parser.parse_args()
     
@@ -273,7 +327,7 @@ def main():
     Path('logs').mkdir(exist_ok=True)
     
     logger.info("="*80)
-    logger.info("Starting weekly straddle history precomputation")
+    logger.info(f"Starting {args.frequency} straddle history precomputation")
     logger.info("="*80)
     logger.info(f"Using SpotPriceDB: {SPOT_DB_PATH}")
     
@@ -287,23 +341,33 @@ def main():
     tickers = df_universe['Ticker'].tolist()
     logger.info(f"Loaded {len(tickers)} tickers from {TRADE_UNIVERSE_FILE}")
     
+    frequency  = args.frequency
+    dte_target = 7 if frequency == 'weekly' else 30
+
     logger.info(f"Tickers: {len(tickers)} ({', '.join(tickers[:5])}...)")
-    logger.info(f"Frequency: {FREQUENCY}")
-    logger.info(f"Target DTE: {DTE_TARGET}")
-    
-    # Generate trade dates using improved logic (handles holidays)
-    start_date = datetime(args.start_year, 1, 1)
-    end_date = datetime(args.end_year, 2, 20)
-    trade_dates = generate_trade_dates(
-        start_date,
-        end_date,
-        FREQUENCY,
-        args.data_root
-    )
-    
-    logger.info(f"Date range: {start_date.date()} to {end_date.date()}")
-    logger.info(f"Trade dates: {len(trade_dates)} (first: {trade_dates[0].date()}, last: {trade_dates[-1].date()})")
-    logger.info(f"Expected straddles: {len(tickers)} tickers × {len(trade_dates)} dates = {len(tickers) * len(trade_dates):,}")
+    logger.info(f"Frequency: {frequency}")
+    logger.info(f"Target DTE: {dte_target}")
+
+    # Build (trade_date, expiry_date) scan pairs
+    if frequency == 'weekly':
+        start_date  = datetime(args.start_year, 1, 1)
+        end_date    = datetime(args.end_year, 2, 20)
+        trade_dates = generate_trade_dates(start_date, end_date, frequency, args.data_root)
+        # weekly: expiry is not known upfront; straddle_analyzer will find it
+        scan_pairs  = [(td.date(), None) for td in trade_dates]
+    else:  # monthly
+        if not LIQUID_EXPIRY_FILE.exists():
+            logger.error(f"Liquid expiry file not found: {LIQUID_EXPIRY_FILE}")
+            return
+        scan_pairs = generate_monthly_scan_pairs(LIQUID_EXPIRY_FILE, args.start_year, args.end_year)
+
+    if not scan_pairs:
+        logger.error("No scan pairs generated — aborting.")
+        return
+
+    logger.info(f"Date range: {scan_pairs[0][0]} to {scan_pairs[-1][0]}")
+    logger.info(f"Trade dates: {len(scan_pairs)} (first: {scan_pairs[0][0]}, last: {scan_pairs[-1][0]})")
+    logger.info(f"Expected straddles: {len(tickers)} tickers × {len(scan_pairs)} dates = {len(tickers) * len(scan_pairs):,}")
     
     logger.info("\n" + "="*80)
     logger.info("PARALLEL PROCESSING CONFIGURATION")
@@ -318,17 +382,19 @@ def main():
     logger.info("="*80)
     
     # Process in parallel BY DATE (not by ticker-date pairs)
-    logger.info(f"\nProcessing {len(trade_dates)} dates with {len(tickers)} tickers each...")
+    logger.info(f"\nProcessing {len(scan_pairs)} dates with {len(tickers)} tickers each...")
     start_time = datetime.now()
-    
+
     all_results = Parallel(n_jobs=N_WORKERS, backend='loky', verbose=0)(
         delayed(process_date_batch)(
             args.data_root,
             SPOT_DB_PATH,
-            trade_date.date(),
-            tickers
+            trade_date,
+            tickers,
+            expiry_date=expiry_date,
+            dte_target=dte_target,
         )
-        for trade_date in tqdm(trade_dates, desc="Processing dates")
+        for trade_date, expiry_date in tqdm(scan_pairs, desc="Processing dates")
     )
     
     # Flatten results: list of lists -> single list
@@ -348,7 +414,7 @@ def main():
     logger.info(f"  Rows with null entry_date: {df['entry_date'].isna().sum()}")
     logger.info(f"  Rows with null ticker: {df['ticker'].isna().sum()}")
     logger.info(f"  Unique tickers: {df['ticker'].nunique()} (expected: {len(tickers)})")
-    logger.info(f"  Unique dates: {df['entry_date'].nunique()} (expected: {len(trade_dates)})")
+    logger.info(f"  Unique dates: {df['entry_date'].nunique()} (expected: {len(scan_pairs)})")
     
     # Summary statistics
     total = len(df)
@@ -376,7 +442,7 @@ def main():
             logger.info(f"  Avg spread: {tradeable_df['avg_spread_pct'].mean()*100:.1f}%")
     
     # Save results (include frequency, start year, and end year in filename)
-    output_path = Path(f'C:/MomentumCVG_env/cache/straddle_history_{FREQUENCY}_{args.start_year}_{args.end_year}_liquidity.parquet')
+    output_path = Path(f'C:/MomentumCVG_env/cache/straddle_history_{frequency}_{args.start_year}_{args.end_year}_liquidity.parquet')
     df.to_parquet(output_path, compression='gzip', index=False)
     
     logger.info(f"Results saved to: {output_path}")
