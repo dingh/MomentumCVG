@@ -17,7 +17,8 @@ Everything indexed for fast lookup. No I/O during the per-date loop.
 
 | Table | File | Key columns | Maps to strategy_def |
 |---|---|---|---|
-| `ironfly_history` | `ironfly_history_weekly_2018_2026.parquet` | `ticker × entry_date × wing_width` | §4.2 eligibility, §4.4 wing candidates, §4.5 economics |
+| `ironfly_history` | `ironfly_history_weekly_2018_2026.parquet` | `ticker × entry_date × wing_width` | §4.2 eligibility, §4.4 wing candidates, §4.5 economics — **used for short side when `short_structure='ironfly'`** |
+| `straddle_history` | `straddle_history_weekly_2018_2026.parquet` | `ticker × entry_date` | §4.5 economics — **used for long side always; used for short side when `short_structure='straddle'`** |
 | `features` | `straddle_features_weekly_2018_2026.parquet` | `ticker × date` | §3.1 signal inputs |
 | `liquidity_panel` | `ticker_liquidity_panel.parquet` | `ticker × month_date` | §4.1 universe construction |
 | `earnings` | `earnings_hist.parquet` | `ticker × earnings_date` | §5.4 event exclusions |
@@ -60,7 +61,8 @@ class BacktestRunConfig:
     spread_bottom_pct: float           # keep bottom N% by effective spread
 
     # Structure selection (strategy_def §4.3, §4.4)
-    wing_selection_rule: str           # 'closest_delta' | 'max_credit_to_width' | 'widest'
+    short_structure: str               # 'ironfly' | 'straddle' — instrument sold on the short side
+    wing_selection_rule: str           # 'closest_delta' | 'max_credit_to_width' | 'widest' — applies to short_structure='ironfly' only
     wing_delta_target: float           # used when rule = 'closest_delta', e.g. 0.15
 
     # Portfolio (strategy_def §5.4, §6.2, §6.3)
@@ -103,13 +105,19 @@ Step 2  SCORE_SIGNALS                                    (strategy_def §3.3, §
      │
      ▼
 Step 3  GET_ELIGIBLE_STRUCTURES                          (strategy_def §4.2, §4.4)
-     │  ironfly_history[entry_date == trade_date] ∩ signal_tickers
-     │  → keep only is_tradeable == True rows
-     │  → apply wing selection rule to pick one row per ticker:
-     │       'closest_delta'       → argmin |avg_wing_delta − wing_delta_target|
-     │       'max_credit_to_width' → argmax credit_to_width
-     │       'widest'              → argmax wing_width
-     │  Output: one candidate row per ticker with full structure + economics
+     │  Direction-split lookup:
+     │    long  tickers → straddle_history[entry_date == trade_date] ∩ long_tickers
+     │                    (buy vol: long call + long put)
+     │    short tickers → if short_structure == 'ironfly':
+     │                        ironfly_history[entry_date == trade_date] ∩ short_tickers
+     │                        → keep is_tradeable == True rows
+     │                        → apply wing selection rule to pick one row per ticker:
+     │                             'closest_delta'       → argmin |avg_wing_delta − wing_delta_target|
+     │                             'max_credit_to_width' → argmax credit_to_width
+     │                             'widest'              → argmax wing_width
+     │                    if short_structure == 'straddle':
+     │                        straddle_history[entry_date == trade_date] ∩ short_tickers
+     │  Output: one candidate row per ticker, tagged with instrument_type column
      │
      ▼
 Step 4  APPLY_EXCLUSIONS                                 (strategy_def §5.4)
@@ -148,8 +156,9 @@ One flat DataFrame. One row per trade (or per candidate if `included_in_portfoli
 
 **Trade identity**
 ```
-run_id, trade_date, expiry_date, ticker, direction, dte_actual
+run_id, trade_date, expiry_date, ticker, direction, instrument_type, dte_actual
 ```
+`instrument_type`: `'long_straddle'` | `'short_straddle'` | `'short_ironfly'`
 
 **Universe context** (§4.1 — for attribution: was the name even in the universe?)
 ```
@@ -203,7 +212,7 @@ included_in_portfolio, exclusion_reason
 |---|---|---|
 | `True` | — | Selected and traded |
 | `False` | `"signal_not_in_top_pct"` | Had structure, missed signal cut |
-| `False` | `"no_tradeable_structure"` | Had signal, no valid iron fly in history |
+| `False` | `"no_tradeable_structure"` | Had signal, no valid structure in history for the required instrument type |
 | `False` | `"earnings_exclusion"` | Dropped by earnings filter |
 | `False` | `"max_names_cap"` | Had signal + structure, cut by max_names_per_side |
 | `False` | `"not_in_universe"` | Failed liquidity filter |
@@ -264,16 +273,16 @@ cost_drag = portfolio.spread_cost_applied.sum() / portfolio.notional_at_risk.sum
 
 These change the code path, not just a parameter value.
 
-1. **Signal direction for iron fly** — momentum "long" = buy vol, "short" = sell vol. Iron fly is always short vol. Do both signal sides map to the same short-fly trade? Or does "long signal" = skip / use a different structure? Or does direction affect sizing weight as a conviction tier?
+1. ~~**Signal direction for iron fly**~~ — **RESOLVED.** Long side (high momentum) = long straddle (buy vol). Short side (low momentum) = short iron fly OR short straddle (sell vol), controlled by `short_structure` config field. Both sides are traded simultaneously.
 
 2. **Wing selection rule for first research run** — `closest_delta`, `max_credit_to_width`, or `widest`?
 
 3. **Cost model for first research run** — `mid`, `half_spread_per_leg`, or `full_spread_per_leg`?
 
-4. **`max_loss` source** — compute inline as `wing_width − abs(net_credit)` at load time, or add to the pre-compute parquet? (Inline is fine; pre-compute avoids repeating the formula.)
+4. **`max_loss` source** — compute inline as `wing_width − abs(net_credit)` at load time, or add to the pre-compute parquet? (Inline is fine; pre-compute avoids repeating the formula.) For long straddle, `max_loss = net_debit` (premium paid).
 
 5. **Keep `included_in_portfolio=False` rows in `trade_log`?** — Costs memory; enables selection effect attribution cleanly. Recommended: yes, with a separate `diagnostics` DataFrame if memory is a concern.
 
 6. **Max-loss budget expression** — fixed dollar amount per trade (e.g. $500), or a fraction of total capital? The fraction approach changes P&L and Sharpe with compounding.
 
-7. **Short side of the iron fly** — strategy_def §0 says "ranks underlyings and trades symmetric iron flies". Does this mean only one side (always sell the fly on the top-ranked names), or is there a paired long/short structure where some names sell the fly long-vol and others sell it short-vol?
+7. ~~**Short side of the iron fly**~~ — **RESOLVED.** See #1 above.
