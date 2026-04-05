@@ -346,42 +346,66 @@ def main() -> None:
 
     # -- Data quality summary ------------------------------------------------
     total      = len(df)
-    tradeable  = int(df['is_tradeable'].sum())
-    fail_count = total - tradeable
+    body_df    = df[df['row_type'] == 'body']       if 'row_type' in df.columns else df.iloc[0:0]
+    cand_df    = df[df['row_type'] == 'ironfly_candidate'] if 'row_type' in df.columns else df.iloc[0:0]
+    fail_df    = df[df['row_type'] == 'failure']    if 'row_type' in df.columns else df.iloc[0:0]
+    n_body     = len(body_df)
+    n_cand     = len(cand_df)
+    n_fail     = len(fail_df)
 
     logger.info("\nData quality summary:")
-    logger.info(f"  Total rows       : {total:,}")
-    logger.info(f"  Tradeable rows   : {tradeable:,}  ({tradeable/total*100:.1f}%)")
-    logger.info(f"  Failure rows     : {fail_count:,}  ({fail_count/total*100:.1f}%)")
+    logger.info(f"  Total rows           : {total:,}")
+    logger.info(f"  Body rows (straddle) : {n_body:,}  ({n_body/total*100:.1f}%)")
+    logger.info(f"  Ironfly candidates   : {n_cand:,}  ({n_cand/total*100:.1f}%)")
+    logger.info(f"  Failure rows         : {n_fail:,}  ({n_fail/total*100:.1f}%)")
 
-    if fail_count > 0:
+    if n_fail > 0:
         logger.info("\n  Failure reason breakdown:")
-        for reason, count in df[~df['is_tradeable']]['failure_reason'].value_counts().items():
+        for reason, count in fail_df['failure_reason'].value_counts().items():
             logger.info(f"    {reason}: {count:,}  ({count/total*100:.1f}%)")
 
-    if tradeable > 0:
-        td_df = df[df['is_tradeable'] & df['pnl'].notna()]
-        if len(td_df) > 0:
-            logger.info("\n  Tradeable rows stats:")
-            logger.info(f"    Unique tickers       : {td_df['ticker'].nunique()}")
-            logger.info(f"    Unique dates         : {td_df['entry_date'].nunique()}")
-            logger.info(f"    Wing widths (unique) : {td_df['wing_width'].nunique()}")
+    if n_body > 0:
+        body_pnl = body_df[body_df['pnl'].notna()]
+        if len(body_pnl) > 0:
+            logger.info("\n  Body (short straddle) stats:")
+            logger.info(f"    Unique tickers        : {body_pnl['ticker'].nunique()}")
+            logger.info(f"    Unique dates          : {body_pnl['entry_date'].nunique()}")
             logger.info(
-                f"    avg_wing_delta range : "
-                f"{td_df['avg_wing_delta'].min():.3f} - "
-                f"{td_df['avg_wing_delta'].max():.3f}"
+                f"    Mean return_on_credit  : "
+                f"{body_pnl['return_pct_on_credit'].mean():.2f}%"
             )
             logger.info(
-                f"    Mean return_pct_on_width   : "
-                f"{td_df['return_pct_on_width'].mean():.2f}%"
+                f"    Median return_on_credit: "
+                f"{body_pnl['return_pct_on_credit'].median():.2f}%"
             )
             logger.info(
-                f"    Median return_pct_on_width : "
-                f"{td_df['return_pct_on_width'].median():.2f}%"
+                f"    Win rate (pnl > 0)     : "
+                f"{(body_pnl['pnl'] > 0).mean()*100:.1f}%"
+            )
+
+    if n_cand > 0:
+        cand_pnl = cand_df[cand_df['pnl'].notna()]
+        if len(cand_pnl) > 0:
+            logger.info("\n  Iron fly candidate stats:")
+            logger.info(f"    Unique tickers        : {cand_pnl['ticker'].nunique()}")
+            logger.info(f"    Unique dates          : {cand_pnl['entry_date'].nunique()}")
+            logger.info(f"    Wing widths (unique)  : {cand_pnl['wing_width'].nunique()}")
+            logger.info(
+                f"    avg_wing_delta range   : "
+                f"{cand_pnl['avg_wing_delta'].min():.3f} - "
+                f"{cand_pnl['avg_wing_delta'].max():.3f}"
             )
             logger.info(
-                f"    Win rate (pnl > 0)         : "
-                f"{(td_df['pnl'] > 0).mean()*100:.1f}%"
+                f"    Mean return_on_width   : "
+                f"{cand_pnl['return_pct_on_width'].mean():.2f}%"
+            )
+            logger.info(
+                f"    Median return_on_width : "
+                f"{cand_pnl['return_pct_on_width'].median():.2f}%"
+            )
+            logger.info(
+                f"    Win rate (pnl > 0)     : "
+                f"{(cand_pnl['pnl'] > 0).mean()*100:.1f}%"
             )
 
     # -- Save final output ---------------------------------------------------

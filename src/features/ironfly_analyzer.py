@@ -36,7 +36,7 @@ import pandas as pd
 from ..data.orats_provider import ORATSDataProvider
 from ..data.spot_price_db import SpotPriceDB
 from ..strategy.builders import IronButterflyBuilder, IronButterflyCandidate
-from ..core.models import OptionLeg, OptionStrategy, StrategyType, Position
+from ..core.models import OptionLeg, OptionQuote, OptionStrategy, StrategyType, Position
 
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,8 @@ def _failure_row(
         'is_tradeable': False,
         'failure_reason': failure_reason,
         'processing_time': processing_time,
+        # Row type
+        'row_type': 'failure',
     }
 
 
@@ -238,6 +240,135 @@ def _candidate_row(
         'is_tradeable': True,
         'failure_reason': None,
         'processing_time': processing_time,
+        # Row type
+        'row_type': 'ironfly_candidate',
+    }
+
+
+def _body_row(
+    ticker: str,
+    entry_date: date,
+    expiry_date: date,
+    dte_target: int,
+    frequency: str,
+    entry_spot: Decimal,
+    body_strike: Decimal,
+    short_call: 'OptionQuote',
+    short_put: 'OptionQuote',
+    exit_spot: Decimal,
+    spot_move_pct: Optional[float],
+    processing_time: float,
+) -> Dict:
+    """
+    Build the ATM short-straddle body row for one (ticker, entry_date).
+
+    Always emitted when the body legs are valid, regardless of whether any
+    iron fly wing candidates exist.  Wing-specific fields are set to None.
+
+    P&L semantics (short straddle)
+    --------------------------------
+    net_credit           = sc.mid + sp.mid  (premium received per share)
+    pnl                  = net_credit - |exit_spot - body_strike|
+    return_pct_on_credit = pnl / net_credit * 100
+    return_pct_on_width  = None  (undefined without wing width)
+    credit_to_width      = None  (undefined without wing width)
+    """
+    strategy = OptionStrategy(
+        ticker=ticker,
+        strategy_type=StrategyType.STRADDLE,
+        legs=(
+            OptionLeg(option=short_call, quantity=-1),
+            OptionLeg(option=short_put,  quantity=-1),
+        ),
+        trade_date=entry_date,
+    )
+
+    exit_value = strategy.calculate_payoff({expiry_date: exit_spot})
+    position = Position(
+        ticker=ticker,
+        entry_date=entry_date,
+        strategy=strategy,
+        quantity=1.0,
+        entry_cost=strategy.net_premium,
+        exit_date=expiry_date,
+        exit_value=exit_value,
+        metadata={},
+    )
+
+    pnl = float(position.pnl)
+    net_credit_f = float(short_call.mid + short_put.mid)
+    days_held = (expiry_date - entry_date).days
+    total_spread = float(
+        (short_call.ask - short_call.bid) + (short_put.ask - short_put.bid)
+    )
+    spread_cost_ratio = (total_spread / net_credit_f) if net_credit_f > 0 else None
+    return_pct_on_credit = (pnl / net_credit_f * 100) if net_credit_f > 0 else None
+
+    # Net greeks: both legs are short (qty = -1)
+    net_delta = short_call.delta * -1 + short_put.delta * -1
+    net_gamma = short_call.gamma * -1 + short_put.gamma * -1
+    net_vega  = short_call.vega  * -1 + short_put.vega  * -1
+    net_theta = short_call.theta * -1 + short_put.theta * -1
+
+    return {
+        # Identity
+        'ticker': ticker,
+        'entry_date': entry_date,
+        'dte_category': frequency,
+        'dte_target': dte_target,
+        'dte_actual': days_held,
+        'expiry_date': expiry_date,
+        'entry_spot': float(entry_spot),
+        'body_strike': float(body_strike),
+        # Candidate geometry — not applicable for body row
+        'wing_width': None,
+        'call_wing_strike': None,
+        'put_wing_strike': None,
+        'avg_wing_delta': None,
+        # Entry economics
+        'net_credit': net_credit_f,
+        'credit_to_width': None,        # undefined without wing width
+        'total_spread': total_spread,
+        'spread_cost_ratio': spread_cost_ratio,
+        # Entry greeks (2-leg short straddle)
+        'net_delta': net_delta,
+        'net_gamma': net_gamma,
+        'net_vega': net_vega,
+        'net_theta': net_theta,
+        # Short call leg
+        'sc_bid': float(short_call.bid),
+        'sc_ask': float(short_call.ask),
+        'sc_iv': short_call.iv,
+        'sc_delta': short_call.delta,
+        # Short put leg
+        'sp_bid': float(short_put.bid),
+        'sp_ask': float(short_put.ask),
+        'sp_iv': short_put.iv,
+        'sp_delta': short_put.delta,
+        # Long wing legs — not applicable for body row
+        'lc_bid': None,
+        'lc_ask': None,
+        'lc_iv': None,
+        'lc_delta': None,
+        'lp_bid': None,
+        'lp_ask': None,
+        'lp_iv': None,
+        'lp_delta': None,
+        # Exit / P&L
+        'exit_spot': float(exit_spot),
+        'exit_value': float(exit_value),
+        'pnl': pnl,
+        'return_pct_on_width': None,    # undefined for straddle
+        'return_pct_on_credit': return_pct_on_credit,
+        'annualized_return_on_width': None,
+        'spot_move_pct': spot_move_pct * 100 if spot_move_pct is not None else None,
+        'days_held': days_held,
+        # Status
+        'is_tradeable': True,
+        'failure_reason': None,
+        'processing_time': processing_time,
+        # Row type
+        'row_type': 'body',
     }
 
 
@@ -534,17 +665,7 @@ class IronFlyHistoryBuilder:
             if short_call.mid <= 0 or short_put.mid <= 0:
                 return fail('invalid_body_mid')
 
-            # 6. Enumerate all valid wing candidates (permissive filters)
-            candidates = self.builder.enumerate_candidates(
-                option_chain=chain,
-                body_strike=body_strike,
-                short_call=short_call,
-                short_put=short_put,
-            )
-            if not candidates:
-                return fail('no_candidates')
-
-            # 7. Exit spot for P&L
+            # 6. Exit spot (needed for both body row and candidate rows)
             exit_spot_raw = self.provider.get_spot_price(ticker, expiry_date)
             if exit_spot_raw is None:
                 return fail('no_spot_at_expiry')
@@ -555,8 +676,38 @@ class IronFlyHistoryBuilder:
                 ticker, entry_date, expiry_date
             )
 
-            # 8. Build one output row per candidate
-            rows: List[Dict] = []
+            # 7. Always emit a body row (ATM short straddle)
+            try:
+                body = _body_row(
+                    ticker=ticker,
+                    entry_date=entry_date,
+                    expiry_date=expiry_date,
+                    dte_target=self.dte_target,
+                    frequency=self.frequency,
+                    entry_spot=entry_spot,
+                    body_strike=body_strike,
+                    short_call=short_call,
+                    short_put=short_put,
+                    exit_spot=exit_spot,
+                    spot_move_pct=spot_move_pct,
+                    processing_time=elapsed(),
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"Body row failed for {ticker} on {entry_date}: {exc}"
+                )
+                return fail(f'body_row_error_{str(exc)[:80]}')
+
+            # 8. Enumerate wing candidates (may be empty — body row is already guaranteed)
+            candidates = self.builder.enumerate_candidates(
+                option_chain=chain,
+                body_strike=body_strike,
+                short_call=short_call,
+                short_put=short_put,
+            )
+
+            # 9. Build one output row per wing candidate
+            candidate_rows: List[Dict] = []
             for cand in candidates:
                 try:
                     row = _candidate_row(
@@ -572,19 +723,15 @@ class IronFlyHistoryBuilder:
                         spot_move_pct=spot_move_pct,
                         processing_time=elapsed(),
                     )
-                    rows.append(row)
+                    candidate_rows.append(row)
                 except Exception as exc:
-                    # Single-candidate failure: log and skip, don't abort the batch
                     logger.warning(
                         f"Candidate row failed for {ticker} on {entry_date} "
                         f"wing_width={cand.wing_width}: {exc}"
                     )
 
-            if not rows:
-                # All candidates failed in _candidate_row (highly unusual)
-                return fail('all_candidates_failed')
-
-            return rows
+            # Always return at least the body row; candidate rows may be empty
+            return [body] + candidate_rows
 
         except ValueError as exc:
             error_msg = str(exc)
