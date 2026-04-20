@@ -42,9 +42,9 @@ from src.data.spot_price_db import SpotPriceDB
 # These are fixed for the weekly momentum strategy
 FREQUENCY = 'weekly'
 DTE_TARGET = 7
-N_WORKERS = 16
-MAX_SPREAD_PCT = 0.50
-MIN_VOLUME = 10
+N_WORKERS = 20
+MAX_SPREAD_PCT = 0.99
+MIN_VOLUME = 0
 MIN_OI = 0
 TRADE_UNIVERSE_FILE  = Path('C:/MomentumCVG_env/cache/liquid_tickers.csv')
 LIQUID_EXPIRY_FILE   = Path('C:/MomentumCVG_env/cache/liquid_expiry_dates.csv')

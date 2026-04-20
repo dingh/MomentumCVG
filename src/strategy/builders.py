@@ -345,10 +345,13 @@ class IronButterflyBuilder:
     Args:
         wing_delta:          Target absolute delta of the long OTM wings.
                              E.g. 0.15 selects ~15-delta wings. Default 0.15.
-        max_spread_pct:      Maximum bid-ask spread as fraction of mid for
-                             any individual leg. Default 0.25 (25%).
+        max_spread_cost_ratio: Maximum total bid-ask spread as fraction of net
+                             credit. Default 0.25 (25% of collected credit).
         min_yield_on_capital: Minimum net credit / wing_width (both per-share).
                              Screens out low-value butterflies. Default 0.05.
+
+    Wing selection always uses the ``closest_delta`` rule: the candidate whose
+    ``avg_wing_delta`` is nearest to ``wing_delta`` is chosen.
 
     Output is a **unit strategy** (qty magnitudes are 1). Direction and
     position sizing are handled downstream by the optimizer.
@@ -377,46 +380,35 @@ class IronButterflyBuilder:
     def __init__(
         self,
         wing_delta: float = 0.15,
-        max_spread_pct: float = 0.25,
+        max_spread_cost_ratio: float = 0.25,
         min_yield_on_capital: float = 0.05,
-        selection_mode: str = "closest_delta",
     ):
         """
         Initialize iron butterfly builder.
 
         Args:
-            wing_delta:           Target |delta| for OTM long wings (default 0.15).
-            max_spread_pct:       Max bid-ask spread / mid per leg (default 0.25).
-            min_yield_on_capital: Min net_credit / wing_width (default 0.05).
-            selection_mode:       How to pick among valid candidates:
-                                  ``'closest_delta'``  – wing whose avg |delta| is
-                                      nearest to ``wing_delta`` (default).
-                                  ``'max_credit_to_width'`` – highest net_credit /
-                                      wing_width ratio.
-                                  ``'max_credit'`` – highest absolute net credit.
+            wing_delta:             Target |delta| for OTM long wings (default 0.15).
+            max_spread_cost_ratio:  Max total_spread / net_credit (default 0.25).
+                                    Filters candidates where total bid-ask slippage
+                                    exceeds this fraction of collected credit.
+            min_yield_on_capital:   Min net_credit / wing_width (default 0.05).
         """
         if not 0 < wing_delta < 0.5:
             raise ValueError(
                 f"wing_delta must be between 0 and 0.5, got {wing_delta}. "
                 "Long wings should be OTM (delta < 0.5)."
             )
-        if not 0 < max_spread_pct <= 1:
+        if max_spread_cost_ratio <= 0:
             raise ValueError(
-                f"max_spread_pct must be between 0 and 1, got {max_spread_pct}."
+                f"max_spread_cost_ratio must be positive, got {max_spread_cost_ratio}."
             )
         if min_yield_on_capital < 0:
             raise ValueError(
                 f"min_yield_on_capital must be non-negative, got {min_yield_on_capital}."
             )
-        valid_modes = {"closest_delta", "max_credit_to_width", "max_credit"}
-        if selection_mode not in valid_modes:
-            raise ValueError(
-                f"selection_mode must be one of {valid_modes}, got {selection_mode!r}."
-            )
         self.wing_delta = wing_delta
-        self.max_spread_pct = max_spread_pct
+        self.max_spread_cost_ratio = max_spread_cost_ratio
         self.min_yield_on_capital = min_yield_on_capital
-        self.selection_mode = selection_mode
 
     # ------------------------------------------------------------------
     # IStrategyBuilder interface
@@ -437,16 +429,18 @@ class IronButterflyBuilder:
             1. Validate chain (non-empty, single expiry matching ``expiry_date``).
             2. Find body strike (ATM, closest to ``spot_price``).
             3. Fetch short call and short put at body; validate mid > 0.
-            4. Enumerate all OTM call strikes above body that have an exact
-               mirror put strike at ``body - (call_strike - body)``
-               (symmetric wing candidates).
-            5. For each candidate pair, confirm both long options exist with
-               mid > 0.  Score by ``|avg_|delta| - wing_delta|``;  select
-               the closest match.
-            6. Validate all 4 legs pass ``max_spread_pct``.
-            7. Compute net credit and yield-on-capital; raise if below
-               ``min_yield_on_capital``.
-            8. Assemble and return the OptionStrategy.
+            4. Enumerate symmetric wing candidates via ``enumerate_candidates()``:
+               - For each OTM call strike, require a mirrored put at
+                 ``body - (call_strike - body)``.
+               - Filter: net credit > 0, total_spread / net_credit <=
+                 ``max_spread_cost_ratio``, credit / wing_width >=
+                 ``min_yield_on_capital``.
+               - Bucket survivors by nearest target in ``[0.05, 0.10, 0.15, 0.20, 0.30]``;
+                 keep at most one per bucket.
+            5. Select best candidate according to ``selection_mode``
+               (default ``'closest_delta'``: nearest ``avg_wing_delta`` to
+               ``wing_delta``).
+            6. Assemble and return the OptionStrategy.
 
         Args:
             ticker:        Underlying ticker symbol.
@@ -550,11 +544,20 @@ class IronButterflyBuilder:
                 f"Invalid short put mid ${short_put.mid} at body strike ${body_strike}."
             )
 
+        # Always include self.wing_delta as an explicit bucket target so the
+        # nearest-neighbour bucketing in enumerate_candidates() never silently
+        # displaces the candidate that best matches the configured wing_delta.
+        # e.g. wing_delta=0.17 sits between 0.15 and 0.20 targets — without
+        # this injection a candidate at exactly 0.17 could lose its bucket to
+        # a neighbour and be dropped before selection_mode ever sees it.
+        _default_targets = [0.05, 0.10, 0.15, 0.20, 0.30]
+        _targets = sorted(set(_default_targets) | {self.wing_delta})
         candidates = self.enumerate_candidates(
             option_chain=option_chain,
             body_strike=body_strike,
             short_call=short_call,
             short_put=short_put,
+            wing_delta_targets=_targets,
         )
 
         if not candidates:
@@ -565,15 +568,8 @@ class IronButterflyBuilder:
                 "positive mid prices, acceptable spreads, and sufficient yield."
             )
 
-        # Select best candidate based on selection_mode
-        if self.selection_mode == "closest_delta":
-            best = min(candidates, key=lambda c: abs(c.avg_wing_delta - self.wing_delta))
-        elif self.selection_mode == "max_credit_to_width":
-            best = max(candidates, key=lambda c: c.credit_to_width)
-        elif self.selection_mode == "max_credit":
-            best = max(candidates, key=lambda c: c.net_credit)
-        else:
-            raise ValueError(f"Unknown selection_mode: {self.selection_mode!r}")
+        # Select the candidate whose avg_wing_delta is nearest to self.wing_delta
+        best = min(candidates, key=lambda c: abs(c.avg_wing_delta - self.wing_delta))
 
         legs = (
             OptionLeg(option=best.long_put,   quantity=1),
@@ -634,7 +630,7 @@ class IronButterflyBuilder:
             wing_delta_targets: Ordered list of target |delta| levels used for
                                 nearest-neighbor bucketing.  At most one candidate
                                 is returned per level.  Defaults to
-                                ``[0.10, 0.15, 0.20, 0.30]``.
+                                ``[0.05, 0.10, 0.15, 0.20, 0.30]``.
 
         Returns:
             List of ``IronButterflyCandidate`` objects — at most one per
@@ -642,7 +638,7 @@ class IronButterflyBuilder:
             wing_width.
         """
         if wing_delta_targets is None:
-            wing_delta_targets = [0.10, 0.15, 0.20, 0.30]
+            wing_delta_targets = [0.05, 0.10, 0.15, 0.20, 0.30]
         chain_lookup: dict = {
             (opt.strike, opt.option_type): opt for opt in option_chain
         }
@@ -662,27 +658,19 @@ class IronButterflyBuilder:
             # Both symmetric legs must exist with tradeable premiums
             if long_call is None or long_put is None:
                 continue
-            if long_call.mid <= 0 or long_put.mid <= 0:
+            if long_call.bid <= 0 or long_call.ask <= 0 or long_call.mid <= 0 \
+                    or long_put.bid <= 0 or long_put.ask <= 0 or long_put.mid <= 0:
                 continue
 
-            # Spread filter — silently skip illiquid candidates
-            all_legs = [short_call, short_put, long_call, long_put]
-            if any(opt.spread_pct > self.max_spread_pct for opt in all_legs):
-                continue
-
-            # Yield filter — silently skip uneconomical candidates
+            # Economics — net credit must be positive before computing ratios
             net_credit = (
                 (short_call.mid + short_put.mid)
                 - (long_call.mid + long_put.mid)
             )
             if net_credit <= 0:
                 continue
-            credit_to_width = float(net_credit / wing_width)
-            if credit_to_width < self.min_yield_on_capital:
-                continue
 
-            avg_wing_delta = (abs(long_call.delta) + abs(long_put.delta)) / 2.0
-
+            # Spread cost filter — total bid-ask slippage as fraction of net credit
             total_spread = (
                 (short_call.ask - short_call.bid)
                 + (short_put.ask  - short_put.bid)
@@ -690,6 +678,15 @@ class IronButterflyBuilder:
                 + (long_put.ask   - long_put.bid)
             )
             spread_cost_ratio = float(total_spread / net_credit)
+            if spread_cost_ratio > self.max_spread_cost_ratio:
+                continue
+
+            # Yield filter — silently skip uneconomical candidates
+            credit_to_width = float(net_credit / wing_width)
+            if credit_to_width < self.min_yield_on_capital:
+                continue
+
+            avg_wing_delta = (abs(long_call.delta) + abs(long_put.delta)) / 2.0
 
             # Net greeks across all 4 legs (signed by qty).
             # Put deltas on OptionQuote are already negative (e.g. -0.15)
@@ -946,4 +943,292 @@ class IronButterflyBuilder:
         if wing_width <= 0:
             raise ValueError(f"wing_width must be positive, got {wing_width}")
         return float(net_credit / wing_width)
+
+
+# ======================================================================
+# Iron Condor
+# ======================================================================
+
+@dataclass(frozen=True)
+class IronCondorCandidate:
+    """
+    Immutable snapshot of one valid iron condor candidate.
+
+    An iron condor has 4 legs with DIFFERENT body strikes (strangle body):
+        - Short call at body_delta (OTM)
+        - Short put  at body_delta (OTM, symmetric |delta|)
+        - Long  call further OTM   (wing)
+        - Long  put  further OTM   (wing)
+
+    Unlike the iron butterfly (shared ATM body strike), the condor has
+    asymmetric widths on each side because strikes are placed by delta.
+    """
+    # Body geometry (strangle)
+    short_call_strike: Decimal
+    short_put_strike: Decimal
+    body_delta_target: float          # target |delta| used for body selection
+    avg_body_delta: float             # (|sc.delta| + |sp.delta|) / 2
+
+    # Wing geometry
+    long_call_strike: Decimal
+    long_put_strike: Decimal
+    wing_delta_target: float          # target |delta| used for wing selection
+    avg_wing_delta: float             # (|lc.delta| + |lp.delta|) / 2
+
+    # Widths
+    call_spread_width: Decimal        # long_call_strike - short_call_strike
+    put_spread_width: Decimal         # short_put_strike - long_put_strike
+    max_loss_width: Decimal           # max(call_spread_width, put_spread_width)
+
+    # Economics
+    net_credit: Decimal               # short premium - long premium (> 0)
+    credit_to_width: float            # net_credit / max_loss_width
+    total_spread: Decimal             # sum of (ask - bid) across all 4 legs
+    spread_cost_ratio: float          # total_spread / net_credit
+
+    # Net greeks across all 4 legs
+    net_delta: float
+    net_gamma: float
+    net_vega: float
+    net_theta: float
+
+    # Underlying option quotes
+    short_call: OptionQuote
+    short_put: OptionQuote
+    long_call: OptionQuote
+    long_put: OptionQuote
+
+
+class IronCondorBuilder:
+    """
+    Build iron condor strategies from market data using delta-based placement.
+
+    An iron condor consists of 4 legs on the same expiry:
+        - Short call at ``body_delta`` (OTM, qty=-1)
+        - Short put  at ``body_delta`` (OTM, symmetric |delta|, qty=-1)
+        - Long  call at ``wing_delta`` (further OTM, qty=+1)
+        - Long  put  at ``wing_delta`` (further OTM, qty=+1)
+
+    Body and wing strikes are selected by finding the option whose |delta|
+    is closest to the target.  Each side (call/put) is placed independently,
+    so spread widths may differ.
+
+    Args:
+        body_delta_targets: List of target |delta| for the short body legs.
+                            E.g. ``[0.30, 0.40]``. One candidate per target.
+        wing_delta:         Target |delta| for the long OTM wings (default 0.10).
+        max_spread_cost_ratio: Maximum total bid-ask spread as fraction of net
+                            credit (default 0.25).
+        min_yield_on_capital: Minimum net_credit / max_loss_width (default 0.0).
+    """
+
+    def __init__(
+        self,
+        body_delta_targets: Optional[List[float]] = None,
+        wing_delta: float = 0.10,
+        max_spread_cost_ratio: float = 0.25,
+        min_yield_on_capital: float = 0.0,
+    ):
+        if body_delta_targets is None:
+            body_delta_targets = [0.30, 0.40]
+        for bd in body_delta_targets:
+            if not 0 < bd < 0.5:
+                raise ValueError(
+                    f"body_delta_targets must be between 0 and 0.5, got {bd}"
+                )
+        if not 0 < wing_delta < 0.5:
+            raise ValueError(
+                f"wing_delta must be between 0 and 0.5, got {wing_delta}"
+            )
+        self.body_delta_targets = sorted(body_delta_targets)
+        self.wing_delta = wing_delta
+        self.max_spread_cost_ratio = max_spread_cost_ratio
+        self.min_yield_on_capital = min_yield_on_capital
+
+    def enumerate_candidates(
+        self,
+        option_chain: List[OptionQuote],
+    ) -> List[IronCondorCandidate]:
+        """
+        Enumerate iron condor candidates, one per ``body_delta_target``.
+
+        For each body delta target:
+            1. Find the OTM call whose |delta| is closest to target.
+            2. Find the OTM put whose |delta| is closest to target.
+            3. Find the further-OTM long call whose |delta| is closest
+               to ``wing_delta`` AND strike > short call strike.
+            4. Find the further-OTM long put whose |delta| is closest
+               to ``wing_delta`` AND strike < short put strike.
+            5. Validate: all 4 mids > 0, spread filter, net credit > 0,
+               yield filter.
+            6. Build ``IronCondorCandidate``.
+
+        Args:
+            option_chain: Pre-validated option chain (single expiry).
+
+        Returns:
+            List of ``IronCondorCandidate`` — at most one per body delta target,
+            sorted ascending by body_delta_target.
+        """
+        chain_lookup: dict = {
+            (opt.strike, opt.option_type): opt for opt in option_chain
+        }
+
+        # Separate calls and puts
+        calls = [opt for opt in option_chain if opt.option_type == 'call']
+        puts = [opt for opt in option_chain if opt.option_type == 'put']
+
+        candidates: List[IronCondorCandidate] = []
+
+        for body_delta_tgt in self.body_delta_targets:
+            cand = self._build_candidate_for_body_delta(
+                calls, puts, chain_lookup, body_delta_tgt,
+            )
+            if cand is not None:
+                candidates.append(cand)
+
+        candidates.sort(key=lambda c: c.body_delta_target)
+        return candidates
+
+    def _build_candidate_for_body_delta(
+        self,
+        calls: List[OptionQuote],
+        puts: List[OptionQuote],
+        chain_lookup: dict,
+        body_delta_target: float,
+    ) -> Optional[IronCondorCandidate]:
+        """Build a single condor candidate for a given body delta target."""
+
+        # ── Find short call: OTM call closest to body_delta_target ────────
+        # OTM calls have delta > 0 and < 0.5 (approximately)
+        otm_calls = [
+            opt for opt in calls
+            if opt.bid > 0 and opt.ask > 0 and opt.mid > 0 and 0 < opt.delta < 0.50
+        ]
+        if not otm_calls:
+            return None
+        short_call = min(otm_calls, key=lambda o: abs(o.delta - body_delta_target))
+        if abs(short_call.delta - body_delta_target) > 0.05:
+            return None
+
+        # ── Find short put: OTM put closest to body_delta_target ──────────
+        # OTM puts have delta < 0; we compare |delta| to body_delta_target
+        otm_puts = [
+            opt for opt in puts
+            if opt.bid > 0 and opt.ask > 0 and opt.mid > 0 and -0.50 < opt.delta < 0
+        ]
+        if not otm_puts:
+            return None
+        short_put = min(otm_puts, key=lambda o: abs(abs(o.delta) - body_delta_target))
+        if abs(abs(short_put.delta) - body_delta_target) > 0.05:
+            return None
+
+        # sanity: short put strike must be below short call strike
+        if short_put.strike >= short_call.strike:
+            return None
+
+        # ── Find long call wing: further OTM than short call, closest to wing_delta
+        wing_calls = [
+            opt for opt in calls
+            if opt.strike > short_call.strike
+            and opt.bid > 0 and opt.ask > 0 and opt.mid > 0
+            and 0 < opt.delta < short_call.delta  # further OTM = smaller delta
+        ]
+        if not wing_calls:
+            return None
+        long_call = min(wing_calls, key=lambda o: abs(o.delta - self.wing_delta))
+        if abs(long_call.delta - self.wing_delta) > 0.05:
+            return None
+
+        # ── Find long put wing: further OTM than short put, closest to wing_delta
+        wing_puts = [
+            opt for opt in puts
+            if opt.strike < short_put.strike
+            and opt.bid > 0 and opt.ask > 0 and opt.mid > 0
+            and opt.delta > short_put.delta  # further OTM = delta closer to 0
+        ]
+        if not wing_puts:
+            return None
+        long_put = min(wing_puts, key=lambda o: abs(abs(o.delta) - self.wing_delta))
+        if abs(abs(long_put.delta) - self.wing_delta) > 0.05:
+            return None
+
+        # ── Economics ─────────────────────────────────────────────────────
+        net_credit = (
+            (short_call.mid + short_put.mid)
+            - (long_call.mid + long_put.mid)
+        )
+        if net_credit <= 0:
+            return None
+
+        # Spread cost filter — total bid-ask slippage as fraction of net credit
+        total_spread = (
+            (short_call.ask - short_call.bid)
+            + (short_put.ask - short_put.bid)
+            + (long_call.ask - long_call.bid)
+            + (long_put.ask - long_put.bid)
+        )
+        spread_cost_ratio = float(total_spread / net_credit)
+        if spread_cost_ratio > self.max_spread_cost_ratio:
+            return None
+
+        call_spread_width = long_call.strike - short_call.strike
+        put_spread_width = short_put.strike - long_put.strike
+        max_loss_width = max(call_spread_width, put_spread_width)
+
+        if max_loss_width <= 0:
+            return None
+
+        credit_to_width = float(net_credit / max_loss_width)
+        if credit_to_width < self.min_yield_on_capital:
+            return None
+
+        avg_body_delta = (abs(short_call.delta) + abs(short_put.delta)) / 2.0
+        avg_wing_delta = (abs(long_call.delta) + abs(long_put.delta)) / 2.0
+
+        # ── Net greeks (signed by qty) ────────────────────────────────────
+        net_delta = (
+            long_put.delta * 1
+            + short_put.delta * -1
+            + short_call.delta * -1
+            + long_call.delta * 1
+        )
+        net_gamma = (
+            long_put.gamma + long_call.gamma
+            - short_put.gamma - short_call.gamma
+        )
+        net_vega = (
+            long_put.vega + long_call.vega
+            - short_put.vega - short_call.vega
+        )
+        net_theta = (
+            long_put.theta + long_call.theta
+            - short_put.theta - short_call.theta
+        )
+
+        return IronCondorCandidate(
+            short_call_strike=short_call.strike,
+            short_put_strike=short_put.strike,
+            body_delta_target=body_delta_target,
+            avg_body_delta=avg_body_delta,
+            long_call_strike=long_call.strike,
+            long_put_strike=long_put.strike,
+            wing_delta_target=self.wing_delta,
+            avg_wing_delta=avg_wing_delta,
+            call_spread_width=call_spread_width,
+            put_spread_width=put_spread_width,
+            max_loss_width=max_loss_width,
+            net_credit=net_credit,
+            credit_to_width=credit_to_width,
+            total_spread=total_spread,
+            spread_cost_ratio=spread_cost_ratio,
+            net_delta=net_delta,
+            net_gamma=net_gamma,
+            net_vega=net_vega,
+            net_theta=net_theta,
+            short_call=short_call,
+            short_put=short_put,
+            long_call=long_call,
+            long_put=long_put,
+        )
 

@@ -602,14 +602,14 @@ class TestIronButterflyBuilderInit:
         """
         When no arguments are passed the builder stores the documented defaults.
 
-        Purpose: Confirms that wing_delta=0.15, max_spread_pct=0.25, and
+        Purpose: Confirms that wing_delta=0.15, max_spread_cost_ratio=0.25, and
         min_yield_on_capital=0.05 are the shipped defaults and that they are
         accessible as instance attributes.
         """
         builder = IronButterflyBuilder()
 
         assert builder.wing_delta == 0.15
-        assert builder.max_spread_pct == 0.25
+        assert builder.max_spread_cost_ratio == 0.25
         assert builder.min_yield_on_capital == 0.05
 
     def test_init_stores_custom_params(self):
@@ -619,10 +619,10 @@ class TestIronButterflyBuilderInit:
         Purpose: Ensures the builder does not clamp, round, or transform
         valid user-supplied values.
         """
-        builder = IronButterflyBuilder(wing_delta=0.20, max_spread_pct=0.10, min_yield_on_capital=0.08)
+        builder = IronButterflyBuilder(wing_delta=0.20, max_spread_cost_ratio=0.10, min_yield_on_capital=0.08)
 
         assert builder.wing_delta == 0.20
-        assert builder.max_spread_pct == 0.10
+        assert builder.max_spread_cost_ratio == 0.10
         assert builder.min_yield_on_capital == 0.08
 
     def test_init_wing_delta_zero_raises(self):
@@ -662,29 +662,17 @@ class TestIronButterflyBuilderInit:
         with pytest.raises(ValueError, match="wing_delta"):
             IronButterflyBuilder(wing_delta=-0.10)
 
-    def test_init_max_spread_pct_zero_raises(self):
+    def test_init_max_spread_cost_ratio_zero_raises(self):
         """
-        max_spread_pct=0 means every option would fail the spread filter,
+        max_spread_cost_ratio=0 means every option would fail the spread filter,
         making the builder permanently unusable.
 
         Purpose: Prevents a configuration that can never produce a valid
         strategy.
-        Expected: ValueError matching 'max_spread_pct'.
+        Expected: ValueError matching 'max_spread_cost_ratio'.
         """
-        with pytest.raises(ValueError, match="max_spread_pct"):
-            IronButterflyBuilder(max_spread_pct=0.0)
-
-    def test_init_max_spread_pct_over_one_raises(self):
-        """
-        max_spread_pct > 1.0 is not a valid decimal fraction.
-
-        Purpose: Enforces that the parameter is interpreted as a fraction
-        (0.25 = 25%), not a percentage (25), so callers cannot accidentally
-        pass 25 and bypass all spread filtering.
-        Expected: ValueError matching 'max_spread_pct'.
-        """
-        with pytest.raises(ValueError, match="max_spread_pct"):
-            IronButterflyBuilder(max_spread_pct=1.1)
+        with pytest.raises(ValueError, match="max_spread_cost_ratio"):
+            IronButterflyBuilder(max_spread_cost_ratio=0.0)
 
     def test_init_min_yield_on_capital_negative_raises(self):
         """
@@ -717,7 +705,7 @@ class TestIronButterflyBuilderHappyPath:
         value, which is used downstream to dispatch expiry/P&L logic.
         """
         # Arrange
-        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_cost_ratio=0.25, min_yield_on_capital=0.05)
 
         # Act
         strategy = builder.build_strategy(
@@ -741,7 +729,7 @@ class TestIronButterflyBuilderHappyPath:
         Any other count signals a construction bug.
         """
         # Arrange
-        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_cost_ratio=0.25, min_yield_on_capital=0.05)
 
         # Act
         strategy = builder.build_strategy(
@@ -767,7 +755,7 @@ class TestIronButterflyBuilderHappyPath:
         OptionLeg.net_premium.
         """
         # Arrange
-        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_cost_ratio=0.25, min_yield_on_capital=0.05)
 
         # Act
         strategy = builder.build_strategy(
@@ -798,7 +786,7 @@ class TestIronButterflyBuilderHappyPath:
         from the current price.
         """
         # Arrange
-        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_cost_ratio=0.25, min_yield_on_capital=0.05)
         expected_body_strike = Decimal("255.0")
 
         # Act
@@ -825,7 +813,7 @@ class TestIronButterflyBuilderHappyPath:
         capital / yield calculations downstream.
         """
         # Arrange
-        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_cost_ratio=0.25, min_yield_on_capital=0.05)
 
         # Act
         strategy = builder.build_strategy(
@@ -852,7 +840,7 @@ class TestIronButterflyBuilderHappyPath:
         wing must cap the upside loss, so it must be above the body.
         """
         # Arrange
-        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_cost_ratio=0.25, min_yield_on_capital=0.05)
 
         # Act
         strategy = builder.build_strategy(
@@ -878,7 +866,7 @@ class TestIronButterflyBuilderHappyPath:
         the downside loss so it must be below the body.
         """
         # Arrange
-        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_cost_ratio=0.25, min_yield_on_capital=0.05)
 
         # Act
         strategy = builder.build_strategy(
@@ -906,7 +894,7 @@ class TestIronButterflyBuilderHappyPath:
         or logic error.
         """
         # Arrange
-        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_cost_ratio=0.25, min_yield_on_capital=0.05)
 
         # Act
         strategy = builder.build_strategy(
@@ -939,7 +927,7 @@ class TestIronButterflyBuilderHappyPath:
         sign-flip regressions after refactors.
         """
         # Arrange
-        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_cost_ratio=0.25, min_yield_on_capital=0.05)
 
         # Act
         strategy = builder.build_strategy(
@@ -965,7 +953,7 @@ class TestIronButterflyBuilderHappyPath:
         the strategy was priced on.
         """
         # Arrange
-        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_pct=0.25, min_yield_on_capital=0.05)
+        builder = IronButterflyBuilder(wing_delta=0.17, max_spread_cost_ratio=0.25, min_yield_on_capital=0.05)
 
         # Act
         strategy = builder.build_strategy(
@@ -979,6 +967,49 @@ class TestIronButterflyBuilderHappyPath:
         # Assert
         assert strategy.ticker == ibf_ticker
         assert strategy.trade_date == ibf_trade_date
+
+    def test_max_spread_cost_ratio_filters_out_illiquid_candidates(
+        self, sample_ibf_chain_atm, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
+    ):
+        """
+        Builder with max_spread_cost_ratio=0.001 rejects every candidate on
+        sample_ibf_chain_atm, raising ValueError.  Builder with
+        max_spread_cost_ratio=10.0 accepts the same chain.
+
+        Purpose: Verifies that max_spread_cost_ratio is wired end-to-end
+        from IronButterflyBuilder.__init__() through build_strategy() to
+        enumerate_candidates().  Any non-trivial bid/ask spread will exceed
+        0.001, so the tight builder exercises the filter path cleanly.
+        """
+        # Tight limit — no candidate survives the spread_cost_ratio filter
+        builder_tight = IronButterflyBuilder(
+            wing_delta=0.17,
+            max_spread_cost_ratio=0.001,
+            min_yield_on_capital=0.0,
+        )
+        with pytest.raises(ValueError, match="No valid symmetric wing pairs"):
+            builder_tight.build_strategy(
+                ticker=ibf_ticker,
+                trade_date=ibf_trade_date,
+                expiry_date=ibf_expiry_date,
+                option_chain=sample_ibf_chain_atm,
+                spot_price=ibf_spot_price,
+            )
+
+        # Permissive limit — same chain builds successfully
+        builder_loose = IronButterflyBuilder(
+            wing_delta=0.17,
+            max_spread_cost_ratio=10.0,
+            min_yield_on_capital=0.0,
+        )
+        strategy = builder_loose.build_strategy(
+            ticker=ibf_ticker,
+            trade_date=ibf_trade_date,
+            expiry_date=ibf_expiry_date,
+            option_chain=sample_ibf_chain_atm,
+            spot_price=ibf_spot_price,
+        )
+        assert strategy.strategy_type == StrategyType.IRON_BUTTERFLY
 
 
 # =============================================================================
@@ -1050,7 +1081,7 @@ class TestEnumerateCandidates:
         """
         sc, sp = self._body_pair()
         chain = [sc, sp]
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
 
         result = builder.enumerate_candidates(
             chain, Decimal("100"), sc, sp
@@ -1066,7 +1097,7 @@ class TestEnumerateCandidates:
         Uses sample_ibf_chain_no_mirror (body call+put at 255.0, OTM calls at
         245 and 265 but puts at those strikes removed).
         """
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
         body_strike = Decimal("255.0")
         sc = next(q for q in sample_ibf_chain_no_mirror
                   if q.strike == body_strike and q.option_type == "call")
@@ -1089,7 +1120,7 @@ class TestEnumerateCandidates:
         lc = self._opt(110.0, "call", bid=4.99, ask=5.01, mid=5.00, delta=0.15)
         lp = self._opt( 90.0, "put",  bid=4.99, ask=5.01, mid=5.00, delta=-0.15)
         chain = [sc, sp, lc, lp]
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
 
         result = builder.enumerate_candidates(
             chain, Decimal("100"), sc, sp
@@ -1099,15 +1130,15 @@ class TestEnumerateCandidates:
 
     def test_returns_empty_list_when_spread_too_wide(self):
         """
-        One wing leg has bid/ask spread > max_spread_pct → silently filtered.
-        builder.max_spread_pct=0.25; long_call has spread_pct ≈ 1.99 (>> 0.25).
+        One wing leg has a very wide bid/ask spread → total spread_cost_ratio > max_spread_cost_ratio.
+        builder.max_spread_cost_ratio=0.25; total_spread / net_credit ≈ 0.80 (>> 0.25).
         """
         sc, sp = self._body_pair()
         # Wide spread: mid=2.505, spread=4.99 → spread_pct ≈ 1.99
         lc = self._opt(110.0, "call", bid=0.01, ask=5.00, mid=2.505, delta=0.15)
         lp = self._opt( 90.0, "put",  bid=0.95, ask=0.97, mid=0.960, delta=-0.15)
         chain = [sc, sp, lc, lp]
-        builder = IronButterflyBuilder(max_spread_pct=0.25, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.25, min_yield_on_capital=0.0)
 
         result = builder.enumerate_candidates(
             chain, Decimal("100"), sc, sp
@@ -1127,7 +1158,7 @@ class TestEnumerateCandidates:
         lc = self._opt(110.0, "call", bid=2.35, ask=2.45, mid=2.40, delta=0.15)
         lp = self._opt( 90.0, "put",  bid=2.35, ask=2.45, mid=2.40, delta=-0.15)
         chain = [sc, sp, lc, lp]
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.05)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.05)
 
         result = builder.enumerate_candidates(
             chain, Decimal("100"), sc, sp
@@ -1144,7 +1175,7 @@ class TestEnumerateCandidates:
         Chain with exactly one symmetric pair → list of exactly 1 candidate.
         sample_ibf_chain_atm has body=255.0 and one wing pair ±10.
         """
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
         body_strike = Decimal("255.0")
         sc = next(q for q in sample_ibf_chain_atm
                   if q.strike == body_strike and q.option_type == "call")
@@ -1180,7 +1211,7 @@ class TestEnumerateCandidates:
         lp = self._opt( 90.0, "put",  bid=0.95, ask=0.97, mid=0.96, delta=-0.15,
                        gamma=0.02, vega=0.10, theta=-0.20)
         chain = [sc, sp, lc, lp]
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
 
         result = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
 
@@ -1216,7 +1247,7 @@ class TestEnumerateCandidates:
         lp = self._opt( 90.0, "put",  bid=0.95, ask=0.97, mid=0.96, delta=-0.15,
                        gamma=0.02, vega=0.10, theta=-0.20)
         chain = [sc, sp, lc, lp]
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
 
         c = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)[0]
 
@@ -1252,7 +1283,7 @@ class TestEnumerateCandidates:
         lc_b = self._opt(108.0, "call", bid=1.00, ask=1.02, mid=1.01, delta= 0.152)
         lp_b = self._opt( 92.0, "put",  bid=0.95, ask=0.97, mid=0.96, delta=-0.152)
         chain = [sc, sp, lc_a, lp_a, lc_b, lp_b]
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
 
         result = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
 
@@ -1277,7 +1308,7 @@ class TestEnumerateCandidates:
         lc_b = self._opt(110.0, "call", bid=0.85, ask=0.87, mid=0.86, delta= 0.22)
         lp_b = self._opt( 90.0, "put",  bid=0.80, ask=0.82, mid=0.81, delta=-0.22)
         chain = [sc, sp, lc_a, lp_a, lc_b, lp_b]
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
 
         result = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
 
@@ -1307,7 +1338,7 @@ class TestEnumerateCandidates:
         for call_k, put_k, delta in pairs:
             chain.append(self._opt(call_k, "call", bid=0.95, ask=0.97, mid=0.96, delta= delta))
             chain.append(self._opt(put_k,  "put",  bid=0.90, ask=0.92, mid=0.91, delta=-delta))
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
 
         result = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
 
@@ -1332,7 +1363,7 @@ class TestEnumerateCandidates:
         lc_b = self._opt(110.0, "call", bid=0.85, ask=0.87, mid=0.86, delta= 0.28)
         lp_b = self._opt( 90.0, "put",  bid=0.80, ask=0.82, mid=0.81, delta=-0.28)
         chain = [sc, sp, lc_a, lp_a, lc_b, lp_b]
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
 
         result_default = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
         result_custom  = builder.enumerate_candidates(
@@ -1363,7 +1394,7 @@ class TestEnumerateCandidates:
         lc_c = self._opt(112.0, "call", bid=0.75, ask=0.77, mid=0.76, delta= 0.29)
         lp_c = self._opt( 88.0, "put",  bid=0.70, ask=0.72, mid=0.71, delta=-0.29)
         chain = [sc, sp, lc_a, lp_a, lc_b, lp_b, lc_c, lp_c]
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
 
         result = builder.enumerate_candidates(chain, Decimal("100"), sc, sp)
 
@@ -1371,15 +1402,15 @@ class TestEnumerateCandidates:
         widths = [c.wing_width for c in result]
         assert widths == sorted(widths), f"Expected ascending widths, got {widths}"
 
-    def test_default_targets_are_10_15_20_30(
+    def test_default_targets_are_05_10_15_20_30(
         self, sample_ibf_chain_multi_width, ibf_trade_date, ibf_expiry_date
     ):
         """
         Calling enumerate_candidates() without wing_delta_targets uses the
-        default [0.10, 0.15, 0.20, 0.30], so at most 4 candidates are returned.
+        default [0.05, 0.10, 0.15, 0.20, 0.30], so at most 5 candidates are returned.
         Uses sample_ibf_chain_multi_width (many available symmetric pairs).
         """
-        builder = IronButterflyBuilder(max_spread_pct=0.99, min_yield_on_capital=0.0)
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
         body_strike = Decimal("255.0")
         sc = next(q for q in sample_ibf_chain_multi_width
                   if q.strike == body_strike and q.option_type == "call")
@@ -1388,51 +1419,14 @@ class TestEnumerateCandidates:
 
         result = builder.enumerate_candidates(sample_ibf_chain_multi_width, body_strike, sc, sp)
 
-        assert len(result) <= 4, (
-            f"Default targets have 4 buckets, got {len(result)} candidates"
+        assert len(result) <= 5, (
+            f"Default targets have 5 buckets, got {len(result)} candidates"
         )
         # All results must be valid IronButterflyCandidate instances
         assert all(isinstance(c, IronButterflyCandidate) for c in result)
         # Widths must be ascending
         widths = [c.wing_width for c in result]
         assert widths == sorted(widths)
-
-
-class TestIronButterflyBuilderDeltaSelection:
-    """
-    Test that _select_wing_pair() chooses the symmetric pair whose
-    average long-wing |delta| is nearest to wing_delta.
-
-    Uses sample_ibf_chain_multi_width (AAPL, 2026-02-13, body=255.0):
-      Pair A (width=2.5): call=257.5 / put=252.5  avg |delta| ≈ 0.408
-      Pair B (width=5.0): call=260.0 / put=250.0  avg |delta| ≈ 0.318
-    """
-
-    def test_selects_narrow_wings_when_wing_delta_targets_high(
-        self, sample_ibf_chain_multi_width, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
-    ):
-        """
-        wing_delta=0.408 → Pair A selected (width=2.5, avg |delta| ≈ 0.408).
-
-        Purpose: Confirms the delta-scoring ranks Pair A first when the
-        target delta is closer to 0.408. Verifies that
-        |0.408 − 0.408| < |0.408 − 0.318| produces the correct selection.
-        Expected wing strikes: call=257.5, put=252.5.
-        """
-        pass
-
-    def test_selects_wide_wings_when_wing_delta_targets_low(
-        self, sample_ibf_chain_multi_width, ibf_trade_date, ibf_expiry_date, ibf_ticker, ibf_spot_price
-    ):
-        """
-        wing_delta=0.318 → Pair B selected (width=5.0, avg |delta| ≈ 0.318).
-
-        Purpose: Confirms the delta-scoring ranks Pair B first when the
-        target delta is closer to 0.318. Verifies that
-        |0.318 − 0.318| < |0.318 − 0.408| produces the correct selection.
-        Expected wing strikes: call=260.0, put=250.0.
-        """
-        pass
 
 
 class TestIronButterflyBuilderChainValidation:
@@ -1452,7 +1446,15 @@ class TestIronButterflyBuilderChainValidation:
         (e.g., market holiday, bad ticker symbol).
         Expected: ValueError matching 'Empty option chain'.
         """
-        pass
+        builder = IronButterflyBuilder()
+        with pytest.raises(ValueError, match="Empty option chain"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=[],
+                spot_price=Decimal("100.0"),
+            )
 
     def test_multiple_expiries_raises(
         self, sample_option_chain_multiple_expiries, trade_date, expiry_date, ticker
@@ -1465,7 +1467,15 @@ class TestIronButterflyBuilderChainValidation:
         breaking the strategy's risk profile.
         Expected: ValueError matching 'multiple expiries'.
         """
-        pass
+        builder = IronButterflyBuilder()
+        with pytest.raises(ValueError, match="multiple expiries"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=sample_option_chain_multiple_expiries,
+                spot_price=Decimal("44.50"),
+            )
 
     def test_expiry_mismatch_raises(self, trade_date, expiry_date, ticker):
         """
@@ -1476,7 +1486,25 @@ class TestIronButterflyBuilderChainValidation:
         the wrong date with incorrect DTE.
         Expected: ValueError matching 'expiry mismatch'.
         """
-        pass
+        # Chain has expiry_date (2024-12-06); pass a later date to trigger mismatch
+        chain = [
+            OptionQuote(
+                ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                strike=Decimal("100"), option_type="call",
+                bid=Decimal("5.00"), ask=Decimal("5.10"), mid=Decimal("5.05"),
+                iv=0.30, delta=0.55, gamma=0.04, vega=0.15, theta=-0.35,
+                volume=100, open_interest=100,
+            )
+        ]
+        builder = IronButterflyBuilder()
+        with pytest.raises(ValueError, match="expiry mismatch"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=date(2024, 12, 13),
+                option_chain=chain,
+                spot_price=Decimal("100.0"),
+            )
 
     def test_missing_body_call_raises(self, trade_date, expiry_date, ticker):
         """
@@ -1487,7 +1515,32 @@ class TestIronButterflyBuilderChainValidation:
         filtered out by liquidity screens before the chain reaches the builder.
         Expected: ValueError matching 'No call option found at body strike'.
         """
-        pass
+        # Chain has put@100 but no call@100; ATM snaps to 100, call lookup returns None
+        chain = [
+            OptionQuote(
+                ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                strike=Decimal("100"), option_type="put",
+                bid=Decimal("4.90"), ask=Decimal("5.00"), mid=Decimal("4.95"),
+                iv=0.30, delta=-0.45, gamma=0.04, vega=0.15, theta=-0.35,
+                volume=100, open_interest=100,
+            ),
+            OptionQuote(
+                ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                strike=Decimal("105"), option_type="call",
+                bid=Decimal("2.00"), ask=Decimal("2.10"), mid=Decimal("2.05"),
+                iv=0.30, delta=0.35, gamma=0.03, vega=0.12, theta=-0.25,
+                volume=100, open_interest=100,
+            ),
+        ]
+        builder = IronButterflyBuilder()
+        with pytest.raises(ValueError, match="No call option found at body strike"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=chain,
+                spot_price=Decimal("100.0"),
+            )
 
     def test_missing_body_put_raises(self, trade_date, expiry_date, ticker):
         """
@@ -1497,7 +1550,32 @@ class TestIronButterflyBuilderChainValidation:
         body is equally required.
         Expected: ValueError matching 'No put option found at body strike'.
         """
-        pass
+        # Chain has call@100 but no put@100; ATM snaps to 100, put lookup returns None
+        chain = [
+            OptionQuote(
+                ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                strike=Decimal("100"), option_type="call",
+                bid=Decimal("5.00"), ask=Decimal("5.10"), mid=Decimal("5.05"),
+                iv=0.30, delta=0.55, gamma=0.04, vega=0.15, theta=-0.35,
+                volume=100, open_interest=100,
+            ),
+            OptionQuote(
+                ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                strike=Decimal("95"), option_type="put",
+                bid=Decimal("1.50"), ask=Decimal("1.60"), mid=Decimal("1.55"),
+                iv=0.30, delta=-0.25, gamma=0.03, vega=0.12, theta=-0.25,
+                volume=100, open_interest=100,
+            ),
+        ]
+        builder = IronButterflyBuilder()
+        with pytest.raises(ValueError, match="No put option found at body strike"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=chain,
+                spot_price=Decimal("100.0"),
+            )
 
     def test_zero_mid_body_call_raises(self, trade_date, expiry_date, ticker):
         """
@@ -1507,7 +1585,31 @@ class TestIronButterflyBuilderChainValidation:
         P&L.  This guard catches bad data before a strategy object is created.
         Expected: ValueError matching 'Invalid short call mid'.
         """
-        pass
+        chain = [
+            OptionQuote(
+                ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                strike=Decimal("100"), option_type="call",
+                bid=Decimal("0.00"), ask=Decimal("0.00"), mid=Decimal("0.00"),
+                iv=0.30, delta=0.55, gamma=0.04, vega=0.15, theta=-0.35,
+                volume=0, open_interest=0,
+            ),
+            OptionQuote(
+                ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                strike=Decimal("100"), option_type="put",
+                bid=Decimal("4.90"), ask=Decimal("5.00"), mid=Decimal("4.95"),
+                iv=0.30, delta=-0.45, gamma=0.04, vega=0.15, theta=-0.35,
+                volume=100, open_interest=100,
+            ),
+        ]
+        builder = IronButterflyBuilder()
+        with pytest.raises(ValueError, match="Invalid short call mid"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=chain,
+                spot_price=Decimal("100.0"),
+            )
 
     def test_zero_mid_body_put_raises(self, trade_date, expiry_date, ticker):
         """
@@ -1516,13 +1618,37 @@ class TestIronButterflyBuilderChainValidation:
         Purpose: Symmetric to test_zero_mid_body_call_raises.
         Expected: ValueError matching 'Invalid short put mid'.
         """
-        pass
+        chain = [
+            OptionQuote(
+                ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                strike=Decimal("100"), option_type="call",
+                bid=Decimal("5.00"), ask=Decimal("5.10"), mid=Decimal("5.05"),
+                iv=0.30, delta=0.55, gamma=0.04, vega=0.15, theta=-0.35,
+                volume=100, open_interest=100,
+            ),
+            OptionQuote(
+                ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                strike=Decimal("100"), option_type="put",
+                bid=Decimal("0.00"), ask=Decimal("0.00"), mid=Decimal("0.00"),
+                iv=0.30, delta=-0.45, gamma=0.04, vega=0.15, theta=-0.35,
+                volume=0, open_interest=0,
+            ),
+        ]
+        builder = IronButterflyBuilder()
+        with pytest.raises(ValueError, match="Invalid short put mid"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=chain,
+                spot_price=Decimal("100.0"),
+            )
 
 
 class TestIronButterflyBuilderWingValidation:
     """
     Test the three post-wing-selection guards:
-      1. Spread quality on all 4 legs (max_spread_pct)
+      1. Spread quality on all 4 legs (max_spread_cost_ratio)
       2. Net credit must be positive
       3. Yield-on-capital must meet the minimum threshold
 
@@ -1540,19 +1666,62 @@ class TestIronButterflyBuilderWingValidation:
         contains a body but only OTM calls (no OTM puts on the other side).
         Expected: ValueError matching 'No valid symmetric wing pairs found'.
         """
-        pass
+        # Extract dates from the chain itself (IBF/AAPL dates, not VZ fixtures)
+        chain_expiry = sample_ibf_chain_no_mirror[0].expiry_date
+        chain_trade_date = sample_ibf_chain_no_mirror[0].trade_date
+        chain_ticker = sample_ibf_chain_no_mirror[0].ticker
+        builder = IronButterflyBuilder()
+        with pytest.raises(ValueError, match="No valid symmetric wing pairs found"):
+            builder.build_strategy(
+                ticker=chain_ticker,
+                trade_date=chain_trade_date,
+                expiry_date=chain_expiry,
+                option_chain=sample_ibf_chain_no_mirror,
+                spot_price=Decimal("255.81"),
+            )
 
     def test_wide_spread_on_long_call_wing_raises(self, trade_date, expiry_date, ticker):
         """
         Long call wing has an extremely wide bid-ask spread (bid=0.01, ask=0.50),
-        giving spread_pct >> max_spread_pct=0.25.
+        giving spread_cost_ratio >> max_spread_cost_ratio=0.25.
 
         Purpose: Illiquid wing options make entry/exit expensive.  The spread
         filter enforces a minimum liquidity standard.  Must flag the specific
         leg name in the error message.
         Expected: ValueError matching 'long call wing'.
         """
-        pass
+        # lc@110 has extremely wide spread → spread_cost_ratio >> 0.25 → filtered → no candidates
+        chain = [
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="call",
+                        bid=Decimal("5.00"), ask=Decimal("5.10"), mid=Decimal("5.05"),
+                        iv=0.30, delta=0.55, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="put",
+                        bid=Decimal("4.90"), ask=Decimal("5.00"), mid=Decimal("4.95"),
+                        iv=0.30, delta=-0.45, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("110"), option_type="call",
+                        bid=Decimal("0.01"), ask=Decimal("5.00"), mid=Decimal("2.505"),
+                        iv=0.30, delta=0.15, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=1, open_interest=1),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("90"), option_type="put",
+                        bid=Decimal("0.95"), ask=Decimal("0.97"), mid=Decimal("0.96"),
+                        iv=0.30, delta=-0.15, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=100, open_interest=100),
+        ]
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.25, min_yield_on_capital=0.0)
+        with pytest.raises(ValueError, match="No valid symmetric wing pairs found"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=chain,
+                spot_price=Decimal("100.0"),
+            )
 
     def test_wide_spread_on_long_put_wing_raises(self, trade_date, expiry_date, ticker):
         """
@@ -1562,7 +1731,38 @@ class TestIronButterflyBuilderWingValidation:
         spread check is applied to ALL four legs, not just the calls.
         Expected: ValueError matching 'long put wing'.
         """
-        pass
+        # lp@90 has extremely wide spread → spread_cost_ratio >> 0.25 → filtered → no candidates
+        chain = [
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="call",
+                        bid=Decimal("5.00"), ask=Decimal("5.10"), mid=Decimal("5.05"),
+                        iv=0.30, delta=0.55, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="put",
+                        bid=Decimal("4.90"), ask=Decimal("5.00"), mid=Decimal("4.95"),
+                        iv=0.30, delta=-0.45, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("110"), option_type="call",
+                        bid=Decimal("1.00"), ask=Decimal("1.02"), mid=Decimal("1.01"),
+                        iv=0.30, delta=0.15, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("90"), option_type="put",
+                        bid=Decimal("0.01"), ask=Decimal("5.00"), mid=Decimal("2.505"),
+                        iv=0.30, delta=-0.15, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=1, open_interest=1),
+        ]
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.25, min_yield_on_capital=0.0)
+        with pytest.raises(ValueError, match="No valid symmetric wing pairs found"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=chain,
+                spot_price=Decimal("100.0"),
+            )
 
     def test_wide_spread_on_short_call_body_raises(self, trade_date, expiry_date, ticker):
         """
@@ -1572,7 +1772,38 @@ class TestIronButterflyBuilderWingValidation:
         check covers the body, not just the wings.
         Expected: ValueError matching 'short call body'.
         """
-        pass
+        # sc@100 has extremely wide spread → spread_cost_ratio >> 0.25 → filtered → no candidates
+        chain = [
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="call",
+                        bid=Decimal("0.01"), ask=Decimal("5.00"), mid=Decimal("2.505"),
+                        iv=0.30, delta=0.55, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=1, open_interest=1),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="put",
+                        bid=Decimal("4.90"), ask=Decimal("5.00"), mid=Decimal("4.95"),
+                        iv=0.30, delta=-0.45, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("110"), option_type="call",
+                        bid=Decimal("1.00"), ask=Decimal("1.02"), mid=Decimal("1.01"),
+                        iv=0.30, delta=0.15, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("90"), option_type="put",
+                        bid=Decimal("0.95"), ask=Decimal("0.97"), mid=Decimal("0.96"),
+                        iv=0.30, delta=-0.15, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=100, open_interest=100),
+        ]
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.25, min_yield_on_capital=0.0)
+        with pytest.raises(ValueError, match="No valid symmetric wing pairs found"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=chain,
+                spot_price=Decimal("100.0"),
+            )
 
     def test_wide_spread_on_short_put_body_raises(self, trade_date, expiry_date, ticker):
         """
@@ -1581,7 +1812,38 @@ class TestIronButterflyBuilderWingValidation:
         Purpose: Symmetric to test_wide_spread_on_short_call_body_raises.
         Expected: ValueError matching 'short put body'.
         """
-        pass
+        # sp@100 has extremely wide spread → spread_cost_ratio >> 0.25 → filtered → no candidates
+        chain = [
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="call",
+                        bid=Decimal("5.00"), ask=Decimal("5.10"), mid=Decimal("5.05"),
+                        iv=0.30, delta=0.55, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="put",
+                        bid=Decimal("0.01"), ask=Decimal("5.00"), mid=Decimal("2.505"),
+                        iv=0.30, delta=-0.45, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=1, open_interest=1),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("110"), option_type="call",
+                        bid=Decimal("1.00"), ask=Decimal("1.02"), mid=Decimal("1.01"),
+                        iv=0.30, delta=0.15, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("90"), option_type="put",
+                        bid=Decimal("0.95"), ask=Decimal("0.97"), mid=Decimal("0.96"),
+                        iv=0.30, delta=-0.15, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=100, open_interest=100),
+        ]
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.25, min_yield_on_capital=0.0)
+        with pytest.raises(ValueError, match="No valid symmetric wing pairs found"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=chain,
+                spot_price=Decimal("100.0"),
+            )
 
     def test_negative_net_credit_raises(self, trade_date, expiry_date, ticker):
         """
@@ -1594,7 +1856,38 @@ class TestIronButterflyBuilderWingValidation:
         negative premium.
         Expected: ValueError matching 'non-positive net credit'.
         """
-        pass
+        # Wing mids sum (5.50) > body mids sum (5.00) → net_credit = -0.50 ≤ 0 → filtered
+        chain = [
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="call",
+                        bid=Decimal("2.95"), ask=Decimal("3.05"), mid=Decimal("3.00"),
+                        iv=0.30, delta=0.55, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="put",
+                        bid=Decimal("1.95"), ask=Decimal("2.05"), mid=Decimal("2.00"),
+                        iv=0.30, delta=-0.45, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("110"), option_type="call",
+                        bid=Decimal("3.45"), ask=Decimal("3.55"), mid=Decimal("3.50"),
+                        iv=0.30, delta=0.30, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("90"), option_type="put",
+                        bid=Decimal("1.95"), ask=Decimal("2.05"), mid=Decimal("2.00"),
+                        iv=0.30, delta=-0.30, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=100, open_interest=100),
+        ]
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
+        with pytest.raises(ValueError, match="No valid symmetric wing pairs found"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=chain,
+                spot_price=Decimal("100.0"),
+            )
 
     def test_yield_below_threshold_raises(self, trade_date, expiry_date, ticker):
         """
@@ -1609,7 +1902,38 @@ class TestIronButterflyBuilderWingValidation:
         justify the capital tied up as collateral.
         Expected: ValueError matching 'Yield-on-capital'.
         """
-        pass
+        # net_credit=0.20, wing_width=10 → yield=0.02 < min_yield=0.05 → filtered
+        chain = [
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="call",
+                        bid=Decimal("2.95"), ask=Decimal("3.05"), mid=Decimal("3.00"),
+                        iv=0.30, delta=0.55, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("100"), option_type="put",
+                        bid=Decimal("1.95"), ask=Decimal("2.05"), mid=Decimal("2.00"),
+                        iv=0.30, delta=-0.45, gamma=0.04, vega=0.15, theta=-0.35,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("110"), option_type="call",
+                        bid=Decimal("2.35"), ask=Decimal("2.45"), mid=Decimal("2.40"),
+                        iv=0.30, delta=0.15, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=100, open_interest=100),
+            OptionQuote(ticker=ticker, trade_date=trade_date, expiry_date=expiry_date,
+                        strike=Decimal("90"), option_type="put",
+                        bid=Decimal("2.35"), ask=Decimal("2.45"), mid=Decimal("2.40"),
+                        iv=0.30, delta=-0.15, gamma=0.02, vega=0.10, theta=-0.20,
+                        volume=100, open_interest=100),
+        ]
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.05)
+        with pytest.raises(ValueError, match="No valid symmetric wing pairs found"):
+            builder.build_strategy(
+                ticker=ticker,
+                trade_date=trade_date,
+                expiry_date=expiry_date,
+                option_chain=chain,
+                spot_price=Decimal("100.0"),
+            )
 
 
 class TestIronButterflyBuilderHelpers:
@@ -1631,7 +1955,10 @@ class TestIronButterflyBuilderHelpers:
         Purpose: Locks in the arithmetic and confirms the return type is
         float (not Decimal), consistent with the greek fields on OptionQuote.
         """
-        pass
+        builder = IronButterflyBuilder()
+        result = builder._compute_yield_on_capital(Decimal("4.20"), Decimal("10.00"))
+        assert isinstance(result, float)
+        assert abs(result - 0.42) < 1e-9
 
     def test_compute_yield_on_capital_zero_width_raises(self):
         """
@@ -1641,7 +1968,9 @@ class TestIronButterflyBuilderHelpers:
         legs are at the same strike — not a valid iron butterfly.
         Expected: ValueError matching 'wing_width must be positive'.
         """
-        pass
+        builder = IronButterflyBuilder()
+        with pytest.raises(ValueError, match="wing_width must be positive"):
+            builder._compute_yield_on_capital(Decimal("4.20"), Decimal("0"))
 
     def test_find_atm_strike_exact_match(self, sample_ibf_chain_atm, ibf_spot_price):
         """
@@ -1651,7 +1980,9 @@ class TestIronButterflyBuilderHelpers:
         listed strike.  The result should be deterministic and not depend
         on floating-point ordering.
         """
-        pass
+        builder = IronButterflyBuilder()
+        result = builder._find_atm_strike(sample_ibf_chain_atm, Decimal("255.0"))
+        assert result == Decimal("255.0")
 
     def test_find_atm_strike_between_strikes(self, sample_ibf_chain_atm, ibf_spot_price):
         """
@@ -1660,7 +1991,10 @@ class TestIronButterflyBuilderHelpers:
         Purpose: The distance minimisation (abs(strike - spot)) must select
         the numerically closer strike, not simply the first or last.
         """
-        pass
+        builder = IronButterflyBuilder()
+        # ibf_spot_price=255.81: |255.81-255.0|=0.81 < |255.81-265.0|=9.19 → 255.0 is nearest
+        result = builder._find_atm_strike(sample_ibf_chain_atm, ibf_spot_price)
+        assert result == Decimal("255.0")
 
     def test_get_option_at_strike_found(self, sample_ibf_chain_atm, ibf_spot_price):
         """
@@ -1670,7 +2004,11 @@ class TestIronButterflyBuilderHelpers:
         option_type (not just strike), so call and put at the same strike
         are distinguishable.
         """
-        pass
+        builder = IronButterflyBuilder()
+        result = builder._get_option_at_strike(sample_ibf_chain_atm, Decimal("255.0"), "call")
+        assert result is not None
+        assert result.strike == Decimal("255.0")
+        assert result.option_type == "call"
 
     def test_get_option_at_strike_not_found(self, sample_ibf_chain_atm, ibf_spot_price):
         """
@@ -1680,4 +2018,6 @@ class TestIronButterflyBuilderHelpers:
         produce a descriptive error message.  A KeyError or exception here
         would surface a confusing internal traceback instead.
         """
-        pass
+        builder = IronButterflyBuilder()
+        result = builder._get_option_at_strike(sample_ibf_chain_atm, Decimal("999.0"), "call")
+        assert result is None

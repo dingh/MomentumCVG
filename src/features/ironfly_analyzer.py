@@ -35,7 +35,10 @@ import pandas as pd
 
 from ..data.orats_provider import ORATSDataProvider
 from ..data.spot_price_db import SpotPriceDB
-from ..strategy.builders import IronButterflyBuilder, IronButterflyCandidate
+from ..strategy.builders import (
+    IronButterflyBuilder, IronButterflyCandidate,
+    IronCondorBuilder, IronCondorCandidate,
+)
 from ..core.models import OptionLeg, OptionQuote, OptionStrategy, StrategyType, Position
 
 
@@ -372,6 +375,140 @@ def _body_row(
     }
 
 
+def _condor_candidate_row(
+    ticker: str,
+    entry_date: date,
+    expiry_date: date,
+    dte_target: int,
+    frequency: str,
+    entry_spot: float,
+    candidate: IronCondorCandidate,
+    exit_spot: Decimal,
+    spot_move_pct: Optional[float],
+    processing_time: float,
+) -> Dict:
+    """
+    Build a fully populated output row for one iron condor candidate.
+
+    Uses the same schema as iron fly rows, with these differences:
+    - ``row_type = 'ironcondor_candidate'``
+    - ``body_strike`` is the midpoint of short call / short put strikes
+    - ``short_call_strike`` and ``short_put_strike`` stored explicitly
+    - ``wing_width`` = ``max_loss_width`` (max of call/put spread widths)
+    - ``body_delta_target`` and ``wing_delta_target`` populated
+    """
+    strategy = OptionStrategy(
+        ticker=ticker,
+        strategy_type=StrategyType.IRON_CONDOR,
+        legs=(
+            OptionLeg(option=candidate.long_put,    quantity=1),
+            OptionLeg(option=candidate.short_put,   quantity=-1),
+            OptionLeg(option=candidate.short_call,  quantity=-1),
+            OptionLeg(option=candidate.long_call,   quantity=1),
+        ),
+        trade_date=entry_date,
+    )
+
+    exit_value = strategy.calculate_payoff({expiry_date: exit_spot})
+    position = Position(
+        ticker=ticker,
+        entry_date=entry_date,
+        strategy=strategy,
+        quantity=1.0,
+        entry_cost=strategy.net_premium,
+        exit_date=expiry_date,
+        exit_value=exit_value,
+        metadata={},
+    )
+
+    pnl = float(position.pnl)
+    max_loss_width_f = float(candidate.max_loss_width)
+    net_credit_f = float(candidate.net_credit)
+    days_held = (expiry_date - entry_date).days
+
+    return_pct_on_width  = (pnl / max_loss_width_f * 100) if max_loss_width_f > 0 else None
+    return_pct_on_credit = (pnl / abs(net_credit_f) * 100) if net_credit_f != 0 else None
+    annualized = (return_pct_on_width * 365 / days_held) if (return_pct_on_width is not None and days_held > 0) else None
+
+    sc = candidate.short_call
+    sp = candidate.short_put
+    lc = candidate.long_call
+    lp = candidate.long_put
+
+    # body_strike = midpoint of short strikes (for approximate compatibility)
+    body_strike_mid = float((candidate.short_call_strike + candidate.short_put_strike) / 2)
+
+    return {
+        # Identity
+        'ticker': ticker,
+        'entry_date': entry_date,
+        'dte_category': frequency,
+        'dte_target': dte_target,
+        'dte_actual': days_held,
+        'expiry_date': expiry_date,
+        'entry_spot': float(entry_spot),
+        'body_strike': body_strike_mid,
+        # Condor-specific body strikes
+        'short_call_strike': float(candidate.short_call_strike),
+        'short_put_strike': float(candidate.short_put_strike),
+        # Candidate geometry
+        'wing_width': max_loss_width_f,
+        'call_spread_width': float(candidate.call_spread_width),
+        'put_spread_width': float(candidate.put_spread_width),
+        'call_wing_strike': float(candidate.long_call_strike),
+        'put_wing_strike': float(candidate.long_put_strike),
+        'avg_wing_delta': candidate.avg_wing_delta,
+        'avg_body_delta': candidate.avg_body_delta,
+        'body_delta_target': candidate.body_delta_target,
+        'wing_delta_target': candidate.wing_delta_target,
+        # Entry economics
+        'net_credit': net_credit_f,
+        'credit_to_width': candidate.credit_to_width,
+        'total_spread': float(candidate.total_spread),
+        'spread_cost_ratio': candidate.spread_cost_ratio,
+        # Entry greeks
+        'net_delta': candidate.net_delta,
+        'net_gamma': candidate.net_gamma,
+        'net_vega': candidate.net_vega,
+        'net_theta': candidate.net_theta,
+        # Short call leg
+        'sc_bid': float(sc.bid),
+        'sc_ask': float(sc.ask),
+        'sc_iv': sc.iv,
+        'sc_delta': sc.delta,
+        # Short put leg
+        'sp_bid': float(sp.bid),
+        'sp_ask': float(sp.ask),
+        'sp_iv': sp.iv,
+        'sp_delta': sp.delta,
+        # Long call leg
+        'lc_bid': float(lc.bid),
+        'lc_ask': float(lc.ask),
+        'lc_iv': lc.iv,
+        'lc_delta': lc.delta,
+        # Long put leg
+        'lp_bid': float(lp.bid),
+        'lp_ask': float(lp.ask),
+        'lp_iv': lp.iv,
+        'lp_delta': lp.delta,
+        # Exit / P&L
+        'exit_spot': float(exit_spot),
+        'exit_value': float(exit_value),
+        'pnl': pnl,
+        'return_pct_on_width': return_pct_on_width,
+        'return_pct_on_credit': return_pct_on_credit,
+        'annualized_return_on_width': annualized,
+        'spot_move_pct': spot_move_pct * 100 if spot_move_pct is not None else None,
+        'days_held': days_held,
+        # Status
+        'is_tradeable': True,
+        'failure_reason': None,
+        'processing_time': processing_time,
+        # Row type
+        'row_type': 'ironcondor_candidate',
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main class
 # ---------------------------------------------------------------------------
@@ -426,6 +563,8 @@ class IronFlyHistoryBuilder:
         min_volume: int = 10,
         min_oi: int = 0,
         frequency: str = 'monthly',
+        condor_body_delta_targets: Optional[List[float]] = None,
+        condor_wing_delta: float = 0.10,
     ):
         if frequency not in ('monthly', 'weekly'):
             raise ValueError(f"frequency must be 'monthly' or 'weekly', got {frequency!r}")
@@ -438,10 +577,13 @@ class IronFlyHistoryBuilder:
         self.min_volume = min_volume
         self.min_oi = min_oi
         self.frequency = frequency
+        self.condor_body_delta_targets = condor_body_delta_targets or [0.30, 0.40]
+        self.condor_wing_delta = condor_wing_delta
 
         # Lazily initialised per worker (avoids issues with joblib forks)
         self.provider: Optional[ORATSDataProvider] = None
         self.builder: Optional[IronButterflyBuilder] = None
+        self.condor_builder: Optional[IronCondorBuilder] = None
 
     # ------------------------------------------------------------------
     # Worker initialisation
@@ -465,7 +607,13 @@ class IronFlyHistoryBuilder:
             # here — enumerate_candidates() ignores it entirely.
             self.builder = IronButterflyBuilder(
                 wing_delta=0.15,
-                max_spread_pct=self.max_spread_pct,
+                max_spread_cost_ratio=self.max_spread_pct,
+                min_yield_on_capital=self.min_yield_on_capital,
+            )
+            self.condor_builder = IronCondorBuilder(
+                body_delta_targets=self.condor_body_delta_targets,
+                wing_delta=self.condor_wing_delta,
+                max_spread_cost_ratio=self.max_spread_pct,
                 min_yield_on_capital=self.min_yield_on_capital,
             )
             logger.info(f"Worker initialised with data_root={self.data_root}")
@@ -728,6 +876,31 @@ class IronFlyHistoryBuilder:
                     logger.warning(
                         f"Candidate row failed for {ticker} on {entry_date} "
                         f"wing_width={cand.wing_width}: {exc}"
+                    )
+
+            # 10. Enumerate iron condor candidates
+            condor_candidates = self.condor_builder.enumerate_candidates(
+                option_chain=chain,
+            )
+            for ccand in condor_candidates:
+                try:
+                    crow = _condor_candidate_row(
+                        ticker=ticker,
+                        entry_date=entry_date,
+                        expiry_date=expiry_date,
+                        dte_target=self.dte_target,
+                        frequency=self.frequency,
+                        entry_spot=entry_spot,
+                        candidate=ccand,
+                        exit_spot=exit_spot,
+                        spot_move_pct=spot_move_pct,
+                        processing_time=elapsed(),
+                    )
+                    candidate_rows.append(crow)
+                except Exception as exc:
+                    logger.warning(
+                        f"Condor candidate row failed for {ticker} on "
+                        f"{entry_date} body_delta={ccand.body_delta_target}: {exc}"
                     )
 
             # Always return at least the body row; candidate rows may be empty

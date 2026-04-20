@@ -52,10 +52,10 @@ from src.data.spot_price_db import SpotPriceDB
 # =============================================================================
 
 DTE_TARGET     = 30
-N_WORKERS      = 16
+N_WORKERS      = 24
 MAX_SPREAD_PCT = 0.99
-MIN_YIELD      = 0.05  # net_credit / wing_width floor -- ensures minimum return on capital deployed
-MIN_VOLUME     = 10
+MIN_YIELD      = 0.00  # net_credit / wing_width floor -- ensures minimum return on capital deployed
+MIN_VOLUME     = 0
 MIN_OI         = 0
 SP500_FILE     = Path('C:/MomentumCVG_env/cache/liquid_tickers.csv')
 SPOT_DB_PATH   = 'C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet'
@@ -346,17 +346,20 @@ def main() -> None:
 
     # -- Data quality summary ------------------------------------------------
     total      = len(df)
-    body_df    = df[df['row_type'] == 'body']       if 'row_type' in df.columns else df.iloc[0:0]
-    cand_df    = df[df['row_type'] == 'ironfly_candidate'] if 'row_type' in df.columns else df.iloc[0:0]
-    fail_df    = df[df['row_type'] == 'failure']    if 'row_type' in df.columns else df.iloc[0:0]
+    body_df    = df[df['row_type'] == 'body']                if 'row_type' in df.columns else df.iloc[0:0]
+    cand_df    = df[df['row_type'] == 'ironfly_candidate']   if 'row_type' in df.columns else df.iloc[0:0]
+    condor_df  = df[df['row_type'] == 'ironcondor_candidate'] if 'row_type' in df.columns else df.iloc[0:0]
+    fail_df    = df[df['row_type'] == 'failure']             if 'row_type' in df.columns else df.iloc[0:0]
     n_body     = len(body_df)
     n_cand     = len(cand_df)
+    n_condor   = len(condor_df)
     n_fail     = len(fail_df)
 
     logger.info("\nData quality summary:")
     logger.info(f"  Total rows           : {total:,}")
     logger.info(f"  Body rows (straddle) : {n_body:,}  ({n_body/total*100:.1f}%)")
     logger.info(f"  Ironfly candidates   : {n_cand:,}  ({n_cand/total*100:.1f}%)")
+    logger.info(f"  Condor candidates    : {n_condor:,}  ({n_condor/total*100:.1f}%)")
     logger.info(f"  Failure rows         : {n_fail:,}  ({n_fail/total*100:.1f}%)")
 
     if n_fail > 0:
@@ -408,10 +411,40 @@ def main() -> None:
                 f"{(cand_pnl['pnl'] > 0).mean()*100:.1f}%"
             )
 
+    if n_condor > 0:
+        condor_pnl = condor_df[condor_df['pnl'].notna()]
+        if len(condor_pnl) > 0:
+            logger.info("\n  Iron condor candidate stats:")
+            logger.info(f"    Unique tickers        : {condor_pnl['ticker'].nunique()}")
+            logger.info(f"    Unique dates          : {condor_pnl['entry_date'].nunique()}")
+            logger.info(f"    Body delta targets    : {sorted(condor_pnl['body_delta_target'].dropna().unique())}")
+            logger.info(
+                f"    avg_body_delta range   : "
+                f"{condor_pnl['avg_body_delta'].min():.3f} - "
+                f"{condor_pnl['avg_body_delta'].max():.3f}"
+            )
+            logger.info(
+                f"    avg_wing_delta range   : "
+                f"{condor_pnl['avg_wing_delta'].min():.3f} - "
+                f"{condor_pnl['avg_wing_delta'].max():.3f}"
+            )
+            logger.info(
+                f"    Mean return_on_width   : "
+                f"{condor_pnl['return_pct_on_width'].mean():.2f}%"
+            )
+            logger.info(
+                f"    Median return_on_width : "
+                f"{condor_pnl['return_pct_on_width'].median():.2f}%"
+            )
+            logger.info(
+                f"    Win rate (pnl > 0)     : "
+                f"{(condor_pnl['pnl'] > 0).mean()*100:.1f}%"
+            )
+
     # -- Save final output ---------------------------------------------------
     output_path = Path(
         f'C:/MomentumCVG_env/cache/'
-        f'ironfly_history_{args.frequency}_{args.start_year}_{args.end_year}_liquidity.parquet'
+        f'ironfly_condor_history_{args.frequency}_{args.start_year}_{args.end_year}_liquidity.parquet'
     )
     df.to_parquet(output_path, compression='gzip', index=False)
     logger.info(f"\nFinal output saved: {output_path}")

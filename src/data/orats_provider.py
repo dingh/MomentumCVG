@@ -106,7 +106,7 @@ class ORATSDataProvider:
         data_root: str = "c:/ORATS/data/ORATS_Adjusted",
         min_volume: int = 10,
         min_open_interest: int = 100,
-        min_bid: float = 0.05,
+        min_bid: float = 0.01,
         max_spread_pct: float = 0.50,
         cache_size: int = 5
     ):
