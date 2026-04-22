@@ -1224,7 +1224,8 @@ class TestEnumerateCandidates:
         assert c.put_wing_strike   == Decimal("90.0")
         assert c.net_credit        == Decimal("8.03")
         assert abs(c.credit_to_width  - 0.803)  < 1e-9
-        assert abs(c.avg_wing_delta   - 0.15)   < 1e-9
+        assert abs(c.avg_wing_delta        - 0.15) < 1e-9
+        assert abs(c.target_bucket_delta   - 0.15) < 1e-9
         assert c.short_call is sc
         assert c.short_put  is sp
         assert c.long_call  is lc
@@ -1427,6 +1428,48 @@ class TestEnumerateCandidates:
         # Widths must be ascending
         widths = [c.wing_width for c in result]
         assert widths == sorted(widths)
+
+    def test_target_bucket_delta_reflects_claimed_bucket(self):
+        """
+        Each returned candidate's ``target_bucket_delta`` equals the target
+        it won in the nearest-neighbour bucketing step.
+
+        Setup: two pairs that claim different buckets, plus a custom
+        target list so the expected bucket values are known exactly.
+
+          Pair A (width=8 ): avg_delta=0.12 → nearest 0.10 → target_bucket_delta=0.10
+          Pair B (width=10): avg_delta=0.22 → nearest 0.20 → target_bucket_delta=0.20
+
+        Also validates that a single-bucket case (custom target=[0.15]) sets
+        target_bucket_delta=0.15 for the winning candidate.
+        """
+        sc, sp = self._body_pair()
+        lc_a = self._opt(108.0, "call", bid=0.95, ask=0.97, mid=0.96, delta= 0.12)
+        lp_a = self._opt( 92.0, "put",  bid=0.90, ask=0.92, mid=0.91, delta=-0.12)
+        lc_b = self._opt(110.0, "call", bid=0.85, ask=0.87, mid=0.86, delta= 0.22)
+        lp_b = self._opt( 90.0, "put",  bid=0.80, ask=0.82, mid=0.81, delta=-0.22)
+        chain = [sc, sp, lc_a, lp_a, lc_b, lp_b]
+        builder = IronButterflyBuilder(max_spread_cost_ratio=0.99, min_yield_on_capital=0.0)
+
+        # Two-bucket case: each pair claims a different target
+        result = builder.enumerate_candidates(
+            chain, Decimal("100"), sc, sp,
+            wing_delta_targets=[0.10, 0.15, 0.20, 0.30],
+        )
+
+        assert len(result) == 2
+        by_width = {c.wing_width: c for c in result}
+        assert abs(by_width[Decimal("8")].target_bucket_delta  - 0.10) < 1e-9
+        assert abs(by_width[Decimal("10")].target_bucket_delta - 0.20) < 1e-9
+
+        # Single-bucket case: both pairs forced into the 0.15 bucket; Pair A wins
+        result_single = builder.enumerate_candidates(
+            chain, Decimal("100"), sc, sp,
+            wing_delta_targets=[0.15],
+        )
+
+        assert len(result_single) == 1
+        assert abs(result_single[0].target_bucket_delta - 0.15) < 1e-9
 
 
 class TestIronButterflyBuilderChainValidation:

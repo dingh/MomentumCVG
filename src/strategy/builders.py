@@ -308,6 +308,7 @@ class IronButterflyCandidate:
 
     # Wing delta score
     avg_wing_delta: float        # (|long_call.delta| + |long_put.delta|) / 2
+    target_bucket_delta: float   # nearest target in wing_delta_targets this candidate claimed
 
     # Net greeks across all 4 legs
     net_delta: float
@@ -647,7 +648,7 @@ class IronButterflyBuilder:
         )
 
         # ── Step 1: Build the full candidate pool ──────────────────────────
-        pool: List[IronButterflyCandidate] = []
+        pool: List[dict] = []
         for call_strike in otm_call_strikes:
             wing_width = call_strike - body_strike
             put_strike = body_strike - wing_width  # mirror strike
@@ -710,7 +711,7 @@ class IronButterflyBuilder:
                 - short_put.theta - short_call.theta
             )
 
-            pool.append(IronButterflyCandidate(
+            pool.append(dict(
                 body_strike=body_strike,
                 wing_width=wing_width,
                 call_wing_strike=call_strike,
@@ -738,20 +739,23 @@ class IronButterflyBuilder:
         # Each candidate claims the target it is closest to.  Within each
         # target bucket only the single best (smallest distance) wins.
         # Losers are dropped — they are NOT reassigned to a secondary target.
-        buckets: dict = {}   # target_delta -> (distance, candidate)
-        for cand in pool:
+        buckets: dict = {}   # target_delta -> (distance, candidate_kwargs)
+        for cand_kwargs in pool:
             nearest = min(
                 wing_delta_targets,
-                key=lambda t: abs(cand.avg_wing_delta - t),
+                key=lambda t: abs(cand_kwargs['avg_wing_delta'] - t),
             )
-            dist = abs(cand.avg_wing_delta - nearest)
+            dist = abs(cand_kwargs['avg_wing_delta'] - nearest)
             if nearest not in buckets or dist < buckets[nearest][0]:
-                buckets[nearest] = (dist, cand)
+                buckets[nearest] = (dist, cand_kwargs)
             # Note: strict < means ties are broken by pool insertion order
             # (ascending wing_width), so the narrower wing wins on equal distance.
 
-        # Collect winners and sort ascending by wing_width
-        candidates = [cand for (_dist, cand) in buckets.values()]
+        # Construct IronButterflyCandidate objects with target_bucket_delta assigned
+        candidates = [
+            IronButterflyCandidate(**cand_kwargs, target_bucket_delta=nearest)
+            for nearest, (_dist, cand_kwargs) in buckets.items()
+        ]
         candidates.sort(key=lambda c: c.wing_width)
         return candidates
 
