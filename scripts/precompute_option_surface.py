@@ -56,7 +56,7 @@ from src.data.spot_price_db import SpotPriceDB
 # Constants (overridable via argparse)
 # =============================================================================
 
-N_WORKERS    = 24
+N_WORKERS    = 26
 SP500_FILE   = Path('C:/MomentumCVG_env/cache/liquid_tickers.csv')
 SPOT_DB_PATH = 'C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet'
 
@@ -247,8 +247,8 @@ def main() -> None:
         help='Start year inclusive (default: 2018)',
     )
     parser.add_argument(
-        '--end-year', type=int, default=2024,
-        help='End year inclusive (default: 2024)',
+        '--end-year', type=int, default=2026,
+        help='End year inclusive (default: 2026)',
     )
     parser.add_argument(
         '--frequency', choices=['monthly', 'weekly'], default='monthly',
