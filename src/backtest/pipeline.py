@@ -38,6 +38,14 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from src.backtest.option_surface import (
+    OptionSurfaceDB,
+    StrategyAssemblyResult,
+    build_straddle_from_surface,
+    build_ironfly_from_surface,
+    build_ironcondor_from_surface,
+)
+
 if TYPE_CHECKING:
     from src.backtest.run_config import BacktestRunConfig
 
@@ -149,57 +157,94 @@ def step2_score_signals(
         Both sides are always produced and traded simultaneously.
     """
 
+    _EMPTY = pd.DataFrame(
+        columns=["ticker", "direction", "signal_score", "signal_rank_pct", "cvg_score", "cvg_rank_pct"]
+    )
+
     # 1. Slice features to rows where date == trade_date.
+    trade_ts = pd.Timestamp(trade_date)
+    feat_slice = features[features["date"] == trade_ts].copy()
+    if feat_slice.empty:
+        return _EMPTY
 
     # 2. Inner join with universe on ticker.
-    #    Tickers not in the universe (failed liquidity filter) are dropped here.
-    #    They are NOT recorded in trade_log (they never enter the pipeline).
-    #    OPEN: should "not in universe" tickers appear as diagnostic rows?
-    #    Recommendation: record them in step5 as exclusion_reason = 'not_in_universe'
-    #    only if they also had a tradeable structure. Otherwise the diagnostic table
-    #    becomes enormous.
+    feat_slice = feat_slice.merge(universe[["ticker"]], on="ticker", how="inner")
+    if feat_slice.empty:
+        return _EMPTY
 
-    # 3. Drop rows where config.momentum_col is NaN or config.cvg_col is NaN.
+    # 3. Drop rows where momentum_col or cvg_col is NaN.
+    feat_slice = feat_slice.dropna(subset=[config.momentum_col, config.cvg_col])
+    if feat_slice.empty:
+        return _EMPTY
 
-    # 4. Apply data quality filter:
-    #    Derive window_size from column name convention, e.g.:
-    #       'mom_60_8_mean' → max_lag=60, min_lag=8 → window_size = 60 - 8 + 1 = 53
-    #    Drop rows where count_col < config.min_count_pct * window_size.
+    # 4. Apply data quality filter via count_col.
+    #    Derive window_size from column name: 'mom_{max_lag}_{min_lag}_mean'
+    #    window_size = max_lag - min_lag + 1
+    if config.count_col in feat_slice.columns:
+        import re as _re
+        _m = _re.match(r"^mom_(\d+)_(\d+)_mean$", config.momentum_col)
+        if _m:
+            _max_lag, _min_lag = int(_m.group(1)), int(_m.group(2))
+            window_size = _max_lag - _min_lag + 1
+            count_threshold = config.min_count_pct * window_size
+            feat_slice = feat_slice[feat_slice[config.count_col] >= count_threshold]
+        if feat_slice.empty:
+            return _EMPTY
 
-    # 5. Cross-sectional momentum ranking (percentile rank across all survivors):
-    #    signal_rank_pct = percentile rank of momentum_col (0 = lowest, 1 = highest).
-    #    signal_score    = raw value of momentum_col.
+    # 5. Cross-sectional momentum ranking.
+    feat_slice["signal_rank_pct"] = feat_slice[config.momentum_col].rank(
+        ascending=True, method="average", pct=True
+    )
+    feat_slice["signal_score"] = feat_slice[config.momentum_col]
 
-    # 6. Select LONG candidates:
-    #    signal_rank_pct >= (1.0 - config.long_top_pct)
-    #    e.g. long_top_pct=0.10 → keep tickers with rank >= 0.90 (top 10%).
+    # 6. Select LONG candidates: top long_top_pct by rank.
+    long_threshold = 1.0 - config.long_top_pct
+    long_pool = feat_slice[feat_slice["signal_rank_pct"] >= long_threshold].copy()
 
-    # 7. Select SHORT candidates:
-    #    signal_rank_pct <= config.short_bottom_pct
-    #    e.g. short_bottom_pct=0.10 → keep tickers with rank <= 0.10 (bottom 10%).
+    # 7. Select SHORT candidates: bottom short_bottom_pct by rank.
+    short_pool = feat_slice[feat_slice["signal_rank_pct"] <= config.short_bottom_pct].copy()
 
-    # 8. CVG filter — LONG candidates:
-    #    Compute cvg_rank_pct = percentile rank of cvg_col WITHIN the long pool.
-    #    Keep tickers where cvg_rank_pct >= (1.0 - config.cvg_filter_pct).
-    #    e.g. cvg_filter_pct=0.50 → keep top 50% CVG within long pool.
+    # 8. CVG filter — LONG candidates.
+    if not long_pool.empty:
+        long_pool["cvg_rank_pct"] = long_pool[config.cvg_col].rank(
+            ascending=True, method="average", pct=True
+        )
+        cvg_long_threshold = 1.0 - config.cvg_filter_pct
+        long_pool = long_pool[long_pool["cvg_rank_pct"] >= cvg_long_threshold].copy()
 
-    # 9. CVG filter — SHORT candidates:
-    #    Same as step 8 but within the short pool.
+    # 9. CVG filter — SHORT candidates.
+    if not short_pool.empty:
+        short_pool["cvg_rank_pct"] = short_pool[config.cvg_col].rank(
+            ascending=True, method="average", pct=True
+        )
+        cvg_short_threshold = 1.0 - config.cvg_filter_pct
+        short_pool = short_pool[short_pool["cvg_rank_pct"] >= cvg_short_threshold].copy()
 
-    # 10. Tag rows with direction:
-    #     Long survivors  → direction = 'long'
-    #     Short survivors → direction = 'short'
-    #
-    #     NOTE: A ticker cannot appear on both sides simultaneously
-    #     (momentum extremes don't overlap). Assert no duplicates.
+    if long_pool.empty and short_pool.empty:
+        return _EMPTY
 
-    # 11. Combine long and short survivors into one DataFrame.
+    # 10. Tag rows with direction and assert no overlap.
+    long_pool["direction"] = "long"
+    short_pool["direction"] = "short"
 
-    # 12. Return DataFrame with columns:
-    #     [ticker, direction, signal_score, signal_rank_pct, cvg_score, cvg_rank_pct]
-    #     Sorted by direction then signal_rank_pct descending (for deterministic output).
+    overlap = set(long_pool["ticker"]) & set(short_pool["ticker"])
+    assert not overlap, (
+        f"step2_score_signals: tickers appear on both sides: {overlap}. "
+        "This indicates long_top_pct + short_bottom_pct > 1.0."
+    )
 
-    pass
+    # 11. Combine.
+    combined = pd.concat([long_pool, short_pool], ignore_index=True)
+
+    # 12. Add cvg_score, select output columns, sort.
+    combined["cvg_score"] = combined[config.cvg_col]
+
+    out_cols = ["ticker", "direction", "signal_score", "signal_rank_pct", "cvg_score", "cvg_rank_pct"]
+    return (
+        combined[out_cols]
+        .sort_values(["direction", "signal_rank_pct"], ascending=[True, False])
+        .reset_index(drop=True)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -208,98 +253,136 @@ def step2_score_signals(
 
 def step3_get_eligible_structures(
     trade_date: date,
-    signals: pd.DataFrame,
-    ironfly_history: pd.DataFrame,
-    straddle_history: pd.DataFrame,
+    candidates: pd.DataFrame,
+    surface_db: OptionSurfaceDB,
     config: "BacktestRunConfig",
 ) -> pd.DataFrame:
     """
-    For each signal ticker, look up the appropriate pre-computed structure
-    based on direction and config.short_structure.
+    Build one option structure per candidate ticker using the precomputed quote surface.
 
-    Routing logic:
-        direction = 'long'  → always look up straddle_history (long straddle, buy vol)
-        direction = 'short' → look up ironfly_history  if config.short_structure == 'ironfly'
-                              look up straddle_history if config.short_structure == 'straddle'
-
-    Required columns in signals (output of step2):
+    Required columns in candidates (output of step2):
         ticker, direction
 
-    Required columns in ironfly_history:
-        entry_date, ticker, is_tradeable, avg_wing_delta, credit_to_width,
-        wing_width, net_credit, total_spread, spread_cost_ratio,
-        body_strike, call_wing_strike, put_wing_strike,
-        expiry_date, dte_actual, entry_spot,
-        net_delta, net_gamma, net_vega, net_theta,
-        pnl, return_pct_on_width, spot_move_pct, exit_spot, failure_reason
+    Returns one row per candidate ticker with columns:
+        ticker, direction, build_ok, failure_reason,
+        expiry_date, instrument_type,
+        net_credit, max_loss_per_share, return_on_max_loss,
+        spread_cost_ratio, leg_spread_to_credit_ratio,
+        assembly_result   (StrategyAssemblyResult or None)
 
-    Required columns in straddle_history:
-        entry_date, ticker, net_debit, expiry_date, dte_actual, entry_spot,
-        net_delta, net_vega, net_gamma, net_theta,
-        pnl, return_pct_on_debit, spot_move_pct, exit_spot, is_tradeable, failure_reason
-        (Note: no wing_width / call_wing_strike / put_wing_strike for straddles)
+    Routing:
+        direction='long'                               → build_straddle(direction='long')
+        direction='short', short_structure='straddle'  → build_straddle(direction='short')
+        direction='short', short_structure='ironfly'   → build_ironfly(...)
+        direction='short', short_structure='ironcondor'→ build_ironcondor(...)
 
-    Returns columns:
-        One row per ticker with structure economics + added column:
-            instrument_type: 'long_straddle' | 'short_straddle' | 'short_ironfly'
-        Columns not applicable to the instrument type are NaN
-        (e.g. wing_width is NaN for straddle rows).
-
-    Note: tickers present in signals but absent from the relevant history table
-    (or present with is_tradeable=False) will be absent from this output.
-    Step 5 treats their absence as exclusion_reason = 'no_tradeable_structure'.
+    One structure per ticker — no variant search inside this function.
+    The config already fixes the structure template; variant search belongs
+    in the outer config loop.
     """
+    _COLS = [
+        "ticker", "direction", "build_ok", "failure_reason",
+        "expiry_date", "instrument_type",
+        "net_credit", "max_loss_per_share", "return_on_max_loss",
+        "spread_cost_ratio", "leg_spread_to_credit_ratio",
+        "assembly_result",
+    ]
 
-    # 1. Split signals into long_tickers and short_tickers by direction column.
+    if candidates.empty:
+        return pd.DataFrame(columns=_COLS)
 
-    # 2. LONG SIDE — long straddle lookup:
-    #    straddle_slice = straddle_history[entry_date == trade_date]
-    #    long_candidates = straddle_slice[ticker ∈ long_tickers & is_tradeable == True]
-    #    Add instrument_type = 'long_straddle' to each row.
-    #    Straddles have one row per ticker (no wing selection needed).
+    rows = []
+    for _, row in candidates.iterrows():
+        ticker    = row["ticker"]
+        direction = row["direction"]
+        result: StrategyAssemblyResult | None = None
+        failure: str | None = None
 
-    # 3. SHORT SIDE — route based on config.short_structure:
-    #
-    #    If config.short_structure == 'ironfly':
-    #        ironfly_slice = ironfly_history[entry_date == trade_date]
-    #        short_candidates_raw = ironfly_slice[ticker ∈ short_tickers & is_tradeable == True]
-    #        Add instrument_type = 'short_ironfly'.
-    #
-    #    If config.short_structure == 'straddle':
-    #        straddle_slice = straddle_history[entry_date == trade_date]  (already loaded above)
-    #        short_candidates_raw = straddle_slice[ticker ∈ short_tickers & is_tradeable == True]
-    #        Add instrument_type = 'short_straddle'.
+        try:
+            if direction == "long":
+                result = build_straddle_from_surface(
+                    surface_db=surface_db,
+                    ticker=ticker,
+                    entry_date=trade_date,
+                    direction="long",
+                    fill=config.fill,
+                    max_leg_spread_pct=config.max_leg_spread_pct,
+                )
+            elif direction == "short":
+                if config.short_structure == "straddle":
+                    result = build_straddle_from_surface(
+                        surface_db=surface_db,
+                        ticker=ticker,
+                        entry_date=trade_date,
+                        direction="short",
+                        fill=config.fill,
+                        max_leg_spread_pct=config.max_leg_spread_pct,
+                    )
+                elif config.short_structure == "ironfly":
+                    result = build_ironfly_from_surface(
+                        surface_db=surface_db,
+                        ticker=ticker,
+                        entry_date=trade_date,
+                        wing_target_delta=config.wing_delta_target,
+                        fill=config.fill,
+                        max_leg_spread_pct=config.max_leg_spread_pct,
+                        max_spread_cost_ratio=config.max_spread_cost_ratio,
+                    )
+                elif config.short_structure == "ironcondor":
+                    result = build_ironcondor_from_surface(
+                        surface_db=surface_db,
+                        ticker=ticker,
+                        entry_date=trade_date,
+                        short_delta_target=config.condor_short_delta_target,
+                        long_delta_target=config.condor_long_delta_target,
+                        fill=config.fill,
+                        max_leg_spread_pct=config.max_leg_spread_pct,
+                        max_spread_cost_ratio=config.max_spread_cost_ratio,
+                    )
+                else:
+                    failure = f"unknown short_structure: {config.short_structure!r}"
+            else:
+                failure = f"unknown direction: {direction!r}"
 
-    # 4. Apply wing selection rule to short iron fly candidates only:
-    #    (Skipped when short_structure == 'straddle'; straddles have one row per entry_date.)
-    #
-    #    If config.wing_selection_rule == 'closest_delta':
-    #        For each ticker, select the row that minimises:
-    #            abs(avg_wing_delta - config.wing_delta_target)
-    #        Ties broken by credit_to_width descending.
-    #
-    #    If config.wing_selection_rule == 'max_credit_to_width':
-    #        For each ticker, select the row that maximises credit_to_width.
-    #        Ties broken by wing_width descending.
-    #
-    #    If config.wing_selection_rule == 'widest':
-    #        For each ticker, select the row with the largest wing_width.
-    #        Ties broken by credit_to_width descending.
-    #
-    #    Implementation: use groupby(ticker) + idxmin/idxmax, or sort + drop_duplicates.
+        except (KeyError, ValueError) as exc:
+            failure = str(exc)
 
-    # 5. Combine long_candidates and short_candidates into a single DataFrame.
-    #    Use pd.concat with consistent column schema — fill missing columns with NaN
-    #    (e.g. long straddle rows will have NaN for wing_width, credit_to_width, etc.).
+        if result is not None:
+            rows.append({
+                "ticker":                     ticker,
+                "direction":                  direction,
+                "build_ok":                   True,
+                "failure_reason":             None,
+                "expiry_date":                result.expiry_date,
+                "instrument_type":            result.strategy_name,
+                "net_credit":                 float(result.net_credit),
+                "max_loss_per_share":         (
+                    float(result.max_loss_per_share)
+                    if result.max_loss_per_share is not None
+                    else None
+                ),
+                "return_on_max_loss":         result.return_on_max_loss,
+                "spread_cost_ratio":          result.spread_cost_ratio,
+                "leg_spread_to_credit_ratio": result.leg_spread_to_credit_ratio,
+                "assembly_result":            result,
+            })
+        else:
+            rows.append({
+                "ticker":                     ticker,
+                "direction":                  direction,
+                "build_ok":                   False,
+                "failure_reason":             failure,
+                "expiry_date":                None,
+                "instrument_type":            None,
+                "net_credit":                 None,
+                "max_loss_per_share":         None,
+                "return_on_max_loss":         None,
+                "spread_cost_ratio":          None,
+                "leg_spread_to_credit_ratio": None,
+                "assembly_result":            None,
+            })
 
-    # 6. Assert result has at most one row per ticker.
-    #    Raise if duplicates found (indicates a bug in step 4 or routing logic).
-
-    # 7. Return the combined DataFrame.
-    #    instrument_type column distinguishes rows in downstream steps.
-    #    Downstream steps join on ticker.
-
-    pass
+    return pd.DataFrame(rows, columns=_COLS)
 
 
 # ---------------------------------------------------------------------------

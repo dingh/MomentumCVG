@@ -11,7 +11,9 @@ See docs/backtest_engine_redesign.md for the full design rationale.
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Literal
+from typing import Literal, Optional
+
+from src.backtest.option_surface import FillAssumption
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +22,7 @@ from typing import Literal
 
 VALID_WING_SELECTION_RULES = ('closest_delta', 'max_credit_to_width', 'widest')
 VALID_COST_MODELS           = ('mid', 'half_spread_per_leg', 'full_spread_per_leg')
-VALID_SHORT_STRUCTURES      = ('ironfly', 'straddle')
+VALID_SHORT_STRUCTURES      = ('ironfly', 'straddle', 'ironcondor')
 
 
 @dataclass
@@ -174,6 +176,36 @@ class BacktestRunConfig:
     # Optional settings (rarely changed between runs)
     # -----------------------------------------------------------------------
 
+    fill: FillAssumption = field(default_factory=FillAssumption.mid)
+    # Fill assumption applied to all leg prices when assembling structures from the surface.
+    # FillAssumption.mid()   → all legs filled at mid-price (optimistic baseline).
+    # FillAssumption.cross() → buys at ask, sells at bid (conservative / market-order model).
+    # Default is mid (zero spread cost) to match the historical research baseline.
+
+    max_leg_spread_pct: Optional[float] = None
+    # Maximum allowed bid-ask spread as a fraction of mid-price for any single leg,
+    # applied before leg selection inside each builder.
+    # Quotes wider than this threshold are excluded from candidate selection.
+    # None = no per-leg spread filter.
+    # e.g. 0.30 = reject legs where (ask - bid) / mid > 30%.
+
+    max_spread_cost_ratio: Optional[float] = None
+    # Maximum allowed spread_cost_ratio for the assembled structure.
+    # The builder raises ValueError (captured as failure_reason) when exceeded.
+    # None = no limit.
+    # e.g. 0.10 = reject structures where spread cost > 10% of net credit.
+
+    condor_short_delta_target: Optional[float] = None
+    # Abs-delta target for the short legs of an iron condor.
+    # Only used when short_structure == 'ironcondor'.
+    # e.g. 0.30 = sell the ~30-delta call and put.
+
+    condor_long_delta_target: Optional[float] = None
+    # Abs-delta target for the long (outer wing) legs of an iron condor.
+    # Should be less than condor_short_delta_target.
+    # Only used when short_structure == 'ironcondor'.
+    # e.g. 0.15 = buy the ~15-delta call and put as protection.
+
     include_diagnostics: bool = True
     # If True, trade_log includes rows where included_in_portfolio == False.
     # These rows are essential for selection-effect attribution (strategy_def §8.2):
@@ -212,4 +244,86 @@ class BacktestRunConfig:
         # if short_structure == 'ironfly' and wing_selection_rule == 'closest_delta':
         #     raise ValueError if wing_delta_target not in (0, 0.5)
 
-        pass
+        errors = []
+
+        if self.short_structure not in VALID_SHORT_STRUCTURES:
+            errors.append(
+                f"short_structure must be one of {VALID_SHORT_STRUCTURES}, "
+                f"got {self.short_structure!r}"
+            )
+        if self.wing_selection_rule not in VALID_WING_SELECTION_RULES:
+            errors.append(
+                f"wing_selection_rule must be one of {VALID_WING_SELECTION_RULES}, "
+                f"got {self.wing_selection_rule!r}"
+            )
+        if self.cost_model not in VALID_COST_MODELS:
+            errors.append(
+                f"cost_model must be one of {VALID_COST_MODELS}, "
+                f"got {self.cost_model!r}"
+            )
+
+        if not (0.0 < self.long_top_pct < 1.0):
+            errors.append(f"long_top_pct must be in (0, 1), got {self.long_top_pct}")
+        if not (0.0 < self.short_bottom_pct < 1.0):
+            errors.append(f"short_bottom_pct must be in (0, 1), got {self.short_bottom_pct}")
+        if not (0.0 < self.cvg_filter_pct <= 1.0):
+            errors.append(f"cvg_filter_pct must be in (0, 1], got {self.cvg_filter_pct}")
+        if not (0.0 < self.min_count_pct <= 1.0):
+            errors.append(f"min_count_pct must be in (0, 1], got {self.min_count_pct}")
+
+        if not (0.0 < self.dvol_top_pct <= 1.0):
+            errors.append(f"dvol_top_pct must be in (0, 1], got {self.dvol_top_pct}")
+        if not (0.0 < self.spread_bottom_pct <= 1.0):
+            errors.append(f"spread_bottom_pct must be in (0, 1], got {self.spread_bottom_pct}")
+
+        if self.max_names_per_side < 1:
+            errors.append(f"max_names_per_side must be >= 1, got {self.max_names_per_side}")
+        if self.max_loss_budget_per_trade <= 0:
+            errors.append(
+                f"max_loss_budget_per_trade must be > 0, got {self.max_loss_budget_per_trade}"
+            )
+        if self.earnings_exclusion_days < 0:
+            errors.append(
+                f"earnings_exclusion_days must be >= 0, got {self.earnings_exclusion_days}"
+            )
+
+        if self.start_date >= self.end_date:
+            errors.append(
+                f"start_date must be before end_date, "
+                f"got {self.start_date} >= {self.end_date}"
+            )
+
+        if (
+            self.short_structure == "ironfly"
+            and self.wing_selection_rule == "closest_delta"
+            and not (0.0 < self.wing_delta_target < 0.5)
+        ):
+            errors.append(
+                f"wing_delta_target must be in (0, 0.5) for ironfly+closest_delta, "
+                f"got {self.wing_delta_target}"
+            )
+
+        if self.short_structure == "ironcondor":
+            if self.condor_short_delta_target is None:
+                errors.append(
+                    "condor_short_delta_target must be set when short_structure='ironcondor'"
+                )
+            if self.condor_long_delta_target is None:
+                errors.append(
+                    "condor_long_delta_target must be set when short_structure='ironcondor'"
+                )
+            if (
+                self.condor_short_delta_target is not None
+                and self.condor_long_delta_target is not None
+                and self.condor_long_delta_target >= self.condor_short_delta_target
+            ):
+                errors.append(
+                    f"condor_long_delta_target ({self.condor_long_delta_target}) must be "
+                    f"less than condor_short_delta_target ({self.condor_short_delta_target})"
+                )
+
+        if errors:
+            raise ValueError(
+                "BacktestRunConfig validation failed:\n"
+                + "\n".join(f"  - {e}" for e in errors)
+            )
