@@ -473,6 +473,12 @@ def build_straddle_from_surface(
         "put_abs_delta":  abs(body_put.delta),
         "call_spread_pct": float((body_call.ask - body_call.bid) / body_call.mid) if body_call.mid > 0 else None,
         "put_spread_pct":  float((body_put.ask  - body_put.bid)  / body_put.mid)  if body_put.mid  > 0 else None,
+        # body_credit_per_share: ATM straddle premium used as a normalisation base.
+        # For short straddle: the credit received (net_credit).
+        # For long straddle: the debit paid (abs(entry_cost)).
+        # Both represent the raw ATM body premium, enabling fair cross-direction
+        # comparison of pnl / body_credit_per_share.
+        "body_credit_per_share": float(net_credit) if direction == "short" else float(abs(entry_cost)),
     })
 
     return StrategyAssemblyResult(
@@ -607,6 +613,11 @@ def build_ironfly_from_surface(
         "long_put_strike":        float(long_put.strike),
         "wing_width":             float(wing_width),
         "fill_model":             fill.label,
+        # body_credit_per_share: premium received from the ATM short body legs alone,
+        # before deducting the cost of the OTM long wings.  This is the same gross
+        # premium a short straddle would have received, enabling fair cross-structure
+        # comparison of how much body premium was retained vs given up for wing protection.
+        "body_credit_per_share": float(fill.sell_price(body_call) + fill.sell_price(body_put)),
     })
 
     return StrategyAssemblyResult(
@@ -774,6 +785,11 @@ def build_ironcondor_from_surface(
         "put_spread_width":             float(put_spread_width),
         "width_asymmetry":              float(abs(call_spread_width - put_spread_width)),
         "fill_model":                   fill.label,
+        # body_credit_per_share: premium received from the short OTM legs alone,
+        # before deducting the cost of the further-OTM long wings.  Enables fair
+        # comparison with iron fly and short straddle — all three share the same
+        # denominator when computing return as a fraction of body premium.
+        "body_credit_per_share": float(fill.sell_price(short_call) + fill.sell_price(short_put)),
     })
 
     return StrategyAssemblyResult(
