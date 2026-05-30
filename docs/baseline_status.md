@@ -20,9 +20,9 @@
 | Item | Value |
 |------|-------|
 | Command | `python -m pytest tests/ -q` |
-| Result | **326 passed** |
-| Duration | ~3.3s |
-| Date | 2026-05-23 |
+| Result | **335 passed** |
+| Duration | ~4.0s |
+| Date | 2026-05-27 |
 
 No integration or end-to-end backtest smoke test in CI yet.
 
@@ -82,3 +82,4 @@ python scripts/run_backtest.py configs/baseline_sp500.json
 | Date | Change |
 |------|--------|
 | 2026-05-23 | Week 0: 326 tests green via project venv |
+| 2026-05-27 | Sprint 001 Session B: +9 surface runner data-flow tests; 335 total |

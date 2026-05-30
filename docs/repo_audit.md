@@ -1,6 +1,6 @@
 # Repo audit — Sprint 001
 
-**Status:** Draft for review  
+**Status:** Reviewed by HD  
 **Date:** 2026-05-24  
 **Mode:** Audit  
 **Scope:** Surface-first v1 backtest path, especially precompute surface store + `SurfaceRunner` scaffold.
@@ -41,11 +41,17 @@ scripts/run_surface_search.py
   → liquidity panel + features
   → pipeline.step1_get_universe()
   → pipeline.step2_score_signals()
+  → pipeline.step3_get_eligible_structures()      # intended modular home for surface assembly routing
+  → pipeline.step4_apply_exclusions()             # earnings + other exclusions
+  → pipeline.step5_select_and_size()              # portfolio cap + sizing (v1: 50 total long+short)
+  → pipeline.step6_apply_cost()                   # cost model and return metric normalization
   → option_surface.OptionSurfaceDB
   → build_straddle_from_surface() / build_ironfly_from_surface() / build_ironcondor_from_surface()
-  → SurfaceRunner._select_size_and_settle()
+  → SurfaceRunner orchestration (thin wrapper over pipeline steps)
   → trade_log + date_summary + run_summary
 ```
+
+Design intent (HD): keep `SurfaceRunner` as the orchestration layer, but modularize all core behavior into `pipeline.py` step functions so the engine is easier to unit test and extend.
 
 ---
 
@@ -135,9 +141,9 @@ This was completed as a **Session A.1 audit extension** in `docs/surface_runner_
 
 | Gap | Why it matters | Files | Effort |
 |-----|----------------|-------|--------|
-| SurfaceRunner functionality/data-flow map | The current design has not yet been proven complete enough to support comprehensive backtesting. Need a concrete map from artifacts and functions to required backtest responsibilities before choosing the verification test. | `surface_runner.py`, `option_surface.py`, `pipeline.py`, `run_config.py`, `surface_metrics.py`, `precompute_option_surface.py`, `option_surface_analyzer.py` | S/M |
+| ~~SurfaceRunner functionality/data-flow map~~ | **Done Sprint 001** — see `docs/surface_runner_data_flow.md` + `tests/unit/test_surface_runner_data_flow.py`. | — | — |
 | Smoke-run CLI wiring | If `run_surface_search.py` cannot instantiate `SurfaceDataPaths`, no surface backtest can run from CLI. | `scripts/run_surface_search.py`, `surface_run_config.py` | S |
-| Dollar PnL / contract sizing | Runner docstring promises integer contracts from max-loss budget, but `_select_size_and_settle()` currently records only `pnl_per_share`; it does not appear to use `max_loss_budget_per_trade`, contract multiplier, or integer contract counts. | `surface_runner.py`, `run_config.py`, `surface_metrics.py` | M |
+| Portfolio/risk/dollar-PnL layer (real engine) | This is the core blocker for realistic backtesting. Without a coherent portfolio/risk layer (integer contracts, dollar PnL, returns normalized on max-loss budget, and total-cap enforcement), results cannot be interpreted as deployable capital performance. | `pipeline.py` (steps 4–6), `surface_runner.py`, `run_config.py`, `surface_metrics.py` | L |
 | Global portfolio cap implementation | HD clarified v1 cap semantics as 50 total positions across long+short. Current runner uses `max_names_per_side`, which can mean up to 100 total if set to 50. | `surface_runner.py`, `run_config.py` | S/M |
 | Trade-date schedule contract | `_get_trade_dates()` uses every feature date in range. Need explicit weekly schedule aligned to precomputed surface dates and v1 rebalance. | `surface_runner.py`, `precompute_option_surface.py`, feature generation | M |
 | Surface coverage report | Before full 2020+ backtest, need a report: valid surfaces by year/date/ticker, missing failure reasons, quote coverage by delta bucket, fly/condor assembly availability. | `precompute_option_surface.py`, new audit script or notebook, maybe `OptionSurfaceDB` | M |
@@ -198,8 +204,8 @@ This was completed as a **Session A.1 audit extension** in `docs/surface_runner_
 | Use the approved Session A.1 data-flow map to drive the first build/test boundary | S |
 | Fix/verify `run_surface_search.py` CLI wiring (`contract_multiplier` issue) | S |
 | Add tiny smoke test or smoke script for one config / short date range | M |
-| Implement dollar sizing fields: `contracts`, `max_loss_dollars`, `pnl_dollars`, `return_on_max_loss` | M |
-| Decide 50 total vs per-side cap and encode config naming | S |
+| Implement the portfolio/risk/dollar-PnL layer (pipeline steps 4–6): `contracts`, `max_loss_dollars`, `pnl_dollars`, `return_on_max_loss`, and total-cap enforcement | L |
+| Encode total cap semantics in config naming (50 total long+short) | S |
 | Run surface coverage report for the intended weekly precompute | M |
 
 ### Sprint 003 — engine metrics and portfolio layer

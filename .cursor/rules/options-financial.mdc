@@ -1,0 +1,13 @@
+---
+description: Financial correctness for options backtest code
+globs: "{src,tests,scripts}/**/*"
+alwaysApply: false
+---
+
+# Options financial logic
+
+- Prefer tests before changing payoff, sizing, fills, or leg construction.
+- Iron fly v1: symmetric structure, max-loss sizing, conservative fills for go/no-go.
+- Check sign conventions (long/short, credit/debit) and DTE/expiry alignment.
+- Avoid lookahead: universe and features must be point-in-time at rebalance date.
+- Do not conflate legacy straddle backtest path with SurfaceRunner iron-fly path.

@@ -1,6 +1,6 @@
 # Correctness audit — Sprint 001
 
-**Status:** Draft for review  
+**Status:** Reviewed by HD  
 **Date:** 2026-05-24  
 **Mode:** Audit  
 **Scope:** Tests and financial correctness risks for the surface-first v1 path.

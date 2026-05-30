@@ -75,4 +75,4 @@ Command: C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/ -q
 
 ## Next: Sprint 001
 
-See [agenda/current_sprint.md](../agenda/current_sprint.md).
+Sprint 001 closed 2026-05-28. See [001_repo_audit_verification.md](001_repo_audit_verification.md) and [agenda/current_sprint.md](../agenda/current_sprint.md) for Sprint 002.

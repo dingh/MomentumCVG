@@ -1,0 +1,14 @@
+---
+description: MomentumCVG sprint workflow and inspect-first discipline
+alwaysApply: true
+---
+
+# MomentumCVG workflow
+
+- Read `docs/agenda/current_sprint.md` at session start.
+- Default: inspect and plan before editing code.
+- Respect sprint **mode**: Audit (no edits), Verification (tests only), Build (approved scope only).
+- v1 spec lives in `docs/v1_spec_pins.md`; do not expand scope without user approval.
+- `docs/archive/` is stale reference — do not update archived files.
+- After edits: run relevant pytest subset and report results.
+- Use venv: `C:/MomentumCVG_env/venv/Scripts/python.exe`

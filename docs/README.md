@@ -28,10 +28,11 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [repo_audit.md](repo_audit.md) | Sprint 001 surface pipeline gap audit | 2026-05-24 |
 | [correctness_audit.md](correctness_audit.md) | Sprint 001 test inventory and correctness gaps | 2026-05-24 |
 | [surface_runner_data_flow.md](surface_runner_data_flow.md) | Sprint 001 Session A.1 SurfaceRunner data-flow map | 2026-05-25 |
+| [surface_runner_reading_guide.md](surface_runner_reading_guide.md) | Guided code read-through (Sprint 001) | 2026-05-27 |
+| [agenda/session_b_plan.md](agenda/session_b_plan.md) | Sprint 001 Session B verification plan (historical) | 2026-05-27 |
 | [development_workflow.md](development_workflow.md) | Human + agent sprint workflow | 2026-05-23 |
 | [baseline_status.md](baseline_status.md) | Test and smoke-command baseline | 2026-05-23 |
-| [agenda/current_sprint.md](agenda/current_sprint.md) | Current sprint (Sprint 001) | 2026-05-23 |
-| [agenda/week0_review_notes.md](agenda/week0_review_notes.md) | Week 0 review workbook | 2026-05-23 |
+| [agenda/current_sprint.md](agenda/current_sprint.md) | Current sprint (Sprint 002 — planning) | 2026-05-28 |
 
 ## Decisions
 
@@ -45,7 +46,8 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | Sprint | Document |
 |--------|----------|
 | 000 | [Week 0 kickoff](sprint_memos/000_week0_kickoff.md) |
-| 001 | [Repo audit and verification](sprint_memos/001_repo_audit_verification.md) _(draft)_ |
+| 001 | [Repo audit and verification](sprint_memos/001_repo_audit_verification.md) _(closed 2026-05-28)_ |
+| — | [Week 0 review notes](sprint_memos/week0_review_notes.md) _(archived from agenda)_ |
 
 ## Planned (not yet created)
 
