@@ -1,64 +1,109 @@
 # Current sprint — 002
 
 **Updated:** 2026-05-28  
-**Status:** Planning — scope to finalize with HD  
-**Mode:** TBD (expected: **Build**, scoped to approved P0 items)
+**Status:** Active — design + contract tests  
+**Mode:** **Audit / Design** (contracts and tests define truth; minimal prod changes only to align with signed-off contracts)
 
 ---
 
-## Context from Sprint 001 (closed)
+## Goal
 
-Sprint 001 delivered audits, data-flow map, and one synthetic runner verification test. **335** unit tests green.
+Nail down the **surface backtest data model** and **per-component I/O contracts** so development and verification proceed **one component at a time**, not only via end-to-end surface judgment.
 
-HD exit: structure is in place; assembly layer is well tested; **backtest results are not yet trustworthy** for go/no-go because portfolio/risk/metrics and several contracts are partial or missing. Expect **3–4 sprints** to close P0/P1 gaps one theme at a time.
+Sprint 002 produces the **source-of-truth documentation** (contracts, full data flow with diagram, evaluation plan) plus **synchronous contract tests** for every Stage B component. Stage A (precompute) is **given for now**; gaps are recorded for later change.
 
-**Traceability:**
-
-| Sprint 001 artifact | Use in 002 |
-|---------------------|------------|
-| [repo_audit.md](../repo_audit.md) | P0/P1 backlog and Sprint 002–004 draft sequencing |
-| [correctness_audit.md](../correctness_audit.md) | What to test as each gap is fixed |
-| [surface_runner_data_flow.md](../surface_runner_data_flow.md) | Where to plug sizing, caps, metrics |
-| [sprint_memos/001_repo_audit_verification.md](../sprint_memos/001_repo_audit_verification.md) | Closed decisions and test proof boundary |
+**Capital / dollars:** Treat sizing budget as an **abstract risk unit** until the portfolio layer is implemented — do not pin $1M deployable this sprint.
 
 ---
 
-## Goal (draft — discuss before locking)
+## HD decisions (locked for Sprint 002)
 
-Make the surface path **closer to decision-quality** by implementing the highest P0 blocker(s) from `repo_audit.md`, with tests for each behavior change.
-
-**Not in scope until agreed:** Tier B full-sample backtest, fly vs condor matrix, broker/shadow.
+| Topic | Decision |
+|-------|----------|
+| Precompute | Given input; note gaps in contract doc, do not block Stage B design |
+| Focus order | Stage B / SurfaceRunner pipeline first |
+| Architecture | Prefer decoupled `pipeline.py` steps; **open to change** if contracts are cleaner |
+| Tests | Contract tests for **all** components where contracts are defined |
+| Success bar | Data contract doc + full data flow doc (diagram) + evaluation plan doc + contract test suite |
+| Implementation | Defer P0 implementation (sizing, 50-cap, metrics overhaul) unless a narrow fix is required for a contract test harness |
 
 ---
 
-## Candidate focus areas (pick with HD)
+## Deliverables
 
-From [repo_audit.md § Recommended Sprint 002](../repo_audit.md#recommended-sprint-002004-backlog):
+| # | Artifact | Path | Purpose |
+|---|----------|------|---------|
+| 1 | **Data contract** | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | Per-component input/output schemas, invariants, status (built / partial / spec-only) |
+| 2 | **Data flow + diagram** | [surface_engine_data_flow.md](../surface_engine_data_flow.md) | Step-by-step flow; each box = component, criteria, paths, implementation status |
+| 3 | **Evaluation plan** | [surface_engine_evaluation_plan.md](../surface_engine_evaluation_plan.md) | How to verify each component; link tests to contracts; run-level success vs decision-quality |
+| 4 | **Contract tests** | `tests/contract/` | One module per component; assert schema + invariants (may xfail until implementation catches up) |
+| 5 | **Sprint memo** | `docs/sprint_memos/002_data_contracts.md` | Closeout, open design questions, precompute gap log |
 
-| Priority | Item | Why |
-|----------|------|-----|
-| P0 | Portfolio/risk/dollar-PnL (`contracts`, `pnl_dollars`, `return_on_max_loss`) | Core trust gap |
-| P0 | Fix `run_surface_search.py` CLI / `SurfaceDataPaths` wiring | Unblocks real smoke |
-| P0 | 50 total position cap (not per-side only) | v1 spec |
-| P0 | Trade-date schedule vs surface/feature alignment | Silent skip risk |
-| P0 | Surface coverage report | Know what Tier B would actually measure |
+**Supersedes for Stage B detail:** `surface_runner_data_flow.md` remains Sprint 001 history; new flow doc is canonical after Sprint 002 sign-off.
+
+---
+
+## Component scope (Stage B)
+
+Treat precompute outputs as **fixed inputs** (see contract doc § Stage A inputs).
+
+| ID | Component | Owner (target) | Contract test |
+|----|-----------|----------------|---------------|
+| R0 | Run envelope | `BacktestRunConfig`, manifest (TBD), date schedule | `test_run_envelope_contract.py` |
+| S1 | Universe | `pipeline.step1_get_universe` | `test_step1_universe_contract.py` |
+| S2 | Signals | `pipeline.step2_score_signals` | `test_step2_signals_contract.py` |
+| S3 | Structures | `pipeline.step3_get_eligible_structures` | `test_step3_structures_contract.py` |
+| S4 | Exclusions | `pipeline.step4_apply_exclusions` | `test_step4_exclusions_contract.py` |
+| S5 | Select + size | `pipeline.step5_select_and_size` | `test_step5_select_and_size_contract.py` |
+| S6 | Cost + return | `pipeline.step6_apply_cost` | `test_step6_apply_cost_contract.py` |
+| S7 | Settle | `StrategyAssemblyResult.settle` + hold-to-expiry | `test_settle_contract.py` (or fold into S3/S5) |
+| S8 | Date / run metrics | `surface_metrics` | `test_run_metrics_contract.py` |
+| ORCH | Orchestration | `SurfaceRunner` thin wrapper | Extend `test_surface_runner_data_flow.py` or `test_orchestration_contract.py` |
+| IN | Stage A inputs | meta + quotes parquet schema | `test_precompute_input_contract.py` (read-only / given) |
 
 ---
 
 ## Success criteria
 
-_To be filled when Sprint 002 scope is approved._
+- [ ] `surface_engine_data_contract.md` complete and HD-reviewed
+- [ ] `surface_engine_data_flow.md` includes step diagram; every box has status + criteria + decision paths
+- [ ] `surface_engine_evaluation_plan.md` maps each component to verification method and test file
+- [ ] `tests/contract/` exists with a test module per component (pass or explicit xfail with reason)
+- [ ] Precompute gap log section populated if Stage A inputs cannot support v1 backtest contract
+- [ ] No Tier B backtest run; no large engine refactor without contract sign-off
+
+---
+
+## Session plan (suggested)
+
+| Session | Work |
+|---------|------|
+| A | Draft contracts § R0, S1–S2, Stage A inputs; tests for S1–S2 |
+| B | Draft contracts § S3–S7; tests for S3, settle; diagram in data flow doc |
+| C | Draft contracts § S5–S8, orchestration; tests (xfail where spec ahead of code) |
+| D | Evaluation plan; HD review; revise; close memo |
+
+---
+
+## Out of scope (Sprint 002)
+
+- Pinning deployable capital ($) or broker thresholds
+- Full portfolio layer implementation (unless required for test harness only)
+- Tier B 2020+ backtest
+- Iron fly vs condor research matrix
+- Precompute pipeline code changes (gaps documented only)
 
 ---
 
 ## Agent instructions
 
 1. Read this file and [v1_spec_pins.md](../v1_spec_pins.md) at session start.
-2. Do not start implementation until HD approves Sprint 002 scope and mode.
-3. One P0 theme per sprint preferred over a large multi-refactor.
+2. **Contracts before code** — update docs and contract tests together.
+3. When runner inline logic disagrees with pipeline contract, document as **implementation drift**; do not silently change contract to match bugs.
+4. Contract tests may use synthetic fixtures shared under `tests/contract/fixtures/` or reuse patterns from `test_surface_runner_data_flow.py`.
 
 ---
 
 ## Previous sprint
 
-Sprint 001 closed 2026-05-28 — see [sprint_memos/001_repo_audit_verification.md](../sprint_memos/001_repo_audit_verification.md).
+Sprint 001 closed 2026-05-28 — [sprint_memos/001_repo_audit_verification.md](../sprint_memos/001_repo_audit_verification.md).
