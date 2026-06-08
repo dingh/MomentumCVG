@@ -32,6 +32,7 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [surface_engine_data_contract.md](surface_engine_data_contract.md) | Sprint 002 per-component I/O contracts (canonical) | 2026-05-28 |
 | [surface_engine_data_flow.md](surface_engine_data_flow.md) | Sprint 002 flow diagram + box status | 2026-05-28 |
 | [surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md) | Sprint 002 component verification plan | 2026-05-28 |
+| [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) | Sprint 002 Session C — S5/S6/S8 outcomes (contracts deferred) | 2026-05-31 |
 | [agenda/session_b_plan.md](agenda/session_b_plan.md) | Sprint 001 Session B verification plan (historical) | 2026-05-27 |
 | [development_workflow.md](development_workflow.md) | Human + agent sprint workflow | 2026-05-23 |
 | [baseline_status.md](baseline_status.md) | Test and smoke-command baseline | 2026-05-23 |
@@ -42,7 +43,8 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | ID | Document |
 |----|----------|
 | 001 | [Canonical backtest path](decisions/001_canonical_backtest_path.md) |
-| 002 | [Max concurrent position cap semantics](decisions/002_position_cap_semantics.md) |
+| 002 | [Max concurrent position cap semantics](decisions/002_position_cap_semantics.md) _(superseded)_ |
+| 003 | [Per-side position cap](decisions/003_position_cap_per_side.md) |
 
 ## Sprint memos
 

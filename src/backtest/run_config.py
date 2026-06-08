@@ -266,6 +266,12 @@ class BacktestRunConfig:
             errors.append(f"long_top_pct must be in (0, 1), got {self.long_top_pct}")
         if not (0.0 < self.short_bottom_pct < 1.0):
             errors.append(f"short_bottom_pct must be in (0, 1), got {self.short_bottom_pct}")
+        if self.long_top_pct + self.short_bottom_pct > 1.0:
+            errors.append(
+                f"long_top_pct + short_bottom_pct must be <= 1.0, "
+                f"got {self.long_top_pct} + {self.short_bottom_pct} = "
+                f"{self.long_top_pct + self.short_bottom_pct}"
+            )
         if not (0.0 < self.cvg_filter_pct <= 1.0):
             errors.append(f"cvg_filter_pct must be in (0, 1], got {self.cvg_filter_pct}")
         if not (0.0 < self.min_count_pct <= 1.0):

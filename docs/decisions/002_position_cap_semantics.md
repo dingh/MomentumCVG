@@ -1,6 +1,6 @@
 # Decision 002: Max concurrent position cap semantics
 
-**Status:** Accepted  
+**Status:** Superseded by [003_position_cap_per_side.md](003_position_cap_per_side.md)  
 **Date:** 2026-05-25
 
 ---

@@ -176,7 +176,7 @@ This is the **strongest layer** (well unit-tested in `tests/unit/test_option_sur
 
 **Watch for:**
 
-- `max_names_per_side` caps **per side**, not **50 total** (v1 pin is 50 long+short combined — Sprint 002).
+- `max_names_per_side` caps **per side** independently ([decision 003](../decisions/003_position_cap_per_side.md)); e.g. 25 per side ≈ 50-book when both fill.
 - `_assembly` is popped before the row is appended — internal-only bridge to settlement.
 - `include_diagnostics=True` keeps excluded rows in the trade log (needed for attribution).
 
@@ -311,7 +311,7 @@ If you want the full two-stage picture:
 | Long straddle / short fly or condor | `short_structure`, direction | Yes (`_assemble_structure`) |
 | Conservative fills | `fill=cross` | Yes (in builders) |
 | Weekly rebalance | (implicit) | **Partial** — feature dates only |
-| 50 max positions total | — | **No** — `max_names_per_side` per side only |
+| Per-side position cap | `max_names_per_side` | **Yes** (runner); e.g. 25+25 ≈ 50-book — [decision 003](../decisions/003_position_cap_per_side.md) |
 | Equal max-loss sizing | `max_loss_budget_per_trade` | **No** — no `contracts` / dollar PnL |
 | Hold to expiry | `exit_spot` in meta | Yes (`settle`) |
 | Go/no-go metrics | — | **No** — body-credit Sharpe / `robust_score` |

@@ -74,7 +74,7 @@ Baseline from Week 0: **326 passed** via `C:/MomentumCVG_env/venv/Scripts/python
 |------|---------------|-------------------------------|--------|
 | SurfaceRunner CLI wiring untested | `run_surface_search.py` appears to pass `contract_multiplier` to `SurfaceDataPaths`, which has no such field; CLI may fail immediately. | Smoke test invoking config construction or CLI parser path without large data | S |
 | Runner sizing not implemented as advertised | Current runner settles per-share and does not appear to compute integer contracts or dollar PnL from `max_loss_budget_per_trade`. | Unit test `_select_size_and_settle()` on synthetic structures expects contracts, max-loss dollars, PnL dollars | M |
-| 50-name cap semantics untested | Current `max_names_per_side` is not the same as 50 total concurrent positions. | Unit test selection with long+short candidates and explicit cap expectations | S/M |
+| Per-side cap semantics untested in contract suite | Runner uses `max_names_per_side` per direction ([decision 003](../decisions/003_position_cap_per_side.md)); S5 contract test not yet written. | `test_step5_select_and_size_contract.py`: long and short pools capped independently | S/M |
 | Trade date schedule untested | Feature dates may not match weekly precomputed surface dates; missing surfaces can dominate results. | Unit test `_get_trade_dates()` or smoke test with synthetic features/surface date mismatch | S/M |
 | Metrics capital denominator wrong for v1 | Current `surface_metrics.py` summarizes return on body credit; v1 needs return on max-loss budget and Sharpe. | Unit tests for metrics on synthetic dollar PnL/date returns | M |
 

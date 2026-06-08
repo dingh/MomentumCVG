@@ -34,7 +34,7 @@ Remaining open questions
 from __future__ import annotations
 
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import pandas as pd
 
@@ -251,185 +251,216 @@ def step2_score_signals(
 # Step 3 — GET_ELIGIBLE_STRUCTURES  (strategy_def §4.2, §4.4)
 # ---------------------------------------------------------------------------
 
+def _assemble_from_surface(
+    surface_db: OptionSurfaceDB,
+    ticker: str,
+    trade_date: date,
+    direction: str,
+    config: "BacktestRunConfig",
+) -> StrategyAssemblyResult:
+    if direction == "long":
+        return build_straddle_from_surface(
+            surface_db=surface_db,
+            ticker=ticker,
+            entry_date=trade_date,
+            direction="long",
+            fill=config.fill,
+            max_leg_spread_pct=config.max_leg_spread_pct,
+        )
+
+    if config.short_structure == "ironfly":
+        return build_ironfly_from_surface(
+            surface_db=surface_db,
+            ticker=ticker,
+            entry_date=trade_date,
+            wing_target_delta=config.wing_delta_target,
+            fill=config.fill,
+            max_leg_spread_pct=config.max_leg_spread_pct,
+            max_spread_cost_ratio=config.max_spread_cost_ratio,
+        )
+    if config.short_structure == "ironcondor":
+        return build_ironcondor_from_surface(
+            surface_db=surface_db,
+            ticker=ticker,
+            entry_date=trade_date,
+            short_delta_target=config.condor_short_delta_target,
+            long_delta_target=config.condor_long_delta_target,
+            fill=config.fill,
+            max_leg_spread_pct=config.max_leg_spread_pct,
+            max_spread_cost_ratio=config.max_spread_cost_ratio,
+        )
+    if config.short_structure == "straddle":
+        return build_straddle_from_surface(
+            surface_db=surface_db,
+            ticker=ticker,
+            entry_date=trade_date,
+            direction="short",
+            fill=config.fill,
+            max_leg_spread_pct=config.max_leg_spread_pct,
+        )
+    raise ValueError(f"Unsupported short_structure: {config.short_structure!r}")
+
+
+def _assembly_to_row(assembly: StrategyAssemblyResult) -> Dict[str, object]:
+    d = {
+        "instrument_type": assembly.strategy_name,
+        "entry_cost_per_share": float(assembly.entry_cost),
+        "entry_cost_mid_per_share": float(assembly.entry_cost_mid),
+        "net_credit_per_share": float(assembly.net_credit),
+        "max_loss_per_share": (
+            float(assembly.max_loss_per_share)
+            if assembly.max_loss_per_share is not None
+            else None
+        ),
+        "spread_cost_per_share": float(assembly.spread_cost),
+        "spread_cost_ratio": assembly.spread_cost_ratio,
+        "total_leg_spread_per_share": float(assembly.total_leg_spread),
+        "leg_spread_to_credit_ratio": assembly.leg_spread_to_credit_ratio,
+        "strategy_net_delta": float(assembly.strategy.net_delta),
+        "strategy_net_vega": float(assembly.strategy.net_vega),
+        "strategy_net_gamma": float(assembly.strategy.net_gamma),
+        "strategy_net_theta": float(assembly.strategy.net_theta),
+        "theoretical_return_on_max_loss": assembly.return_on_max_loss,
+        "expiry_date": assembly.expiry_date,
+        "entry_spot": float(assembly.entry_spot),
+        "body_strike": float(assembly.body_strike),
+    }
+    d.update(assembly.diagnostics)
+    return d
+
+
 def step3_get_eligible_structures(
     trade_date: date,
-    candidates: pd.DataFrame,
+    signals: pd.DataFrame,
     surface_db: OptionSurfaceDB,
     config: "BacktestRunConfig",
 ) -> pd.DataFrame:
     """
-    Build one option structure per candidate ticker using the precomputed quote surface.
+    Build one option structure per signal row using the precomputed quote surface.
 
-    Required columns in candidates (output of step2):
-        ticker, direction
+    Required columns in signals (output of step2):
+        ticker, direction, signal_score, signal_rank_pct, cvg_score, cvg_rank_pct
 
-    Returns one row per candidate ticker with columns:
-        ticker, direction, build_ok, failure_reason,
-        expiry_date, instrument_type,
-        net_credit, max_loss_per_share, return_on_max_loss,
-        spread_cost_ratio, leg_spread_to_credit_ratio,
-        assembly_result   (StrategyAssemblyResult or None)
+    Returns one row per signal with all signal columns preserved, plus:
+        trade_date, structure_ok, failure_reason,
+        entry_spot, exit_spot, body_strike, expiry_date, dte_actual,
+        instrument_type, entry_cost_per_share, net_credit_per_share,
+        max_loss_per_share, spread_cost_ratio, leg_spread_to_credit_ratio,
+        strategy greeks, diagnostics, theoretical_return_on_max_loss,
+        _assembly (StrategyAssemblyResult when structure_ok; used by step 5 settle)
+
+    Earnings flagging is applied in step4_apply_exclusions.
 
     Routing:
         direction='long'                               → build_straddle(direction='long')
         direction='short', short_structure='straddle'  → build_straddle(direction='short')
-        direction='short', short_structure='ironfly'   → build_ironfly(...)
+        direction='short', short_structure='ironfly'  → build_ironfly(...)
         direction='short', short_structure='ironcondor'→ build_ironcondor(...)
-
-    One structure per ticker — no variant search inside this function.
-    The config already fixes the structure template; variant search belongs
-    in the outer config loop.
     """
-    _COLS = [
-        "ticker", "direction", "build_ok", "failure_reason",
-        "expiry_date", "instrument_type",
-        "net_credit", "max_loss_per_share", "return_on_max_loss",
-        "spread_cost_ratio", "leg_spread_to_credit_ratio",
-        "assembly_result",
-    ]
+    if signals.empty:
+        return pd.DataFrame()
 
-    if candidates.empty:
-        return pd.DataFrame(columns=_COLS)
-
-    rows = []
-    for _, row in candidates.iterrows():
-        ticker    = row["ticker"]
-        direction = row["direction"]
-        result: StrategyAssemblyResult | None = None
-        failure: str | None = None
+    rows: List[Dict[str, object]] = []
+    for rec in signals.to_dict(orient="records"):
+        ticker = rec["ticker"]
+        direction = rec["direction"]
+        row = dict(rec)
+        row.update(
+            {
+                "trade_date": trade_date,
+                "instrument_type": None,
+                "structure_ok": False,
+                "failure_reason": None,
+            }
+        )
 
         try:
-            if direction == "long":
-                result = build_straddle_from_surface(
-                    surface_db=surface_db,
-                    ticker=ticker,
-                    entry_date=trade_date,
-                    direction="long",
-                    fill=config.fill,
-                    max_leg_spread_pct=config.max_leg_spread_pct,
-                )
-            elif direction == "short":
-                if config.short_structure == "straddle":
-                    result = build_straddle_from_surface(
-                        surface_db=surface_db,
-                        ticker=ticker,
-                        entry_date=trade_date,
-                        direction="short",
-                        fill=config.fill,
-                        max_leg_spread_pct=config.max_leg_spread_pct,
-                    )
-                elif config.short_structure == "ironfly":
-                    result = build_ironfly_from_surface(
-                        surface_db=surface_db,
-                        ticker=ticker,
-                        entry_date=trade_date,
-                        wing_target_delta=config.wing_delta_target,
-                        fill=config.fill,
-                        max_leg_spread_pct=config.max_leg_spread_pct,
-                        max_spread_cost_ratio=config.max_spread_cost_ratio,
-                    )
-                elif config.short_structure == "ironcondor":
-                    result = build_ironcondor_from_surface(
-                        surface_db=surface_db,
-                        ticker=ticker,
-                        entry_date=trade_date,
-                        short_delta_target=config.condor_short_delta_target,
-                        long_delta_target=config.condor_long_delta_target,
-                        fill=config.fill,
-                        max_leg_spread_pct=config.max_leg_spread_pct,
-                        max_spread_cost_ratio=config.max_spread_cost_ratio,
-                    )
-                else:
-                    failure = f"unknown short_structure: {config.short_structure!r}"
-            else:
-                failure = f"unknown direction: {direction!r}"
+            meta = surface_db.get_metadata(ticker, trade_date)
+            row["entry_spot"] = float(meta["entry_spot"])
+            row["exit_spot"] = float(meta["exit_spot"])
+            row["body_strike"] = float(meta["body_strike"])
+            row["expiry_date"] = pd.Timestamp(meta["expiry_date"]).date()
+            row["dte_actual"] = int(meta["dte_actual"])
+        except Exception as exc:
+            row["failure_reason"] = f"metadata_error:{exc}"
+            rows.append(row)
+            continue
 
-        except (KeyError, ValueError) as exc:
-            failure = str(exc)
+        try:
+            assembly = _assemble_from_surface(
+                surface_db, ticker, trade_date, direction, config
+            )
+            row.update(_assembly_to_row(assembly))
+            row["structure_ok"] = True
+            row["_assembly"] = assembly
+        except Exception as exc:
+            row["failure_reason"] = str(exc)
 
-        if result is not None:
-            rows.append({
-                "ticker":                     ticker,
-                "direction":                  direction,
-                "build_ok":                   True,
-                "failure_reason":             None,
-                "expiry_date":                result.expiry_date,
-                "instrument_type":            result.strategy_name,
-                "net_credit":                 float(result.net_credit),
-                "max_loss_per_share":         (
-                    float(result.max_loss_per_share)
-                    if result.max_loss_per_share is not None
-                    else None
-                ),
-                "return_on_max_loss":         result.return_on_max_loss,
-                "spread_cost_ratio":          result.spread_cost_ratio,
-                "leg_spread_to_credit_ratio": result.leg_spread_to_credit_ratio,
-                "assembly_result":            result,
-            })
-        else:
-            rows.append({
-                "ticker":                     ticker,
-                "direction":                  direction,
-                "build_ok":                   False,
-                "failure_reason":             failure,
-                "expiry_date":                None,
-                "instrument_type":            None,
-                "net_credit":                 None,
-                "max_loss_per_share":         None,
-                "return_on_max_loss":         None,
-                "spread_cost_ratio":          None,
-                "leg_spread_to_credit_ratio": None,
-                "assembly_result":            None,
-            })
+        rows.append(row)
 
-    return pd.DataFrame(rows, columns=_COLS)
+    return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------
 # Step 4 — APPLY_EXCLUSIONS  (strategy_def §5.4)
 # ---------------------------------------------------------------------------
 
-def step4_apply_exclusions(
-    candidates: pd.DataFrame,
+def _has_earnings_nearby(
+    ticker: str,
+    expiry_date: Optional[date],
     earnings: pd.DataFrame,
+    exclusion_days: int,
+) -> bool:
+    if expiry_date is None or exclusion_days <= 0:
+        return False
+    expiry_ts = pd.Timestamp(expiry_date)
+    start_ts = expiry_ts - pd.Timedelta(days=exclusion_days)
+    mask = (
+        (earnings["ticker"] == ticker)
+        & (earnings["earnings_date"] >= start_ts)
+        & (earnings["earnings_date"] <= expiry_ts)
+    )
+    return bool(mask.any())
+
+
+def step4_apply_exclusions(
+    structures: pd.DataFrame,
+    earnings: Optional[pd.DataFrame],
     config: "BacktestRunConfig",
 ) -> pd.DataFrame:
     """
-    Flag candidates whose expiry window contains an earnings announcement.
+    Flag structures whose expiry window contains an earnings announcement.
 
-    Does NOT drop rows — exclusion_reason is assigned in step 5.
-    This keeps the flag available for attribution even if the ticker is excluded.
+    Does NOT drop rows — exclusion_reason is assigned in step 5 / runner settle.
 
-    Required columns in candidates:
+    Required columns in structures (output of step3):
         ticker, expiry_date
 
-    Required columns in earnings:
+    Required columns in earnings (when provided):
         ticker, earnings_date  (one row per announcement)
 
     Adds column:
         had_earnings_nearby  (bool)
     """
+    out = structures.copy()
+    if (
+        earnings is None
+        or earnings.empty
+        or config.earnings_exclusion_days <= 0
+    ):
+        out["had_earnings_nearby"] = False
+        return out
 
-    # 1. For each row in candidates, define the exclusion window:
-    #    window_start = expiry_date - timedelta(days=config.earnings_exclusion_days)
-    #    window_end   = expiry_date
-    #
-    #    A candidate is flagged if any earnings row for the same ticker has:
-    #        window_start <= earnings_date <= window_end
-
-    # 2. Efficient implementation options:
-    #    Option A: merge candidates with earnings on ticker, then filter by date range.
-    #    Option B: for each candidate row, query earnings table with boolean mask.
-    #    Prefer Option A (vectorised) for performance at scale.
-
-    # 3. Add had_earnings_nearby column:
-    #    True  → at least one earnings date falls within the window.
-    #    False → no earnings in the window (safe to trade).
-
-    # 4. Return candidates with had_earnings_nearby column added.
-    #    All other columns preserved unchanged.
-
-    pass
+    out["had_earnings_nearby"] = out.apply(
+        lambda row: _has_earnings_nearby(
+            ticker=row["ticker"],
+            expiry_date=row.get("expiry_date"),
+            earnings=earnings,
+            exclusion_days=config.earnings_exclusion_days,
+        ),
+        axis=1,
+    )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +559,7 @@ def step5_select_and_size(
 
 
 # ---------------------------------------------------------------------------
-# Step 6 — APPLY_COST  (strategy_def §5.3)
+# Step 6 — APPLY_COST  (deprecated — collapsed into step5 for v1)
 # ---------------------------------------------------------------------------
 
 def step6_apply_cost(
@@ -536,6 +567,10 @@ def step6_apply_cost(
     config: "BacktestRunConfig",
 ) -> pd.DataFrame:
     """
+    Deprecated: return labeling and fill economics live in step5 + S3 FillAssumption.
+
+    See docs/surface_engine_portfolio_metrics_design.md (S6 collapsed into S5).
+
     Compute cost-adjusted P&L and the primary return metric for each traded row.
 
     Only rows where included_in_portfolio == True receive cost calculations.

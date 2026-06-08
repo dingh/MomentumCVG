@@ -23,15 +23,14 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from src.backtest.option_surface import (
-    OptionSurfaceDB,
-    StrategyAssemblyResult,
-    build_ironcondor_from_surface,
-    build_ironfly_from_surface,
-    build_straddle_from_surface,
-)
+from src.backtest.option_surface import OptionSurfaceDB
 from src.backtest.run_config import BacktestRunConfig
-from src.backtest.pipeline import step1_get_universe, step2_score_signals
+from src.backtest.pipeline import (
+    step1_get_universe,
+    step2_score_signals,
+    step3_get_eligible_structures,
+    step4_apply_exclusions,
+)
 from src.backtest.surface_run_config import (
     SurfaceDataPaths,
     SurfaceRunnerSettings,
@@ -53,10 +52,9 @@ class SurfaceRunner:
 
     Design choices
     --------------
-    - Step 1 universe and Step 2 signal ranking are reused from pipeline.py where possible.
-    - Step 3 is surface-native: structures are assembled directly from OptionSurfaceDB.
-    - Position sizing is equal max-loss per trade with INTEGER contract counts.
-    - Cost/fill assumptions are embedded in structure assembly through FillAssumption.
+    - Step 1 universe and Step 2 signal ranking are reused from pipeline.py.
+    - Step 3 structure assembly and Step 4 earnings exclusions are in pipeline.py.
+    - Step 5 select/size/settle remains in this runner until step5 is implemented.
     """
 
     def __init__(
@@ -99,7 +97,10 @@ class SurfaceRunner:
             if signals.empty:
                 continue
 
-            structures = self._build_structures_for_date(trade_date, signals, config)
+            structures = step3_get_eligible_structures(
+                trade_date, signals, self.surface_db, config
+            )
+            structures = step4_apply_exclusions(structures, self.earnings, config)
             trade_rows.extend(
                 self._select_size_and_settle(
                     trade_date=trade_date,
@@ -184,159 +185,8 @@ class SurfaceRunner:
         return signals
 
     # ------------------------------------------------------------------
-    # Step 3 — build structures directly from surface
+    # Step 5 — select, size, settle (runner until pipeline step5 exists)
     # ------------------------------------------------------------------
-
-    def _build_structures_for_date(
-        self,
-        trade_date: date,
-        signals: pd.DataFrame,
-        config: BacktestRunConfig,
-    ) -> pd.DataFrame:
-        rows: List[Dict[str, object]] = []
-        for rec in signals.to_dict(orient="records"):
-            ticker = rec["ticker"]
-            direction = rec["direction"]
-            row = dict(rec)
-            row.update(
-                {
-                    "trade_date": trade_date,
-                    "instrument_type": None,
-                    "structure_ok": False,
-                    "failure_reason": None,
-                    "had_earnings_nearby": False,
-                }
-            )
-
-            try:
-                meta = self.surface_db.get_metadata(ticker, trade_date)
-                row["entry_spot"] = float(meta["entry_spot"])
-                row["exit_spot"] = float(meta["exit_spot"])
-                row["body_strike"] = float(meta["body_strike"])
-                row["expiry_date"] = pd.Timestamp(meta["expiry_date"]).date()
-                row["dte_actual"] = int(meta["dte_actual"])
-            except Exception as exc:
-                row["failure_reason"] = f"metadata_error:{exc}"
-                rows.append(row)
-                continue
-
-            try:
-                assembly = self._assemble_structure(ticker, trade_date, direction, config)
-                # _assembly_to_row overwrites expiry_date/entry_spot/body_strike
-                # with values from the assembly object (not from surface metadata).
-                # The assembly is the authoritative source of truth for these fields.
-                row.update(self._assembly_to_row(assembly))
-                row["structure_ok"] = True
-                # Store the live assembly object so _select_size_and_settle can
-                # call .settle() on it later.  This private key is popped before
-                # the row is returned to avoid leaking a non-serialisable object.
-                row["_assembly"] = assembly
-            except Exception as exc:
-                row["failure_reason"] = str(exc)
-
-            row["had_earnings_nearby"] = self._has_earnings_nearby(
-                ticker=ticker,
-                expiry_date=row.get("expiry_date"),
-                exclusion_days=config.earnings_exclusion_days,
-            )
-            rows.append(row)
-
-        return pd.DataFrame(rows)
-
-    def _assemble_structure(
-        self,
-        ticker: str,
-        trade_date: date,
-        direction: str,
-        config: BacktestRunConfig,
-    ) -> StrategyAssemblyResult:
-        if direction == "long":
-            return build_straddle_from_surface(
-                surface_db=self.surface_db,
-                ticker=ticker,
-                entry_date=trade_date,
-                direction="long",
-                fill=config.fill,
-                max_leg_spread_pct=config.max_leg_spread_pct,
-            )
-
-        if config.short_structure == "ironfly":
-            return build_ironfly_from_surface(
-                surface_db=self.surface_db,
-                ticker=ticker,
-                entry_date=trade_date,
-                wing_target_delta=config.wing_delta_target,
-                fill=config.fill,
-                max_leg_spread_pct=config.max_leg_spread_pct,
-                max_spread_cost_ratio=config.max_spread_cost_ratio,
-            )
-        elif config.short_structure == "ironcondor":
-            return build_ironcondor_from_surface(
-                surface_db=self.surface_db,
-                ticker=ticker,
-                entry_date=trade_date,
-                short_delta_target=config.condor_short_delta_target,
-                long_delta_target=config.condor_long_delta_target,
-                fill=config.fill,
-                max_leg_spread_pct=config.max_leg_spread_pct,
-                max_spread_cost_ratio=config.max_spread_cost_ratio,
-            )
-        elif config.short_structure == "straddle":
-            return build_straddle_from_surface(
-                surface_db=self.surface_db,
-                ticker=ticker,
-                entry_date=trade_date,
-                direction="short",
-                fill=config.fill,
-                max_leg_spread_pct=config.max_leg_spread_pct,
-            )
-        raise ValueError(f"Unsupported short_structure: {config.short_structure!r}")
-
-    def _assembly_to_row(self, assembly: StrategyAssemblyResult) -> Dict[str, object]:
-        d = {
-            "instrument_type": assembly.strategy_name,
-            "entry_cost_per_share": float(assembly.entry_cost),
-            "entry_cost_mid_per_share": float(assembly.entry_cost_mid),
-            "net_credit_per_share": float(assembly.net_credit),
-            "max_loss_per_share": float(assembly.max_loss_per_share) if assembly.max_loss_per_share is not None else None,
-            "spread_cost_per_share": float(assembly.spread_cost),
-            "spread_cost_ratio": assembly.spread_cost_ratio,
-            "total_leg_spread_per_share": float(assembly.total_leg_spread),
-            "leg_spread_to_credit_ratio": assembly.leg_spread_to_credit_ratio,
-            "strategy_net_delta": float(assembly.strategy.net_delta),
-            "strategy_net_vega": float(assembly.strategy.net_vega),
-            "strategy_net_gamma": float(assembly.strategy.net_gamma),
-            "strategy_net_theta": float(assembly.strategy.net_theta),
-            "theoretical_return_on_max_loss": assembly.return_on_max_loss,
-            "expiry_date": assembly.expiry_date,
-            "entry_spot": float(assembly.entry_spot),
-            "body_strike": float(assembly.body_strike),
-        }
-        d.update(assembly.diagnostics)
-        return d
-
-    def _has_earnings_nearby(
-        self,
-        ticker: str,
-        expiry_date: Optional[date],
-        exclusion_days: int,
-    ) -> bool:
-        if self.earnings is None or expiry_date is None or exclusion_days <= 0:
-            return False
-        expiry_ts = pd.Timestamp(expiry_date)
-        start_ts = expiry_ts - pd.Timedelta(days=exclusion_days)
-        mask = (
-            (self.earnings["ticker"] == ticker)
-            & (self.earnings["earnings_date"] >= start_ts)
-            & (self.earnings["earnings_date"] <= expiry_ts)
-        )
-        return bool(mask.any())
-
-    # ------------------------------------------------------------------
-    # Step 4 — select, size, settle
-    # (labelled 5/6 originally; renaming kept for reference)
-    # ------------------------------------------------------------------
-    # Flow:
     #   1. Mark rows excluded due to missing structure or earnings.
     #   2. From eligible rows, select up to max_names_per_side per direction
     #      (ranked by signal_rank_pct).

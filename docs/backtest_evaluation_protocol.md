@@ -69,7 +69,7 @@ Record at minimum for Tier A and Tier B (conservative fills):
 | CAGR / annualized return | ✓ | ✓ | Secondary |
 | Max drawdown | ✓ | ✓ | Hard limit TBD |
 | Win rate / profit factor | ✓ | ✓ | Diagnostic |
-| Avg concurrent positions | ✓ | ✓ | Should respect cap 50 |
+| Avg concurrent positions | ✓ | ✓ | Should respect `max_names_per_side` per direction (e.g. ≤25+25) |
 | Turnover (names/week) | ✓ | ✓ | Feeds ops model |
 | Top-5 name PnL concentration | ✓ | ✓ | Reject single-name dominance |
 | Harsh vs mid return delta | — | ✓ | Cost sensitivity |

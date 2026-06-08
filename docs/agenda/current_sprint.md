@@ -54,8 +54,8 @@ Treat precompute outputs as **fixed inputs** (see contract doc § Stage A inputs
 | S2 | Signals | `pipeline.step2_score_signals` | `test_step2_signals_contract.py` |
 | S3 | Structures | `pipeline.step3_get_eligible_structures` | `test_step3_structures_contract.py` |
 | S4 | Exclusions | `pipeline.step4_apply_exclusions` | `test_step4_exclusions_contract.py` |
-| S5 | Select + size | `pipeline.step5_select_and_size` | `test_step5_select_and_size_contract.py` |
-| S6 | Cost + return | `pipeline.step6_apply_cost` | `test_step6_apply_cost_contract.py` |
+| S5 | Select + size + simulate + return | `pipeline.step5_select_and_size` | `test_step5_select_and_size_contract.py` |
+| S6 | _(collapsed into S5)_ | `step6_apply_cost` deprecated stub | — |
 | S7 | Settle | `StrategyAssemblyResult.settle` + hold-to-expiry | `test_settle_contract.py` (or fold into S3/S5) |
 | S8 | Date / run metrics | `surface_metrics` | `test_run_metrics_contract.py` |
 | ORCH | Orchestration | `SurfaceRunner` thin wrapper | Extend `test_surface_runner_data_flow.py` or `test_orchestration_contract.py` |
@@ -68,7 +68,8 @@ Treat precompute outputs as **fixed inputs** (see contract doc § Stage A inputs
 - [ ] `surface_engine_data_contract.md` complete and HD-reviewed
 - [ ] `surface_engine_data_flow.md` includes step diagram; every box has status + criteria + decision paths
 - [ ] `surface_engine_evaluation_plan.md` maps each component to verification method and test file
-- [ ] `tests/contract/` exists with a test module per component (pass or explicit xfail with reason)
+- [x] `tests/contract/` for implemented steps IN, R0, S1–S4, S7 (43 tests green)
+- [x] S5/S8/ORCH outcomes in portfolio/metrics design doc; S6 collapsed into S5 (contracts in Sprint 003)
 - [ ] Precompute gap log section populated if Stage A inputs cannot support v1 backtest contract
 - [ ] No Tier B backtest run; no large engine refactor without contract sign-off
 
@@ -80,8 +81,8 @@ Treat precompute outputs as **fixed inputs** (see contract doc § Stage A inputs
 |---------|------|
 | A | Draft contracts § R0, S1–S2, Stage A inputs; tests for S1–S2 |
 | B | Draft contracts § S3–S7; tests for S3, settle; diagram in data flow doc |
-| C | Draft contracts § S5–S8, orchestration; tests (xfail where spec ahead of code) |
-| D | Evaluation plan; HD review; revise; close memo |
+| C | **Done** — S5/S8/ORCH design; S6→S5 collapse; [surface_engine_portfolio_metrics_design.md](../surface_engine_portfolio_metrics_design.md); contracts deferred to Sprint 003 |
+| D | HD review (contracts through S4+S7 + design doc); evaluation plan; close memo |
 
 ---
 

@@ -26,7 +26,7 @@
 
 | Parameter | Pin | Notes |
 |-----------|-----|-------|
-| Max concurrent positions | **50 total long+short** | Hard cap in backtest; exact number can change later, but current semantics are total portfolio positions. See [decisions/002_position_cap_semantics.md](decisions/002_position_cap_semantics.md). |
+| Max concurrent positions | **Per-side cap via `max_names_per_side`** | Long and short pools capped independently; e.g. `25` per side → up to 50 total when both fill. See [decisions/003_position_cap_per_side.md](decisions/003_position_cap_per_side.md). |
 | Sizing method | **Equal max-loss per trade** | Subject to global budget and caps |
 | Global max-loss budget | **To pin in Sprint 002** | Tie to deployable capital (~$1M) |
 | Per-name max-loss cap | **To pin in Sprint 002** | Prevents concentration |
@@ -94,3 +94,4 @@
 | 2026-05-23 | Initial pins: 50 max positions, 7 DTE, 2020+ go/no-go window, weekly rebalance |
 | 2026-05-23 | Week 0 review: short = iron fly or iron condor per run; long straddle; naked long call deferred |
 | 2026-05-25 | Clarified max concurrent positions as 50 total across long+short via Decision 002 |
+| 2026-06-07 | Per-side cap via `max_names_per_side` (Decision 003 supersedes 002); e.g. 25+25 ≈ 50-book |

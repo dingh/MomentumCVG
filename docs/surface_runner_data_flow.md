@@ -11,7 +11,7 @@
 
 `SurfaceRunner` is still the best current direction for the v1 backtest, but the mapping confirms HD's concern: the design is not yet complete enough to treat as a comprehensive backtesting engine. The surface assembly layer is relatively mature; the engine layer around it is partial.
 
-The biggest finding is that the current runner can assemble and settle one strategy unit per selected row, but it does **not** yet implement the full v1 portfolio contract: weekly schedule alignment, total 50-position cap semantics, integer contracts, dollar PnL, return on max-loss budget, run manifests, and decision-quality metrics.
+The biggest finding is that the current runner can assemble and settle one strategy unit per selected row, but it does **not** yet implement the full v1 portfolio contract: weekly schedule alignment, integer contracts, dollar PnL, return on max-loss budget, run manifests, and decision-quality metrics. *(Cap semantics updated 2026-06-07: per-side `max_names_per_side` per [decision 003](decisions/003_position_cap_per_side.md); runner selection aligns.)*
 
 This changes the Session B recommendation. A private `_select_size_and_settle()` unit test is still useful, but HD approved the highest-value Sprint 001 verification test as a small synthetic `SurfaceRunner.run_single_config()` data-flow test. That test should exercise the whole current path from feature date -> universe -> signal -> surface lookup -> assembly -> selection -> settlement -> trade log, while intentionally exposing missing v1 fields where appropriate.
 
@@ -137,7 +137,7 @@ scripts/run_surface_search.py
 | Momentum/CVG signal ranking | `pipeline.step2_score_signals()` | Partial | Slices exact feature date and ranks within universe. Depends on feature PIT correctness and date alignment. |
 | Candidate structure assembly | `SurfaceRunner._build_structures_for_date()` + `option_surface.py` builders | Mostly implemented | Surface builders are well-tested; runner-level candidate availability is untested. |
 | Earnings exclusion | `SurfaceRunner._has_earnings_nearby()` | Partial | Logic exists, but earnings artifact schema/default path is not pinned. |
-| Portfolio selection cap | `SurfaceRunner._select_size_and_settle()` | Partial | Selects up to `max_names_per_side` per direction. Does not implement v1 50 total cap unless that policy is defined as per-side. |
+| Portfolio selection cap | `SurfaceRunner._select_size_and_settle()` | Partial | Selects up to `max_names_per_side` per direction ([decision 003](../decisions/003_position_cap_per_side.md)). |
 | Equal max-loss sizing | `SurfaceRunner._select_size_and_settle()` | Missing | Comment says integer contracts, but code does not compute `contracts`, `max_loss_dollars`, or use `max_loss_budget_per_trade`. |
 | Hold-to-expiry settlement | `StrategyAssemblyResult.settle()` called by runner | Implemented per strategy unit | Produces `pnl_per_share`; no dollar scaling. |
 | Cost/fill model | `FillAssumption` inside builders | Partial | Mid/cross entry fills are modeled. `BacktestRunConfig.cost_model` is legacy and not used by runner. |
@@ -338,7 +338,7 @@ Gaps:
 - Despite comments/docstrings, there is no integer contract sizing.
 - `max_loss_budget_per_trade`, `SurfaceRunnerSettings.min_contracts`, and `contract_multiplier` are not used.
 - No `contracts`, `max_loss_dollars`, `pnl_dollars`, or realized `return_on_max_loss`.
-- `max_names_per_side` does not directly encode the v1 50 total concurrent cap.
+- v1 cap is per-side via `max_names_per_side`; total book ≤ `2 × max_names_per_side` (e.g. 25+25).
 - The private `_assembly` object in the DataFrame is useful internally but makes the boundary awkward to test unless a synthetic full-run fixture is used.
 
 ### 9. Metrics and scoring
@@ -383,7 +383,7 @@ Gaps:
 | Dynamic universe vs surface coverage | Missing | No report proves selected universe has surface coverage. |
 | Candidate skip diagnostics | Partial | Row-level reasons exist; aggregate diagnostics missing. |
 | Earnings exclusion | Partial | Hook exists; artifact contract/test missing. |
-| 50 max concurrent positions | Partial | HD pins current v1 semantics as 50 total across long+short. Current code uses `max_names_per_side`, so implementation does not yet match. |
+| Per-side position cap | Partial | v1 uses `max_names_per_side` per direction ([decision 003](../decisions/003_position_cap_per_side.md)); runner implements; pipeline step5 still pending. |
 | Equal max-loss sizing | Missing | Config field exists; sizing is not implemented. |
 | Integer contracts | Missing | Runner comments mention it; no code. |
 | Dollar PnL | Missing | Only `pnl_per_share` emitted. |
@@ -475,7 +475,7 @@ HD accepts that the Session B test may intentionally fail on desired v1 behavior
 ### Sprint 002 P0 build
 
 1. Fix CLI/data-path wiring.
-2. Implement 50 total long+short cap semantics.
+2. Extract per-side cap selection to `pipeline.step5` (preserve `max_names_per_side` semantics).
 3. Implement integer contracts and dollar PnL.
 4. Add realized return on max-loss budget.
 5. Add coverage report for dynamic universe vs surface availability.
