@@ -1,7 +1,7 @@
 # Surface engine — portfolio and metrics design (S5 / S8)
 
 **Status:** Draft — Sprint 002 Session C  
-**Last updated:** 2026-06-07 (cap: decision 003)  
+**Last updated:** 2026-06-07  
 **Audience:** HD + agents  
 **Companion:** [surface_engine_data_contract.md](surface_engine_data_contract.md), [surface_engine_data_flow.md](surface_engine_data_flow.md), [backtest_evaluation_protocol.md](backtest_evaluation_protocol.md)
 
@@ -12,7 +12,7 @@
 Sprint 002 Sessions A–B pinned contracts through **structure build, exclusions, and per-share settlement** (S1–S4, S7). The remaining pipeline tail — **S5, S8, and full orchestration** — is not ready for contract tests because:
 
 1. **S5 today is not a portfolio layer** — it is selection + settle wiring in `SurfaceRunner._select_size_and_settle`.
-2. **Return denominator** is not fully wired (body credit vs max-loss budget on trade log).
+2. **Return columns** are not fully wired — M1–M3 and `return_on_allocated_budget` are designed but not on the trade log yet.
 3. **Sizing is a constraint-satisfaction decision**, not an optimizer — config supplies limits (capital, max loss per name, cap count); S5 applies rules to preserve signal alpha at the chosen fidelity tier.
 
 **S6 collapsed into S5 (HD decision):** Entry fill/cost is fixed at structure assembly (S3 + `FillAssumption`). A separate post-trade cost step is redundant for v1; `return_on_allocated_budget` and `fill_label` are computed in S5 Phase 3.
@@ -40,7 +40,7 @@ This document defines **what each step must achieve** before Sprint 003 writes c
 | Step | Code today | Gap |
 |------|------------|-----|
 | **S5** | Runner: eligibility filter + per-**side** cap → settle → `pnl_per_share` only | **No sizing policy** (`quantity` / tier weights missing); no `return_on_allocated_budget`; settle bundled here; cap semantics **aligned** with [decision 003](decisions/003_position_cap_per_side.md) |
-| **S5 returns** | Fill at S3; no separate cost step | No `return_on_allocated_budget` on trade log yet |
+| **S5 returns** | Fill at S3; no separate cost step | No M1–M3 or `return_on_allocated_budget` on trade log yet |
 | **S8** | `surface_metrics` on **body credit** (`pnl / body_credit_per_share`) | Evaluation protocol primary metric is **return on max-loss budget** |
 | **ORCH** | S1–S4 via `pipeline.py`; S5 inline in runner | Not a thin S1–S8 loop |
 
@@ -54,7 +54,7 @@ Before real-money shadow/paper, a run must let you answer:
 2. **Sizing** — Given constraints (total capital, max loss per position, position count, lot size), how large each simulated trade is — so returns still reflect **signal alpha**, not artifact of bad sizing.
 3. **Simulated trade** — Each included row is a complete trade record (structure + size + settled PnL), not just a flagged candidate.
 4. **Book composition** — How many positions per rebalance; respects **`max_names_per_side` per direction** (e.g. 25 long + 25 short ≈ 50-book).
-5. **Economics** — Per-trade PnL comparable across structures via `return_on_allocated_budget` (see § Return normalization).
+5. **Economics** — Record **M1–M3** per trade (structure-native) plus **`return_on_allocated_budget`** for cross-structure portfolio comparison (see § Return normalization).
 6. **Conservative fills** — Go/no-go uses harsh fill ([backtest_evaluation_protocol.md](backtest_evaluation_protocol.md)); mid is diagnostic only.
 7. **Run summary** — Sharpe, drawdown, availability on the **agreed return series** — not body-credit proxy alone.
 
@@ -77,7 +77,7 @@ S4 candidates (structure_ok; earnings flag already set)
   → (2) SIZE     — apply sizing policy under config constraints (not config quantities):
                    Tier A: equal risk fraction / conceptual weight per included name
                    Tier B: integer lots from max-loss budget + capital binding
-  → (3) SIMULATE — S7 settle at chosen size; per-share + total PnL + return_on_allocated_budget
+  → (3) SIMULATE — S7 settle; M1–M3 + return_on_allocated_budget (+ Tier B pnl_total)
                    → trade log row (fill_label from S3)
 ```
 
@@ -132,7 +132,7 @@ Sizing is where candidates become **trades with economic weight**. The goal is t
 | Lot granularity | 1 contract = 100 shares (equity options) | Realistic trade simulation |
 | Structure geometry | `max_loss_per_share`, premium (credit/debit) from S3 | Converts budget → contracts |
 
-When constraints conflict (e.g. 50 names × budget exceeds total capital), S5 must apply a **documented rule** — scale down, drop lowest rank, or fail loud — not silently mis-size.
+When constraints conflict (e.g. up to `2 × max_names_per_side` included names × `max_loss_budget_per_trade` exceeds `deployable_capital`), S5 must apply a **documented rule** — scale down, drop lowest rank, or fail loud — not silently mis-size ([Q8c](#open-questions-for-hd-resolve-before-sprint-003-build)).
 
 #### Two fidelity tiers (HD — not an optimizer)
 
@@ -155,11 +155,11 @@ Purpose: approximate what is **placeable** under real constraints while still no
 
 | Rule | Intent |
 |------|--------|
-| Integer contracts | `quantity = floor(budget_for_name / max_loss_per_share)`; reject or flag if `< 1` |
+| Integer contracts | `quantity = floor(max_loss_budget_per_trade / at_risk_per_share)` where `at_risk_per_share` is structure-specific (see § Return normalization — not always `max_loss_per_share`); reject or flag if `< 1` |
 | Contract multiplier | `pnl_dollars = quantity × pnl_per_share × 100` |
 | Per-name budget | Start from equal `max_loss_budget_per_trade`; adjust if total capital binds |
 | Capital check | `sum(quantity × max_loss_per_share × 100) ≤ deployable_capital` (or abstract equivalent) |
-| Residual policy | If over budget: scale all quantities proportionally, or trim by rank — **pin in Q8b** |
+| Residual policy | If over budget: scale all quantities proportionally, or trim by rank — **pin in Q8c** |
 
 This tier answers: *“After lots and capital bind, is alpha still there?”* — closer to shadow/paper, still not full optimization.
 
@@ -188,7 +188,7 @@ For each sized, included row:
 | Settle | `position = assembly.settle(exit_spot)` (S7 math) |
 | Per share | `pnl_per_share = position.pnl` (already reflects fill chosen at assembly) |
 | Total | `pnl_total = quantity × pnl_per_share × contract_multiplier` (Tier B; multiplier typically 100) |
-| Return | `return_on_allocated_budget = pnl_total / max_loss_budget_per_trade` (+ structure-native diagnostics — see § Return normalization) |
+| Return | **M1–M3** per share (always attempt; `NaN` when N/A) + **`return_on_allocated_budget`** (Tier B: `pnl_total / max_loss_budget_per_trade`; Tier A: see [§ Implementation annotations](#implementation-annotations-pin-before-sprint-003-build)) |
 | Audit | `fill_label` = `config.fill.label` on row / run summary |
 | Trade log | Row is a **simulated trade**: identity + structure + size + PnL + return |
 
@@ -215,9 +215,12 @@ For each sized, included row:
 | `max_loss_per_share` | From structure |
 | `pnl_per_share` | S7 settle |
 | `pnl_total` (or `pnl_dollars`) | Tier B: `quantity × pnl_per_share × multiplier`; Tier A: optional or derived from fraction |
-| `return_on_allocated_budget` | Primary per-trade metric for S8 (cross-book; see § Return normalization) |
-| `return_on_risk_geometry` / `return_on_premium` / `return_on_credit` | Structure-native diagnostics (optional columns) |
+| `return_on_premium` (M1) | Per § Return normalization |
+| `return_on_max_loss` (M2) | Realized `pnl_per_share / max_loss_per_share`; `NaN` for straddles — **not** S3 entry `theoretical_return_on_max_loss` |
+| `return_on_atm_straddle` (M3) | Per § Return normalization; `NaN` for straddles |
+| `return_on_allocated_budget` | Portfolio / S8 primary |
 | `fill_label` | Echo `config.fill` (reproducibility) |
+| `theoretical_return_on_max_loss` | Entry economics from S3 (audit); not M2 |
 
 ### Settle boundary (S5 vs S7)
 
@@ -241,104 +244,150 @@ For each sized, included row:
 
 ## Return normalization (S5 Phase 3 + S8)
 
-Mixed books — e.g. **short iron fly + long straddle** (v1 pin) — do not share one geometric “max loss” definition. Normalization must separate **sizing at risk**, **primary cross-book return** (for Sharpe / go/no-go), and **structure-native diagnostics**.
+Mixed books — e.g. **short iron fly + long straddle** (v1 pin) — need **three recorded return metrics** on every traded row, plus a **portfolio-level** metric for S8 aggregation. Not every metric applies to every structure — use **`NaN`** when a denominator is undefined.
 
-### Two questions (do not conflate)
+### HD pin (2026-06-07): three normalized returns
 
-| Question | Needs | Answered by |
-|----------|-------|-------------|
-| **How large is each trade?** | `at_risk_per_share` per instrument (true or proxy) | S5 Phase 2 sizing |
-| **How do we score the trade?** | Return denominator for aggregation | S5 Phase 3 + S8 |
+All three are computed in **S5 Phase 3** after settle and stored on the trade log. Denominators come from S3 assembly fields (per share).
 
-Premium normalization (`pnl / premium paid or received`) measures performance vs the **premium slot**. Max-loss geometry measures performance vs **defined downside**. Allocated-budget return measures performance vs the **dollar slot you assigned** that name — the right primary metric for a mixed book.
+| # | Column (target) | Formula | Denominator meaning | Example |
+|---|-----------------|---------|---------------------|---------|
+| **M1** | `return_on_premium` | `pnl_per_share / structure_premium_per_share` | Premium **received** (short / credit) or **paid** (long / debit) for this structure | Short straddle: `pnl / credit received` |
+| **M2** | `return_on_max_loss` | `pnl_per_share / max_loss_per_share` | Defined-risk capital at stake (`wing_width − net_credit` for iron fly/condor) | Iron fly: `pnl / max_loss` |
+| **M3** | `return_on_atm_straddle` | `pnl_per_share / atm_straddle_premium_per_share` | ATM straddle premium at entry — compares winged short vol to a pure straddle play | Iron fly: `pnl / ATM body straddle premium` |
 
-### True economic risk by structure (v1)
+**Denominator sources (S3):**
 
-| Structure | v1 role | Bounded downside (hold to expiry) | `max_loss_per_share` in S3 |
-|-----------|---------|----------------------------------|------------------------------|
-| **Iron fly / iron condor** | Short side | `wing_width − net_credit` per share | Set (geometric) |
-| **Long straddle** | Long side | Premium paid (debit) | `entry_cost` / premium |
-| **Short straddle** | Not v1 short pin | Theoretically unbounded | `None` — proxy only if code path used |
+| Field on structure row | Used for |
+|--------------------------|----------|
+| `structure_premium_per_share` | M1 — net credit received or debit paid for the assembled structure |
+| `max_loss_per_share` | M2 — geometric max loss (iron fly / condor) |
+| `atm_straddle_premium_per_share` | M3 — today `body_credit_per_share` in `option_surface.py` (ATM call + put premium) |
 
-Short straddle tail risk can approach “stock goes against you” scale; v1 does **not** treat unlimited loss as a honest denominator without an explicit proxy ([Q5](#open-questions-for-hd-resolve-before-sprint-003-build)).
+M2 uses **max loss** (`width − credit`), not raw wing width alone. Raw `pnl / wing_width` may be kept as an optional diagnostic but is not one of the three pinned metrics.
 
-### Layer 1 — Sizing: `at_risk_per_share` (Phase 2)
+### Entry vs realized returns (do not mix)
 
-Each instrument type supplies **at risk per share** to convert `max_loss_budget_per_trade` → contracts (Tier B) or conceptual weight (Tier A):
+| When | Column (target) | Formula | Code today (S3) |
+|------|-----------------|---------|-----------------|
+| **Entry** (S3 assembly) | `theoretical_return_on_max_loss` | `net_credit / max_loss_per_share` at open | On structure row from `option_surface.py` |
+| **Realized** (S5 settle) | `return_on_max_loss` (M2) | `pnl_per_share / max_loss_per_share` | Not wired |
 
-| Instrument | `at_risk_per_share` for sizing | Notes |
-|------------|-------------------------------|-------|
-| Iron fly / condor | `max_loss_per_share` (geometric) | From S3 assembly |
-| Long straddle | Premium paid per share | Same as true max loss |
-| Short straddle (if used) | `net_credit × short_straddle_risk_multiplier` | **Proxy** — not true max loss |
+Same name family, different numerator: entry uses **credit**, realized uses **settled PnL**. Never use entry ROC as backtest performance.
 
-Equal **max-loss budget per trade** (v1 spec) means: each included name receives the same config budget slot; quantity (or Tier A weight) derives from that instrument’s `at_risk_per_share`.
+### `structure_premium_per_share` mapping (M1 denominator)
 
-### Layer 2 — Primary return (cross-book, S8 / go/no-go)
+| Structure | `structure_premium_per_share` | Source field today |
+|-----------|------------------------------|-------------------|
+| Iron fly / condor | Net credit received (per share) | `net_credit_per_share` / `abs(net_credit)` on assembly |
+| Long straddle | Premium paid (debit, per share) | `abs(entry_cost)` / `max_loss_per_share` on assembly |
+| Short straddle | Premium received (credit, per share) | `net_credit` on assembly |
 
-**Recommended primary per-trade metric:**
+Sprint 003: normalize to one column name on the structure row at S3 or S5.
+
+### Availability matrix (`NaN` when not applicable)
+
+| Structure | M1 `return_on_premium` | M2 `return_on_max_loss` | M3 `return_on_atm_straddle` |
+|-----------|------------------------|-------------------------|------------------------------|
+| **Iron fly / condor** (short) | ✓ | ✓ | ✓ |
+| **Long straddle** | ✓ | `NaN` | `NaN` |
+| **Short straddle** (non-v1) | ✓ | `NaN` | `NaN` |
+
+Long straddle: M1 uses premium paid. M2/M3 are `NaN` — no wing-defined max loss separate from premium, and ATM-straddle comparison is redundant for a pure straddle.
+
+Short straddle: M1 only; tail loss is unbounded so M2 is not defined without a proxy ([Q5](#open-questions-for-hd-resolve-before-sprint-003-build)). M3 is `NaN` (not a winged structure vs straddle comparison).
+
+### Sizing vs return (do not conflate)
+
+| Phase | Question | Answer |
+|-------|----------|--------|
+| **S5 Phase 2** | How large is the trade? | `at_risk_per_share` → quantity or Tier A weight |
+| **S5 Phase 3** | How did the trade score? | M1 / M2 / M3 per share (+ dollar totals if Tier B) |
+
+**Sizing `at_risk_per_share`:**
+
+| Instrument | For quantity / budget |
+|------------|----------------------|
+| Iron fly / condor | `max_loss_per_share` |
+| Long straddle | Premium paid (= structure premium) |
+| Short straddle (if used) | `net_credit × short_straddle_risk_multiplier` — **proxy for sizing only**, not M2 |
+
+### Portfolio return (S8 / go/no-go) — separate from M1–M3
+
+For **cross-structure Sharpe** when each name gets an equal risk **budget slot**:
 
 ```text
 return_on_allocated_budget = pnl_total / max_loss_budget_per_trade
 ```
 
-- Same denominator for short iron fly and long straddle on a given run — “I allocated $X risk budget to this signal; what did it return?”
-- Aligns with [backtest_evaluation_protocol.md](backtest_evaluation_protocol.md) **“return on max-loss budget”** (budget = allocated slot, not necessarily geometric max loss for every structure).
-- S8 Sharpe, drawdown, and side splits use this series by default ([Q10](#open-questions-for-hd-resolve-before-sprint-003-build)).
+- Same dollar denominator for iron fly and long straddle on a run — “I allocated $X; what did it earn?”
+- Aligns with [backtest_evaluation_protocol.md](backtest_evaluation_protocol.md) **return on max-loss budget**
+- S8 default aggregation series ([Q10](#open-questions-for-hd-resolve-before-sprint-003-build))
 
-**Trade log column (target):** `return_on_allocated_budget`. Implementation may alias `return_on_max_loss` until rename — semantics are **allocated budget**, not geometric max loss for every row.
+M1–M3 answer **economic** questions within a structure type; `return_on_allocated_budget` answers **portfolio** questions across types. Record all four on the trade log.
 
-Tier A: same formula on conceptual dollar PnL (or equal `risk_fraction × book` PnL) with budget slot from config.
+### Mixed-book example
 
-### Layer 3 — Structure-native diagnostics (per row, not mixed blindly)
-
-Persist optional columns for audit and structure-specific research:
-
-| Instrument | Diagnostic return | Denominator |
-|------------|-------------------|-------------|
-| Iron fly / condor | `return_on_risk_geometry` | `pnl_per_share / max_loss_per_share` |
-| Long straddle | `return_on_premium` | `pnl_per_share / premium_paid` |
-| Short straddle | `return_on_credit` | `pnl_per_share / net_credit` (ROC on credit; not worst-case loss) |
-
-Do **not** average these across structures for go/no-go — denominators have different economic meaning.
-
-### Layer 4 — Body credit (interim / optional diagnostic)
-
-Today `surface_metrics.py` uses `pnl_per_share / body_credit_per_share` — ATM body premium as a cross-direction bridge (see `option_surface.py` diagnostics). Useful for **relative** config search; **not** sufficient for v1 go/no-go.
-
-| Use | Keep? |
-|-----|-------|
-| Interim Sharpe while S5 return columns are built | Yes (until S8 migrated) |
-| Secondary diagnostic after S5 | HD choice — [Q7](#open-questions-for-hd-resolve-before-sprint-003-build) |
-
-### Mixed-book example (v1)
-
-One rebalance, `max_loss_budget_per_trade = 500`:
-
-| Row | Structure | Size | Settle PnL | Primary return |
-|-----|-----------|------|------------|----------------|
-| AAPL short | Iron fly | `qty` from geometric max loss | `pnl_total` | `pnl_total / 500` |
-| NVDA long | Long straddle | `qty` from premium at risk | `pnl_total` | `pnl_total / 500` |
-
-Same **500** budget slot; different sizing math; **comparable** primary return for S8 aggregation.
+| Row | M1 | M2 | M3 | `return_on_allocated_budget` |
+|-----|----|----|-----|------------------------------|
+| AAPL short iron fly | `pnl / net_credit` | `pnl / max_loss` | `pnl / atm_straddle_prem` | `pnl_total / budget` |
+| NVDA long straddle | `pnl / premium_paid` | `NaN` | `NaN` | `pnl_total / budget` |
 
 ### What not to do
 
-- Force all structures onto **premium only** — wrong for iron fly (wings define risk).
-- Force all structures onto **geometric max loss** — undefined for short straddle without proxy.
-- Apply **cross fill at S3** and a **post-trade spread penalty** (former S6) — double conservatism.
-- Use unlimited-loss semantics for short straddle in go/no-go without an ADR.
+- Average M1, M2, or M3 **across structure types** for go/no-go — denominators differ.
+- Use M2 for short straddle without an explicit proxy ADR.
+- Treat M3 as defined for pure straddles (always `NaN`).
 
 ### Return fields — target trade log (included rows)
 
-| Field | Layer | Purpose |
-|-------|-------|---------|
-| `return_on_allocated_budget` | Primary | S8 / go/no-go |
-| `return_on_risk_geometry` | Diagnostic | Iron fly / condor |
-| `return_on_premium` | Diagnostic | Long straddle |
-| `return_on_credit` | Diagnostic | Short straddle / credit structures |
-| `at_risk_per_share` | Sizing audit | Echo value used for quantity |
-| `body_credit_per_share` | Legacy diagnostic | Optional per [Q7](#open-questions-for-hd-resolve-before-sprint-003-build) |
+| Field | Purpose |
+|-------|---------|
+| `return_on_premium` | **M1** — always try; `NaN` only if premium ≤ 0 |
+| `return_on_max_loss` | **M2** — iron fly / condor; else `NaN` |
+| `return_on_atm_straddle` | **M3** — iron fly / condor; else `NaN` |
+| `return_on_allocated_budget` | Portfolio / S8 primary |
+| `structure_premium_per_share` | M1 denominator (audit) |
+| `max_loss_per_share` | M2 denominator (from S3) |
+| `atm_straddle_premium_per_share` | M3 denominator (`body_credit_per_share` today) |
+| `at_risk_per_share` | Sizing audit |
+
+---
+
+## Implementation annotations (pin before Sprint 003 build)
+
+Items below are **not inconsistencies** — they are deliberate TBDs. Resolve via open questions (§ Open questions) before implementation.
+
+### Tier A — dollar PnL and portfolio return
+
+> **Annot.** Tier B has `quantity`, `pnl_total`, and `return_on_allocated_budget = pnl_total / max_loss_budget_per_trade`. Tier A allows fractional weights and may **omit integer `quantity`**.
+>
+> **Minimum v1:** always compute **M1–M3 from `pnl_per_share`** (size-agnostic per-share economics).
+>
+> **TBD ([Q9](#open-questions-for-hd-resolve-before-sprint-003-build)):** whether Tier A also sets conceptual `pnl_total = risk_fraction × book × …` and `return_on_allocated_budget`, or relies on M1–M3 + equal `risk_fraction` only for aggregation.
+
+### `risk_fraction` — per side or whole book?
+
+> **Annot.** Phase 2 shows `risk_fraction ≈ 1 / n_included`. With per-side cap ([decision 003](decisions/003_position_cap_per_side.md)), **`n` is ambiguous**:
+>
+> - **Per side:** `1 / n_long_included` within long pool (and separately for short) — keeps long/short books balanced.
+> - **Whole book:** `1 / (n_long + n_short)` — single book weight.
+>
+> **TBD ([Q9](#open-questions-for-hd-resolve-before-sprint-003-build)):** pick one; document in S5 contract.
+
+### `max_names_per_side` default
+
+> **Annot.** [Decision 003](decisions/003_position_cap_per_side.md) uses **25 per side** as an example (~50-book when both sides fill). This is **not** pinned as the config default in `BacktestRunConfig` — search scripts must set it explicitly. Setting `50` per side allows **100** total names.
+
+### S8 scope vs M1–M3
+
+> **Annot.** **M1–M3** are **per-trade** columns on the trade log for structure-level analysis and export.
+>
+> **S8** (date/run summary) aggregates **`return_on_allocated_budget`** for Sharpe, drawdown, and go/no-go ([Q10](#open-questions-for-hd-resolve-before-sprint-003-build)). S8 does **not** by default produce separate Sharpe series for M1–M3; add later if needed for research.
+
+### Entry economics on trade log
+
+> **Annot.** Carry forward S3 `theoretical_return_on_max_loss` on the trade log row for audit (entry credit vs max-loss geometry). Do not conflate with realized M2.
 
 ---
 
@@ -378,7 +427,7 @@ Collapse trade log → **date summary** + **run summary** so config search and g
 | `max_drawdown` | On per-date return series (same formula, new input) |
 | Side splits | Long/short counts and means on **same** return denominator |
 
-Deprecate body-credit Sharpe for go/no-go once max-loss series is validated; may keep body-credit columns for diagnostics.
+Migrate S8 from interim `body_credit` Sharpe to `return_on_allocated_budget` on the per-date series. M1–M3 remain **trade-log only** (see § Implementation annotations). M3 subsumes body-credit normalization for iron fly / condor.
 
 ### ORCH (orchestration)
 
@@ -398,21 +447,23 @@ Sprint 003: extract runner tail to `step5`; add orchestration contract test.
 
 ## Open questions for HD (resolve before Sprint 003 build)
 
+**Status summary:** Q1–Q3, Q7, Q8a, Q11 **resolved**. Still need HD answers: **Q4, Q6, Q8b, Q8c, Q9, Q10** (Q5 optional unless short-straddle path kept).
+
 | # | Question | Options / notes |
 |---|----------|-----------------|
 | Q1 | ~~Total cap selection~~ | **Resolved (2026-06-07):** per-side cap via `max_names_per_side`; no global long+short pool — [decision 003](decisions/003_position_cap_per_side.md) |
 | Q2 | ~~Config naming for cap~~ | **Resolved:** keep `max_names_per_side`; document example `25` per side for ~50-book |
 | Q3 | ~~S6 vs fill~~ | **Resolved:** cross (or chosen) fill at S3 only; no S6 |
 | Q4 | **Contract multiplier** | 100 for equity options — single constant in config or runner settings? |
-| Q5 | **Short straddle risk proxy** | v1 short = iron fly/condor only; if `short_straddle` path remains: pin `short_straddle_risk_multiplier` (e.g. 2× credit) for **sizing**; use `return_on_credit` for diagnostic only — never unlimited loss in go/no-go |
+| Q5 | **Short straddle risk proxy** | v1 short = iron fly/condor only; if path remains: `short_straddle_risk_multiplier` for **sizing** only; M1 = `return_on_premium`; M2/M3 = `NaN` |
 | Q6 | **Trade log grain** | One row per (date, ticker, direction) — confirm no multi-structure per ticker |
-| Q7 | **Body-credit metrics** | Drop from run summary vs keep as secondary diagnostic alongside `return_on_allocated_budget` |
+| Q7 | ~~Body-credit metrics~~ | **Resolved (2026-06-07):** M3 `return_on_atm_straddle` replaces body-credit Sharpe for iron fly/condor; persist all three M1–M3 |
 | Q8a | ~~Sizing tier scope for Sprint 003~~ | **Resolved (2026-06-07):** implement **both** Tier A and Tier B in S5; `sizing_mode` switch |
 | Q8b | **Default `sizing_mode` at run time** | `conceptual` vs `integer_lots` when caller does not specify |
 | Q8c | **Tier B capital overrun** | Scale all quantities proportionally vs trim by rank |
 | Q9 | **Tier A normalization** | Equal **budget slot** (`risk_fraction` × book) vs equal **premium slot** vs equal **weight** (`1/n`) — must align with `return_on_allocated_budget` |
 | Q10 | **Primary return confirmation** | Adopt `return_on_allocated_budget` as S8 / go/no-go series (recommended); per-date = mean vs budget-weighted sum |
-| Q11 | **Structure-native columns** | Which diagnostics to persist on trade log: all three vs iron-fly + long-straddle only (v1 book) |
+| Q11 | ~~Structure-native columns~~ | **Resolved (2026-06-07):** always persist M1–M3; `NaN` when denominator N/A |
 
 ---
 
@@ -420,8 +471,8 @@ Sprint 003: extract runner tail to `step5`; add orchestration contract test.
 
 | Order | Work | Done when |
 |-------|------|-----------|
-| 1 | HD answers Q8b, Q9–Q11 (minimum); Q10 confirm primary return | Design doc → Accepted |
-| 2 | Implement S5 in `pipeline.py` — both tiers, `return_on_allocated_budget` + diagnostics; runner delegates | Per-side cap per [decision 003](decisions/003_position_cap_per_side.md); contract tests cover both sizing modes |
+| 1 | HD answers **Q4, Q6, Q8b, Q8c, Q9, Q10** (Q5 optional) | Design doc → Accepted |
+| 2 | Implement S5 in `pipeline.py` — both tiers; M1–M3 + `return_on_allocated_budget`; runner delegates | Per-side cap per [decision 003](decisions/003_position_cap_per_side.md); contract tests cover both sizing modes |
 | 3 | S8 on max-loss series | Sharpe uses new denominator; protocol aligned |
 | 4 | ORCH contract test | Runner has no business logic duplication |
 | 5 | Contract tests for S5/S8/ORCH | Written with implementation, not before |
@@ -445,8 +496,10 @@ Sprint 003: extract runner tail to `step5`; add orchestration contract test.
 | 2026-05-31 | Sprint 002 Session C — initial design; contracts for S5/S6/S8/ORCH deferred |
 | 2026-05-31 | S5 clarified: select + **size** + simulate trade (not disposition-only) |
 | 2026-05-31 | Sizing reframed: constraint-driven tiers (conceptual vs integer lots + capital), not “quantity from config” |
-| 2026-06-07 | **S6 collapsed into S5** (HD approved) — fill at S3; `return_on_max_loss` in S5 Phase 3; docs aligned |
+| 2026-06-07 | **S6 collapsed into S5** (HD approved) — fill at S3; returns in S5 Phase 3; docs aligned |
 | 2026-06-07 | S5 overview + Phase 1 aligned: select = cap/rank on S4 output; size = constraint tiers, not config quantity |
 | 2026-06-07 | **Q8a resolved:** Sprint 003 implements both Tier A and Tier B in S5 (`sizing_mode` switch) |
 | 2026-06-07 | **Q1/Q2 resolved:** per-side cap via `max_names_per_side` ([decision 003](decisions/003_position_cap_per_side.md)) |
 | 2026-06-07 | § Return normalization — allocated budget primary; structure-native diagnostics; Q9–Q11 |
+| 2026-06-07 | HD pin: three return metrics M1–M3 (premium / max loss / ATM straddle); NaN matrix; Q7/Q11 resolved |
+| 2026-06-07 | Consistency pass: Tier B sizing by `at_risk_per_share`; entry vs realized returns; § Implementation annotations |
