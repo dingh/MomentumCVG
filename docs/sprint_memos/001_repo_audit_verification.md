@@ -26,7 +26,7 @@ HD exit (2026-05-28): Architecture and surface assembly layer look sound; system
 | Reading guide (code walkthrough) | [surface_runner_reading_guide.md](../surface_runner_reading_guide.md) |
 | Session B verification test | `tests/unit/test_surface_runner_data_flow.py` (9 tests) |
 | Position cap semantics ADR | [decisions/002_position_cap_semantics.md](../decisions/002_position_cap_semantics.md) |
-| Session B plan (historical) | [agenda/session_b_plan.md](../agenda/session_b_plan.md) |
+| Session B plan (historical) | `agenda/session_b_plan.md` — removed 2026-06-10; superseded by this memo |
 
 ---
 

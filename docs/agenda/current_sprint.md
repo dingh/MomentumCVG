@@ -1,31 +1,37 @@
-# Current sprint — 002
+# Current sprint — 003
 
 **Updated:** 2026-06-10  
-**Status:** **Closed** — design + contracts signed off; see [sprint_memos/002_data_contracts.md](../sprint_memos/002_data_contracts.md)  
-**Mode:** **Audit / Design** (contracts and tests define truth; minimal prod changes only to align with signed-off contracts)
+**Status:** Active — Build  
+**Mode:** **Build** (implementation scoped to the accepted Sprint 002 design; tests written with code)
 
 ---
 
 ## Goal
 
-Nail down the **surface backtest data model** and **per-component I/O contracts** so development and verification proceed **one component at a time**, not only via end-to-end surface judgment.
+Turn the accepted Sprint 002 design into **trusted code**: implement the **S5 trade-construction layer** (select + size + simulate + return), **S8 cycle-return metrics**, and a **thin S1→S8 orchestration**, each with **contract tests** plus one **synthetic end-to-end smoke**.
 
-Sprint 002 produces the **source-of-truth documentation** (contracts, full data flow with diagram, evaluation plan) plus **synchronous contract tests** for every Stage B component. Stage A (precompute) is **given for now**; gaps are recorded for later change.
+Source of truth (all Accepted, do not re-litigate without an ADR):
+- [surface_engine_portfolio_metrics_design.md](../surface_engine_portfolio_metrics_design.md) — S5/S8 design
+- [surface_engine_data_contract.md](../surface_engine_data_contract.md) — component contracts
+- [decisions/003_position_cap_per_side.md](../decisions/003_position_cap_per_side.md) — per-side cap
 
-**Capital / dollars:** Treat sizing budget as an **abstract risk unit** until the portfolio layer is implemented — do not pin $1M deployable this sprint.
+**Capital / dollars:** keep `deployable_capital` optional (`None` in v1); sizing budgets remain abstract risk units. Do not pin $1M this sprint.
 
 ---
 
-## HD decisions (locked for Sprint 002)
+## HD decisions (locked for Sprint 003)
 
 | Topic | Decision |
 |-------|----------|
-| Precompute | Given input; note gaps in contract doc, do not block Stage B design |
-| Focus order | Stage B / SurfaceRunner pipeline first |
-| Architecture | Prefer decoupled `pipeline.py` steps; **open to change** if contracts are cleaner |
-| Tests | Contract tests for **all** components where contracts are defined |
-| Success bar | Data contract doc + full data flow doc (diagram) + evaluation plan doc + contract test suite |
-| Implementation | Defer P0 implementation (sizing, 50-cap, metrics overhaul) unless a narrow fix is required for a contract test harness |
+| Tiers | Build **both** Tier A (`conceptual`) and Tier B (`integer_lots`) in S5 |
+| `sizing_mode` | **Required** config field — no default; run fails fast if unset |
+| Tier A control | **Per-side total budget** ÷ name count (`tier_a_mode` ∈ {`equal_premium`, `equal_max_loss`}) |
+| `contract_multiplier` | Pinned = 100 (equity options) |
+| Short side | **Defined-risk only** — reject `short_structure='straddle'` (no naked short straddle in v1) |
+| Trade-log grain | One row per `(trade_date, ticker, direction)` |
+| Capital | Hard constraint (when set): drop by rank / skip date; never overrun, never rescale |
+| Primary metric | `cycle_return_on_capital_at_risk` (+ short/long side splits) |
+| Scope | Implementation + contract tests + **synthetic smoke**; **no real-data backtest run** |
 
 ---
 
@@ -33,46 +39,45 @@ Sprint 002 produces the **source-of-truth documentation** (contracts, full data 
 
 | # | Artifact | Path | Purpose |
 |---|----------|------|---------|
-| 1 | **Data contract** | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | Per-component input/output schemas, invariants, status (built / partial / spec-only) |
-| 2 | **Data flow + diagram** | [surface_engine_data_flow.md](../surface_engine_data_flow.md) | Step-by-step flow; each box = component, criteria, paths, implementation status |
-| 3 | **Evaluation plan** | [surface_engine_evaluation_plan.md](../surface_engine_evaluation_plan.md) | How to verify each component; link tests to contracts; run-level success vs decision-quality |
-| 4 | **Contract tests** | `tests/contract/` | One module per component; assert schema + invariants (may xfail until implementation catches up) |
-| 5 | **Sprint memo** | `docs/sprint_memos/002_data_contracts.md` | Closeout, open design questions, precompute gap log |
-
-**Supersedes for Stage B detail:** `surface_runner_data_flow.md` remains Sprint 001 history; new flow doc is canonical after Sprint 002 sign-off.
+| 1 | New config fields + validation | `src/backtest/run_config.py` | `sizing_mode`, `tier_a_mode`, `tier_a_short_budget`, `tier_a_long_budget`, `contract_multiplier`, `deployable_capital`; reject `short_structure='straddle'` |
+| 2 | S5 implementation | `src/backtest/pipeline.py::step5_select_and_size` | Select (per-side cap) + size (both tiers) + simulate (settle + returns) |
+| 3 | S8 cycle metrics | `src/backtest/` metrics | `cycle_return_on_capital_at_risk` + side splits; Sharpe/drawdown on cycle series |
+| 4 | ORCH thin loop | `src/backtest/surface_runner.py` | Runner delegates to pipeline steps; no inline S5 business logic |
+| 5 | Contract tests | `tests/contract/` | `test_step5_select_and_size_contract.py`, `test_run_metrics_contract.py`, `test_orchestration_contract.py` |
+| 6 | Synthetic smoke | `tests/` | End-to-end S1→S8 on synthetic fixtures (no real cache) |
+| 7 | Data contract fill | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | Complete § S5 / S8 / ORCH from the design doc |
+| 8 | Code cleanup | `src/backtest/pipeline.py` | Remove deprecated `step6_apply_cost` stub |
+| 9 | Sprint memo | `docs/sprint_memos/003_s5_s8_build.md` | Closeout, drift resolved, follow-ons |
 
 ---
 
-## Component scope (Stage B)
+## Work breakdown (build order)
 
-Treat precompute outputs as **fixed inputs** (see contract doc § Stage A inputs).
-
-| ID | Component | Owner (target) | Contract test |
-|----|-----------|----------------|---------------|
-| R0 | Run envelope | `BacktestRunConfig`, manifest (TBD), date schedule | `test_run_envelope_contract.py` |
-| S1 | Universe | `pipeline.step1_get_universe` | `test_step1_universe_contract.py` |
-| S2 | Signals | `pipeline.step2_score_signals` | `test_step2_signals_contract.py` |
-| S3 | Structures | `pipeline.step3_get_eligible_structures` | `test_step3_structures_contract.py` |
-| S4 | Exclusions | `pipeline.step4_apply_exclusions` | `test_step4_exclusions_contract.py` |
-| S5 | Select + size + simulate + return | `pipeline.step5_select_and_size` | `test_step5_select_and_size_contract.py` |
-| S6 | _(collapsed into S5)_ | `step6_apply_cost` deprecated stub | — |
-| S7 | Settle | `StrategyAssemblyResult.settle` + hold-to-expiry | `test_settle_contract.py` (or fold into S3/S5) |
-| S8 | Date / run metrics | `surface_metrics` | `test_run_metrics_contract.py` |
-| ORCH | Orchestration | `SurfaceRunner` thin wrapper | Extend `test_surface_runner_data_flow.py` or `test_orchestration_contract.py` |
-| IN | Stage A inputs | meta + quotes parquet schema | `test_precompute_input_contract.py` (read-only / given) |
+| Phase | Work | Notes |
+|-------|------|-------|
+| 1 | **Config** — add the six fields + `__post_init__` validation; reject short straddle | Tests first for validation |
+| 2 | **S5 Select** — extract per-side cap/rank from runner into `step5`; reuse `signal_rank_pct`, exclusion strings (`max_names_cap`, `invalid_max_loss`) | Pure function on S4 output |
+| 3 | **S5 Size** — Tier A (per-side budget ÷ count, fractional, no ×100) and Tier B (integer lots, ×100, capital binding) | Verify quantity sign, premium sign, max-loss geometry |
+| 4 | **S5 Simulate** — settle (S7) on included rows; compute M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` | Denominators derived in S5 from S3 fields |
+| 5 | **S8** — `cycle_return_on_capital_at_risk` per `trade_date` + side splits; Sharpe/drawdown on cycle series; keep `availability_rate`/`hit_rate` | Migrate off body-credit Sharpe |
+| 6 | **ORCH** — runner = thin S1→S8 loop; settle inside S5 | Remove inline S5 duplication |
+| 7 | **Tests** — S5/S8/ORCH contract tests + synthetic end-to-end smoke | Written with implementation |
+| 8 | **Cleanup + docs** — remove `step6` stub; fill data-contract S5/S8/ORCH; write memo | — |
 
 ---
 
 ## Success criteria
 
-- [x] `surface_engine_data_contract.md` complete and HD-reviewed
-- [x] `surface_engine_data_flow.md` includes step diagram; every box has status + criteria + decision paths
-- [x] `surface_engine_evaluation_plan.md` maps each component to verification method and test file
-- [x] `tests/contract/` for implemented steps IN, R0, S1–S4, S7 (43 tests green)
-- [x] S5/S8/ORCH outcomes in portfolio/metrics design doc; S6 collapsed into S5 (contracts in Sprint 003)
-- [x] Precompute gap log section populated (earnings_date; liquidity-panel grain)
-- [x] No Tier B backtest run; no large engine refactor without contract sign-off
-- [x] Sprint close memo written ([002_data_contracts.md](../sprint_memos/002_data_contracts.md))
+- [ ] Six config fields added with validation; `short_structure='straddle'` rejected; tests cover each
+- [ ] `step5_select_and_size` implements select + both sizing tiers + simulate; emits the full trade-log schema (M1–M3, `pnl_total`, `capital_at_risk_dollars`, `quantity`, `fill_label`)
+- [ ] Per-side cap honored ([decision 003](../decisions/003_position_cap_per_side.md)); exclusion strings match code vocabulary
+- [ ] S8 produces `cycle_return_on_capital_at_risk` + `short_cycle_return` / `long_cycle_return`; Sharpe on cycle series
+- [ ] `SurfaceRunner` orchestrates pipeline steps with no duplicated business logic
+- [ ] Contract tests for S5/S8/ORCH green; synthetic end-to-end smoke green
+- [ ] Full suite green (`tests/` ) — no regressions on the 43 Sprint 002 contract tests
+- [ ] Financial checks verified in tests: leg type, strike, expiry, **quantity sign, premium sign**, payoff, **max loss** (per AGENTS.md)
+- [ ] Data contract § S5 / S8 / ORCH filled; design doc drift items resolved
+- [ ] No real-data backtest treated as go/no-go evidence
 
 ---
 
@@ -80,32 +85,35 @@ Treat precompute outputs as **fixed inputs** (see contract doc § Stage A inputs
 
 | Session | Work |
 |---------|------|
-| A | Draft contracts § R0, S1–S2, Stage A inputs; tests for S1–S2 |
-| B | Draft contracts § S3–S7; tests for S3, settle; diagram in data flow doc |
-| C | **Done** — S5/S8/ORCH design; S6→S5 collapse; [surface_engine_portfolio_metrics_design.md](../surface_engine_portfolio_metrics_design.md); contracts deferred to Sprint 003 |
-| D | **Done** — HD review (contracts through S4+S7 + design doc); evaluation plan finalized; close memo [002_data_contracts.md](../sprint_memos/002_data_contracts.md) |
+| A | Config fields + validation (Phase 1); S5 Select extraction (Phase 2) + tests |
+| B | S5 Size both tiers (Phase 3) + S5 Simulate / returns (Phase 4) + tests |
+| C | S8 cycle metrics (Phase 5) + ORCH thin loop (Phase 6) + tests |
+| D | Synthetic smoke (Phase 7); cleanup, data-contract fill, close memo (Phase 8) |
 
 ---
 
-## Out of scope (Sprint 002)
+## Out of scope (Sprint 003)
 
+- Real-data Tier B backtest / go-no-go run (Sprint 004+)
 - Pinning deployable capital ($) or broker thresholds
-- Full portfolio layer implementation (unless required for test harness only)
-- Tier B 2020+ backtest
+- Portfolio optimizer, signal/risk-parity weighting, sector or correlation caps
+- Multi-date book state / replacement policy across rebalances
 - Iron fly vs condor research matrix
-- Precompute pipeline code changes (gaps documented only)
+- Precompute (Stage A) code changes — gaps remain logged only
 
 ---
 
 ## Agent instructions
 
 1. Read this file and [v1_spec_pins.md](../v1_spec_pins.md) at session start.
-2. **Contracts before code** — update docs and contract tests together.
-3. When runner inline logic disagrees with pipeline contract, document as **implementation drift**; do not silently change contract to match bugs.
-4. Contract tests may use synthetic fixtures shared under `tests/contract/fixtures/` or reuse patterns from `test_surface_runner_data_flow.py`.
+2. **Build mode:** implement only the scoped design; write tests **with** the code, not after.
+3. Do not change strategy/financial logic outside the approved S5/S8 scope; verify option leg type, strike, expiry, quantity sign, premium sign, payoff, and max loss when touching sizing/settle.
+4. When runner inline logic disagrees with the design, fix toward the **Accepted** design; record any drift in the memo.
+5. Run the focused contract subset after each phase; run the full suite before close. Use venv `C:/MomentumCVG_env/venv/Scripts/python.exe`.
+6. Canonical path is **SurfaceRunner**; no broker/live execution code.
 
 ---
 
 ## Previous sprint
 
-Sprint 001 closed 2026-05-28 — [sprint_memos/001_repo_audit_verification.md](../sprint_memos/001_repo_audit_verification.md).
+Sprint 002 closed 2026-06-10 — [sprint_memos/002_data_contracts.md](../sprint_memos/002_data_contracts.md).

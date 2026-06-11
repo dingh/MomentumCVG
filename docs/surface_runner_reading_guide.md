@@ -22,7 +22,6 @@ Sprint 001 produced audits and one synthetic verification test. Those docs expla
 |-----|------|
 | [surface_runner_data_flow.md](surface_runner_data_flow.md) | Implemented / partial / missing map |
 | [repo_audit.md](repo_audit.md) | P0/P1/P2 backlog |
-| [agenda/session_b_plan.md](agenda/session_b_plan.md) | What the verification test was meant to do |
 
 ---
 
