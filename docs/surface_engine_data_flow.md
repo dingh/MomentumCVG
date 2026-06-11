@@ -1,7 +1,7 @@
 # Surface engine — data flow and component diagram
 
-**Status:** Draft — Sprint 002 (canonical after sign-off)  
-**Last updated:** 2026-06-07  
+**Status:** Accepted — Sprint 002 (HD sign-off 2026-06-10); canonical for Stage B  
+**Last updated:** 2026-06-10  
 **Companion:** [surface_engine_data_contract.md](surface_engine_data_contract.md), [surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md)
 
 ---

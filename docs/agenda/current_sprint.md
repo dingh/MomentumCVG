@@ -1,7 +1,7 @@
 # Current sprint — 002
 
-**Updated:** 2026-05-28  
-**Status:** Active — design + contract tests  
+**Updated:** 2026-06-10  
+**Status:** **Closed** — design + contracts signed off; see [sprint_memos/002_data_contracts.md](../sprint_memos/002_data_contracts.md)  
 **Mode:** **Audit / Design** (contracts and tests define truth; minimal prod changes only to align with signed-off contracts)
 
 ---
@@ -65,13 +65,14 @@ Treat precompute outputs as **fixed inputs** (see contract doc § Stage A inputs
 
 ## Success criteria
 
-- [ ] `surface_engine_data_contract.md` complete and HD-reviewed
-- [ ] `surface_engine_data_flow.md` includes step diagram; every box has status + criteria + decision paths
-- [ ] `surface_engine_evaluation_plan.md` maps each component to verification method and test file
+- [x] `surface_engine_data_contract.md` complete and HD-reviewed
+- [x] `surface_engine_data_flow.md` includes step diagram; every box has status + criteria + decision paths
+- [x] `surface_engine_evaluation_plan.md` maps each component to verification method and test file
 - [x] `tests/contract/` for implemented steps IN, R0, S1–S4, S7 (43 tests green)
 - [x] S5/S8/ORCH outcomes in portfolio/metrics design doc; S6 collapsed into S5 (contracts in Sprint 003)
-- [ ] Precompute gap log section populated if Stage A inputs cannot support v1 backtest contract
-- [ ] No Tier B backtest run; no large engine refactor without contract sign-off
+- [x] Precompute gap log section populated (earnings_date; liquidity-panel grain)
+- [x] No Tier B backtest run; no large engine refactor without contract sign-off
+- [x] Sprint close memo written ([002_data_contracts.md](../sprint_memos/002_data_contracts.md))
 
 ---
 
@@ -82,7 +83,7 @@ Treat precompute outputs as **fixed inputs** (see contract doc § Stage A inputs
 | A | Draft contracts § R0, S1–S2, Stage A inputs; tests for S1–S2 |
 | B | Draft contracts § S3–S7; tests for S3, settle; diagram in data flow doc |
 | C | **Done** — S5/S8/ORCH design; S6→S5 collapse; [surface_engine_portfolio_metrics_design.md](../surface_engine_portfolio_metrics_design.md); contracts deferred to Sprint 003 |
-| D | HD review (contracts through S4+S7 + design doc); evaluation plan; close memo |
+| D | **Done** — HD review (contracts through S4+S7 + design doc); evaluation plan finalized; close memo [002_data_contracts.md](../sprint_memos/002_data_contracts.md) |
 
 ---
 

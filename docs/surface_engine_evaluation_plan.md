@@ -1,7 +1,7 @@
 # Surface engine — component evaluation plan
 
-**Status:** Draft — Sprint 002  
-**Last updated:** 2026-06-07  
+**Status:** Accepted — Sprint 002 (HD sign-off 2026-06-10)  
+**Last updated:** 2026-06-10  
 **Companion:** [surface_engine_data_contract.md](surface_engine_data_contract.md), [surface_engine_data_flow.md](surface_engine_data_flow.md)
 
 ---
