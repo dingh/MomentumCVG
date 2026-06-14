@@ -241,6 +241,10 @@ def _make_config(**overrides) -> BacktestRunConfig:
         end_date=date(2024, 1, 6),  # must be > start_date; features exist only on TRADE_DATE
         fill=FillAssumption.mid(),
         include_diagnostics=True,
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_short_budget=10_000.0,
+        tier_a_long_budget=10_000.0,
     )
     defaults.update(overrides)
     return BacktestRunConfig(**defaults)

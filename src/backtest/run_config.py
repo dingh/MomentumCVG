@@ -24,6 +24,19 @@ VALID_WING_SELECTION_RULES = ('closest_delta', 'max_credit_to_width', 'widest')
 VALID_COST_MODELS           = ('mid', 'half_spread_per_leg', 'full_spread_per_leg')
 VALID_SHORT_STRUCTURES      = ('ironfly', 'straddle', 'ironcondor')
 
+# Sizing policy (Sprint 003 S5) — see docs/surface_engine_portfolio_metrics_design.md § S5.
+# 'conceptual'   → Tier A: fractional units, no contract multiplier, per-side budget ÷ name count.
+# 'integer_lots' → Tier B: integer contracts × contract_multiplier + capital binding.
+VALID_SIZING_MODES          = ('conceptual', 'integer_lots')
+
+# Tier A sub-mode (only meaningful when sizing_mode == 'conceptual').
+# 'equal_premium'  → size each side by a total premium budget (collect on short, spend on long).
+# 'equal_max_loss' → size short side by a total max-loss budget; long side financed by collected short premium.
+VALID_TIER_A_MODES          = ('equal_premium', 'equal_max_loss')
+
+# v1 short side is defined-risk only (no naked short straddle) — HD decision Q5.
+DEFINED_RISK_SHORT_STRUCTURES = ('ironfly', 'ironcondor')
+
 
 @dataclass
 class BacktestRunConfig:
@@ -212,6 +225,45 @@ class BacktestRunConfig:
     # they represent candidates that were in the universe but not selected.
     # Set to False to reduce memory footprint if attribution is not needed.
 
+    # -----------------------------------------------------------------------
+    # Sizing policy  (Sprint 003 S5 — surface_engine_portfolio_metrics_design.md § S5)
+    # -----------------------------------------------------------------------
+
+    sizing_mode: Optional[str] = None
+    # REQUIRED — there is no usable default; a run fails fast in __post_init__ when unset
+    # (HD decision Q8b). Selects the S5 sizing tier:
+    #   'conceptual'   → Tier A: fractional units, no contract multiplier; sizes each side by a
+    #                    per-side total budget split equally across that side's included names.
+    #   'integer_lots' → Tier B: integer contracts (× contract_multiplier) with optional capital binding.
+    # Must be one of VALID_SIZING_MODES.
+
+    tier_a_mode: Optional[str] = None
+    # Tier A only (sizing_mode == 'conceptual'). Selects the per-side budget interpretation:
+    #   'equal_premium'  → short collects tier_a_short_budget; long spends tier_a_long_budget.
+    #   'equal_max_loss' → short risks tier_a_short_budget of max loss; long is financed by the
+    #                      premium actually collected from the short side (tier_a_long_budget is a fallback).
+    # Required (and must be one of VALID_TIER_A_MODES) when sizing_mode == 'conceptual'; ignored otherwise.
+
+    tier_a_short_budget: Optional[float] = None
+    # Tier A only — TOTAL short-side budget (premium to collect in 'equal_premium';
+    # max loss in 'equal_max_loss'), split equally across the short names.
+    # Required (> 0) when sizing_mode == 'conceptual'; ignored otherwise.
+
+    tier_a_long_budget: Optional[float] = None
+    # Tier A only — TOTAL long-side spend in 'equal_premium'. In 'equal_max_loss' the long side is
+    # financed by collected short premium and this acts only as the edge-case fallback.
+    # Required (> 0) in 'equal_premium'; optional in 'equal_max_loss'; ignored for Tier B.
+
+    contract_multiplier: float = 100.0
+    # Shares per option contract — pinned at 100 for equity options (HD decision Q4).
+    # Tier B per-contract dollar conversion: pnl_dollars = quantity × pnl_per_share × contract_multiplier.
+    # Tier A omits the multiplier (fractional units); it cancels in the cycle return ratio. Must be > 0.
+
+    deployable_capital: Optional[float] = None
+    # Optional total-book HARD capital constraint for Tier B (HD decision Q8c).
+    # None (v1 default) ⇒ no book-level binding; only the per-name max_loss_budget_per_trade applies.
+    # When set, must be > 0.
+
     def __post_init__(self):
         # --- short_structure must be one of the two accepted strings ---
         # raise ValueError if not in VALID_SHORT_STRUCTURES
@@ -307,6 +359,60 @@ class BacktestRunConfig:
             errors.append(
                 f"wing_delta_target must be in (0, 0.5) for ironfly+closest_delta, "
                 f"got {self.wing_delta_target}"
+            )
+
+        # --- v1: short side is defined-risk only — reject naked short straddle (HD Q5) ---
+        if self.short_structure == "straddle":
+            errors.append(
+                "short_structure='straddle' is not supported in v1: the short side is "
+                f"defined-risk only (use one of {DEFINED_RISK_SHORT_STRUCTURES})."
+            )
+
+        # --- sizing_mode is required (no default); fail fast when unset (HD Q8b) ---
+        if self.sizing_mode is None:
+            errors.append(
+                "sizing_mode is required (no default): set 'conceptual' (Tier A) or "
+                "'integer_lots' (Tier B)."
+            )
+        elif self.sizing_mode not in VALID_SIZING_MODES:
+            errors.append(
+                f"sizing_mode must be one of {VALID_SIZING_MODES}, got {self.sizing_mode!r}"
+            )
+
+        # --- Tier A constraints (only when sizing_mode == 'conceptual') ---
+        if self.sizing_mode == "conceptual":
+            if self.tier_a_mode not in VALID_TIER_A_MODES:
+                errors.append(
+                    f"tier_a_mode must be one of {VALID_TIER_A_MODES} when "
+                    f"sizing_mode='conceptual', got {self.tier_a_mode!r}"
+                )
+            if self.tier_a_short_budget is None or self.tier_a_short_budget <= 0:
+                errors.append(
+                    "tier_a_short_budget must be > 0 when sizing_mode='conceptual', "
+                    f"got {self.tier_a_short_budget}"
+                )
+            # 'equal_premium' needs an explicit long budget; 'equal_max_loss' finances the long
+            # side from collected short premium (long budget is only a fallback there).
+            if self.tier_a_mode == "equal_premium":
+                if self.tier_a_long_budget is None or self.tier_a_long_budget <= 0:
+                    errors.append(
+                        "tier_a_long_budget must be > 0 when tier_a_mode='equal_premium', "
+                        f"got {self.tier_a_long_budget}"
+                    )
+            elif self.tier_a_long_budget is not None and self.tier_a_long_budget <= 0:
+                errors.append(
+                    "tier_a_long_budget must be > 0 when set, "
+                    f"got {self.tier_a_long_budget}"
+                )
+
+        # --- contract_multiplier and deployable_capital ---
+        if self.contract_multiplier <= 0:
+            errors.append(
+                f"contract_multiplier must be > 0, got {self.contract_multiplier}"
+            )
+        if self.deployable_capital is not None and self.deployable_capital <= 0:
+            errors.append(
+                f"deployable_capital must be > 0 when set, got {self.deployable_capital}"
             )
 
         if self.short_structure == "ironcondor":

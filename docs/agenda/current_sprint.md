@@ -15,6 +15,8 @@ Source of truth (all Accepted, do not re-litigate without an ADR):
 - [surface_engine_data_contract.md](../surface_engine_data_contract.md) — component contracts
 - [decisions/003_position_cap_per_side.md](../decisions/003_position_cap_per_side.md) — per-side cap
 
+> **Precedence (S5/S8/ORCH):** the data contract's S5/S8/ORCH sections still carry pre-design vocabulary (`return_on_allocated_budget`, `return_on_max_loss`-series go/no-go) and lag the design doc — they are flagged as Sprint 003 work in that doc's own drift table. **Until Deliverable 7 fills them at closeout, the S5/S8 design doc (`cycle_return_on_capital_at_risk` = `Σ pnl_total / Σ capital_at_risk_dollars`, M1–M3) is authoritative** for those sections. Build to the design doc, not the stale contract text.
+
 **Capital / dollars:** keep `deployable_capital` optional (`None` in v1); sizing budgets remain abstract risk units. Do not pin $1M this sprint.
 
 ---
@@ -41,11 +43,11 @@ Source of truth (all Accepted, do not re-litigate without an ADR):
 |---|----------|------|---------|
 | 1 | New config fields + validation | `src/backtest/run_config.py` | `sizing_mode`, `tier_a_mode`, `tier_a_short_budget`, `tier_a_long_budget`, `contract_multiplier`, `deployable_capital`; reject `short_structure='straddle'` |
 | 2 | S5 implementation | `src/backtest/pipeline.py::step5_select_and_size` | Select (per-side cap) + size (both tiers) + simulate (settle + returns) |
-| 3 | S8 cycle metrics | `src/backtest/` metrics | `cycle_return_on_capital_at_risk` + side splits; Sharpe/drawdown on cycle series |
+| 3 | S8 cycle metrics | `src/backtest/surface_metrics.py` | **Extend existing `build_date_summary` / `summarize_trade_log`** (do not add a new module): add `cycle_return_on_capital_at_risk` + short/long splits, migrate Sharpe/drawdown off body-credit onto the cycle series |
 | 4 | ORCH thin loop | `src/backtest/surface_runner.py` | Runner delegates to pipeline steps; no inline S5 business logic |
 | 5 | Contract tests | `tests/contract/` | `test_step5_select_and_size_contract.py`, `test_run_metrics_contract.py`, `test_orchestration_contract.py` |
 | 6 | Synthetic smoke | `tests/` | End-to-end S1→S8 on synthetic fixtures (no real cache) |
-| 7 | Data contract fill | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | Complete § S5 / S8 / ORCH from the design doc |
+| 7 | Data contract fill | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | Complete § S5 / S8 / ORCH from the design doc; **replace** stale `return_on_allocated_budget` / `return_on_max_loss`-series language with `cycle_return_on_capital_at_risk` + M1–M3 (design doc is authoritative until then — see Precedence note above) |
 | 8 | Code cleanup | `src/backtest/pipeline.py` | Remove deprecated `step6_apply_cost` stub |
 | 9 | Sprint memo | `docs/sprint_memos/003_s5_s8_build.md` | Closeout, drift resolved, follow-ons |
 
@@ -53,22 +55,36 @@ Source of truth (all Accepted, do not re-litigate without an ADR):
 
 ## Work breakdown (build order)
 
-| Phase | Work | Notes |
+Tests are written **with** the code in each phase (not deferred). Each phase below lists its test expectation.
+
+| Phase | Work | Test expectation (write with the code) |
 |-------|------|-------|
-| 1 | **Config** — add the six fields + `__post_init__` validation; reject short straddle | Tests first for validation |
-| 2 | **S5 Select** — extract per-side cap/rank from runner into `step5`; reuse `signal_rank_pct`, exclusion strings (`max_names_cap`, `invalid_max_loss`) | Pure function on S4 output |
-| 3 | **S5 Size** — Tier A (per-side budget ÷ count, fractional, no ×100) and Tier B (integer lots, ×100, capital binding) | Verify quantity sign, premium sign, max-loss geometry |
-| 4 | **S5 Simulate** — settle (S7) on included rows; compute M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` | Denominators derived in S5 from S3 fields |
-| 5 | **S8** — `cycle_return_on_capital_at_risk` per `trade_date` + side splits; Sharpe/drawdown on cycle series; keep `availability_rate`/`hit_rate` | Migrate off body-credit Sharpe |
-| 6 | **ORCH** — runner = thin S1→S8 loop; settle inside S5 | Remove inline S5 duplication |
-| 7 | **Tests** — S5/S8/ORCH contract tests + synthetic end-to-end smoke | Written with implementation |
+| 1 | **Config** — add the six fields + `__post_init__` validation; reject short straddle | **Tests first.** Validation rejects unset `sizing_mode` and `short_structure='straddle'`; accepts each valid `sizing_mode` / `tier_a_mode` combo |
+| 2 | **S5 Select** — extract per-side cap/rank from runner into `step5`; reuse `signal_rank_pct`, exclusion strings (`max_names_cap`, `invalid_max_loss`) | Per-side cap honored ([decision 003](../decisions/003_position_cap_per_side.md)); exclusion strings emitted; pure function on S4 output |
+| 3 | **S5 Size** — Tier A (per-side budget ÷ count, fractional, no ×100) and Tier B (integer lots, ×100, capital binding) | Both tiers: **quantity sign, premium sign, max-loss geometry**; Tier A budget÷count; Tier B integer lots + capital binding |
+| 4 | **S5 Simulate** — settle (S7) on included rows; compute M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` | M1–M3 / `pnl_total` / `capital_at_risk_dollars` match hand calc; denominators derived in S5 from S3 fields; `fill_label` set |
+| 5 | **S8** — `cycle_return_on_capital_at_risk` per `trade_date` + side splits; Sharpe/drawdown on cycle series; keep `availability_rate`/`hit_rate` | Cycle return + short/long splits; empty-side / zero-denominator → `NaN`; Sharpe on cycle series (off body-credit) |
+| 6 | **ORCH** — runner = thin S1→S8 loop; settle inside S5 | Contract test: runner delegates to pipeline steps; no duplicated S5 business logic |
+| 7 | **Synthetic smoke + full-suite verification** — end-to-end S1→S8 on synthetic fixtures (no real cache); run full `tests/` | Smoke green; full suite green — **no regressions on the 43 Sprint 002 contract tests** (per-phase contract tests already landed in Phases 1–6) |
 | 8 | **Cleanup + docs** — remove `step6` stub; fill data-contract S5/S8/ORCH; write memo | — |
+
+---
+
+## Progress log
+
+| Date | Deliverable / phase | Status | Notes |
+|------|---------------------|--------|-------|
+| 2026-06-13 | **D1 / Phase 1 — Config fields + validation** | ✅ Done | Added 6 fields to `BacktestRunConfig` (`sizing_mode`, `tier_a_mode`, `tier_a_short_budget`, `tier_a_long_budget`, `contract_multiplier=100`, `deployable_capital=None`); `__post_init__` rejects unset/invalid `sizing_mode`, rejects `short_structure='straddle'`, enforces Tier A budget rules, `contract_multiplier>0`, `deployable_capital>0` when set. 15 new tests in `test_run_envelope_contract.py`. Contract subset 58 ✅; full suite 393 ✅. |
+
+**Next start here → Deliverable 2 / Phase 2 (S5 Select).** Extract per-side cap/rank from `SurfaceRunner._select_size_and_settle` into `pipeline.step5_select_and_size` (currently a `pass` stub); reuse exclusion strings `no_tradeable_structure`, `earnings_exclusion`, `max_names_cap`, `invalid_max_loss`; honor [decision 003](../decisions/003_position_cap_per_side.md) per-side cap. Tests: `tests/contract/test_step5_select_and_size_contract.py`.
+
+> **Carry-over note:** `scripts/run_surface_search.py` still constructs configs without `sizing_mode`, so it now fails fast at construction (intended per Q8b). Wire a `sizing_mode` (and Tier A budgets) arg when the runner delegates to `step5` in Deliverable 4 (ORCH) — out of scope for D1.
 
 ---
 
 ## Success criteria
 
-- [ ] Six config fields added with validation; `short_structure='straddle'` rejected; tests cover each
+- [x] Six config fields added with validation; `short_structure='straddle'` rejected; tests cover each (D1 — 2026-06-13)
 - [ ] `step5_select_and_size` implements select + both sizing tiers + simulate; emits the full trade-log schema (M1–M3, `pnl_total`, `capital_at_risk_dollars`, `quantity`, `fill_label`)
 - [ ] Per-side cap honored ([decision 003](../decisions/003_position_cap_per_side.md)); exclusion strings match code vocabulary
 - [ ] S8 produces `cycle_return_on_capital_at_risk` + `short_cycle_return` / `long_cycle_return`; Sharpe on cycle series
