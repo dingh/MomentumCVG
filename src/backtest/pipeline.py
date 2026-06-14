@@ -467,95 +467,113 @@ def step4_apply_exclusions(
 # Step 5 — SELECT_AND_SIZE  (strategy_def §6.2, §6.3)
 # ---------------------------------------------------------------------------
 
+EXCLUSION_NO_STRUCTURE = "no_tradeable_structure"
+EXCLUSION_EARNINGS = "earnings_exclusion"
+EXCLUSION_MAX_NAMES_CAP = "max_names_cap"
+EXCLUSION_INVALID_MAX_LOSS = "invalid_max_loss"
+
+
+def _is_invalid_max_loss(value: object) -> bool:
+    """A row fails the geometric max-loss check when its per-share max loss is
+    missing or non-positive (defined-risk structures must risk > 0 per share).
+
+    Long straddles carry ``max_loss_per_share = premium_paid`` (> 0), so they
+    are not rejected here. Iron fly / condor rows whose ``wing_width - net_credit``
+    collapses to ``0`` (set by the assembler) are rejected.
+    """
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    try:
+        return float(value) <= 0.0
+    except (TypeError, ValueError):
+        return True
+
+
 def step5_select_and_size(
     signals: pd.DataFrame,
     structures: pd.DataFrame,
     config: "BacktestRunConfig",
 ) -> pd.DataFrame:
     """
-    Join signals to structures, apply the portfolio cap, compute sizing,
-    and assign included_in_portfolio + exclusion_reason to every row.
+    S5 Phase 1 — SELECT (per-side cap + rank). Sizing / simulate are later phases.
 
-    Required columns in signals (output of step2):
-        ticker, direction, signal_score, signal_rank_pct, cvg_score, cvg_rank_pct
+    Turns post-S4 candidates into a selection-annotated trade log: every candidate
+    row gets ``included_in_portfolio`` (bool) and ``exclusion_reason`` (str | None).
+    This is the runner's per-side cap/rank logic extracted into a pure function on
+    S4 output (no I/O, no settle). Sizing (`quantity`, `pnl_total`,
+    `capital_at_risk_dollars`) and simulate (S7 settle) are added in later
+    Sprint 003 deliverables; this function does not size or settle.
+
+    Signal columns (`direction`, `signal_rank_pct`) are preserved onto the
+    structure rows by S3, so no separate `signals` join is performed — the
+    `signals` parameter is accepted for orchestration symmetry but is unused here.
 
     Required columns in structures (output of steps 3+4):
-        ticker, instrument_type, had_earnings_nearby,
-        wing_width (NaN for straddle rows), net_credit (or net_debit for long straddles),
-        + all other history columns
+        ticker, direction, signal_rank_pct, structure_ok, had_earnings_nearby,
+        max_loss_per_share  (+ all other S3/S4 columns, preserved verbatim)
 
-    Returns columns:
-        All signal columns + all structure columns + sizing columns:
-            max_loss, quantity, notional_at_risk, max_loss_budget_per_trade
-        + inclusion columns:
-            included_in_portfolio (bool), exclusion_reason (str or None)
+    Selection rules (design § S5 Phase 1; exclusion vocabulary matches the runner):
+        1. structure_ok != True            → 'no_tradeable_structure' (priority)
+        2. structure_ok & earnings nearby  → 'earnings_exclusion'
+        3. per side (independent pools, decision 003): rank by signal_rank_pct
+           (long descending, short ascending); keep top max_names_per_side →
+           included_in_portfolio = True; overflow → 'max_names_cap'
+        4. a selected row with missing / non-positive max_loss_per_share →
+           'invalid_max_loss', included_in_portfolio = False
 
-    Rows with included_in_portfolio=False are kept only if
-    config.include_diagnostics == True.
+    Rows with included_in_portfolio == False are dropped unless
+    config.include_diagnostics is True.
     """
+    if structures is None or structures.empty:
+        empty = structures.copy() if structures is not None else pd.DataFrame()
+        empty["included_in_portfolio"] = pd.Series(dtype=bool)
+        empty["exclusion_reason"] = pd.Series(dtype=object)
+        return empty
 
-    # 1. Left join signals → structures on ticker.
-    #    Left join preserves signal rows even when no structure exists for that ticker.
+    work = structures.copy()
+    work["included_in_portfolio"] = False
+    work["exclusion_reason"] = None
 
-    # --- Assign exclusion reasons in priority order ---
+    # --- Eligibility (read S3/S4 flags; do not re-run upstream filters) ---
+    structure_ok = work["structure_ok"] == True  # noqa: E712
+    work.loc[~structure_ok, "exclusion_reason"] = EXCLUSION_NO_STRUCTURE
 
-    # 2. Rows where structure is missing (join produced NaN wing_width, etc.):
-    #    exclusion_reason = 'no_tradeable_structure'
-    #    included_in_portfolio = False
+    earnings_mask = structure_ok & (work["had_earnings_nearby"] == True)  # noqa: E712
+    work.loc[earnings_mask, "exclusion_reason"] = EXCLUSION_EARNINGS
 
-    # 3. Rows where had_earnings_nearby == True:
-    #    exclusion_reason = 'earnings_exclusion'
-    #    included_in_portfolio = False
+    eligible_mask = structure_ok & (work["had_earnings_nearby"] == False)  # noqa: E712
+    eligible = work[eligible_mask]
 
-    # 4. Remaining rows are candidates for the portfolio.
-    #    Separate by direction to apply max_names_per_side cap independently.
-    #
-    #    For each direction side ('long', 'short'):
-    #        Sort by signal_rank_pct (descending for 'long', ascending for 'short'
-    #        because 'short' candidates have the LOWEST momentum rank).
-    #        Keep the first max_names_per_side rows → included_in_portfolio = True.
-    #        Remaining rows → exclusion_reason = 'max_names_cap', included = False.
-    #
-    #    NOTE on 'short' direction sort:
-    #        Short candidates already sorted by signal_rank_pct ascending (lowest momentum
-    #        first). Use signal_rank_pct ascending so the best short signal (rank nearest
-    #        to 0) is kept first.
+    # --- Per-side cap + rank (independent long / short pools — decision 003) ---
+    selected_idx: List[object] = []
+    for direction, side in eligible.groupby("direction", sort=False):
+        # long: best signal is the HIGHEST rank (descending); short: LOWEST (ascending).
+        ascending = direction != "long"
+        side_sorted = side.sort_values("signal_rank_pct", ascending=ascending)
+        selected_idx.extend(side_sorted.head(config.max_names_per_side).index.tolist())
+        overflow = side_sorted.iloc[config.max_names_per_side:]
+        if not overflow.empty:
+            work.loc[overflow.index, "exclusion_reason"] = EXCLUSION_MAX_NAMES_CAP
 
-    # 5. For included rows: compute risk unit and sizing  (strategy_def §5.1, §6.3)
-    #    max_loss depends on instrument_type:
-    #
-    #    instrument_type == 'short_ironfly':
-    #        max_loss = wing_width - abs(net_credit)
-    #        This is the bounded per-share loss (wings cap the downside).
-    #
-    #    instrument_type == 'long_straddle':
-    #        max_loss = net_debit  (premium paid; entire debit is at risk if no move)
-    #
-    #    instrument_type == 'short_straddle':
-    #        max_loss = net_credit * config.short_straddle_max_loss_multiplier
-    #        (theoretical max loss is unlimited; use a risk proxy, e.g. 2× premium received)
-    #        OPEN: pin the short straddle max_loss convention before implementation.
-    #
-    #    quantity = config.max_loss_budget_per_trade / max_loss
-    #        Equal max-loss dollars across all instrument types.
-    #
-    #    notional_at_risk = quantity * max_loss
-    #        Should equal max_loss_budget_per_trade (confirm as a sanity check).
-    #
-    #    NOTE on dollar P&L conversion (Open Decision #4):
-    #        return_pct_on_width = pnl / wing_width  (already in ironfly_history)
-    #        adjusted_pnl_dollars ≈ return_pct_on_width * max_loss_budget_per_trade
-    #        This avoids per-share → per-contract × 100 conversion ambiguity.
-    #        Verify this against the pre-compute script's pnl definition.
+    if selected_idx:
+        work.loc[selected_idx, "included_in_portfolio"] = True
 
-    # 6. Add max_loss_budget_per_trade column (constant from config, for traceability).
+    # --- Sizing-eligibility reject (selection boundary, not a sizing computation) ---
+    if "max_loss_per_share" in work.columns:
+        for idx in selected_idx:
+            if _is_invalid_max_loss(work.at[idx, "max_loss_per_share"]):
+                work.at[idx, "included_in_portfolio"] = False
+                work.at[idx, "exclusion_reason"] = EXCLUSION_INVALID_MAX_LOSS
 
-    # 7. If config.include_diagnostics == False:
-    #    Drop rows where included_in_portfolio == False before returning.
+    if not config.include_diagnostics:
+        work = work[work["included_in_portfolio"] == True].copy()  # noqa: E712
 
-    # 8. Return full trade_rows DataFrame for this date.
-
-    pass
+    return work.reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------

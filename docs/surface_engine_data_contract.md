@@ -251,15 +251,36 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 ## S5 — Select, size, and simulate (`step5_select_and_size`)
 
-> **Deferred — Sprint 002 Session C.** Outcomes and open questions in [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md). Contracts + tests in **Sprint 003 build** (not spec-only xfails).
+> **Sprint 003 build in progress.** Authoritative design: [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S5. **Phase 1 (SELECT)** is implemented in `pipeline.py`; sizing + simulate + returns remain.
 
-**Target role:** Turn post-S4 **candidates** into **simulated trades**: (1) **select** — per-side cap (`max_names_per_side`, [decision 003](decisions/003_position_cap_per_side.md)); (2) **size** — constraint-driven policy via `sizing_mode`: **both** Tier A (equal fractional weight / conceptual return) and Tier B (integer lots × 100 + capital limits) in Sprint 003; (3) **simulate** — S7 settle + PnL at chosen size; (4) **return** — `return_on_allocated_budget` (+ structure-native diagnostics); `fill_label` (former S6 scope, collapsed here). See [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § Return normalization. Entry fill/cost is fixed at S3 (`config.fill`); no separate cost pass. Config supplies **constraints**, not literal quantities. See [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S5.
+**Target role:** Turn post-S4 **candidates** into **simulated trades**: (1) **select** — per-side cap (`max_names_per_side`, [decision 003](decisions/003_position_cap_per_side.md)); (2) **size** — constraint-driven policy via `sizing_mode`: **both** Tier A (per-side budget ÷ name count) and Tier B (integer lots × 100 + capital limits); (3) **simulate** — S7 settle + PnL at chosen size; (4) **return** — M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` (former S6 scope, collapsed here). See [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § Return normalization. Entry fill/cost is fixed at S3 (`config.fill`); no separate cost pass.
 
-**Code today:** `SurfaceRunner._select_size_and_settle` (partial); `pipeline.step5` is `pass`.
+### Phase 1 — SELECT (`built` — Sprint 003 D2)
 
-**Status:** `deferred` — design draft
+**Inputs:** `structures` after S3+S4 (`structure_ok`, `had_earnings_nearby`, `direction`, `signal_rank_pct`, `max_loss_per_share`, …). The `signals` parameter is accepted for orchestration symmetry but unused — S3 preserves signal columns on structure rows.
 
-**Contract test:** _planned Sprint 003_ — `tests/contract/test_step5_select_and_size_contract.py`
+**Outputs:** Same rows as input (subject to `include_diagnostics`) plus:
+- `included_in_portfolio` (bool)
+- `exclusion_reason` (str or `None`)
+
+**Invariants:**
+- **I1:** Reads `structure_ok` / `had_earnings_nearby` from upstream — does not re-run S3/S4 filters.
+- **I2:** Exclusion priority: `no_tradeable_structure` > `earnings_exclusion` > `max_names_cap` > `invalid_max_loss`.
+- **I3:** Per-side cap ([decision 003](decisions/003_position_cap_per_side.md)): long and short pools ranked independently; long by `signal_rank_pct` descending, short ascending; top `max_names_per_side` per side → `included_in_portfolio == True`; overflow → `max_names_cap`.
+- **I4:** Selected row with missing or non-positive `max_loss_per_share` → `invalid_max_loss`, `included_in_portfolio == False`.
+- **I5:** When `include_diagnostics == False`, excluded rows are dropped from output.
+
+**Exclusion vocabulary:** `no_tradeable_structure`, `earnings_exclusion`, `max_names_cap`, `invalid_max_loss`.
+
+**Status:** `partial` — SELECT built; SIZE + SIMULATE deferred to Sprint 003 Phases 3–4.
+
+**Contract test:** `tests/contract/test_step5_select_and_size_contract.py` (19 tests — SELECT only)
+
+### Phases 2–3 — SIZE + SIMULATE (`deferred`)
+
+Sizing (`quantity`, tier A/B policy) and simulate (S7 settle, M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label`) — see design doc § S5 Phases 2–3.
+
+**Code today:** `pipeline.step5_select_and_size` implements SELECT; `SurfaceRunner._select_size_and_settle` still owns size + settle inline until ORCH (Sprint 003 D4).
 
 ---
 
@@ -325,9 +346,10 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 | Component | Contract says | Code today | Resolution sprint |
 |-----------|---------------|------------|-------------------|
-| S5 (incl. returns) | `pipeline.py` step5 | `surface_runner._select_size_and_settle` | Sprint 003 |
-| Trade log economics | `return_on_allocated_budget`, quantity | `pnl_per_share` only | Sprint 003 |
-| Cap | Per-side `max_names_per_side` ([decision 003](decisions/003_position_cap_per_side.md)) | Runner aligned; pipeline `step5` still `pass` | Sprint 003 extract |
+| S5 SELECT | `pipeline.py` step5 Phase 1 | `pipeline.step5` built; runner still inline for size/settle | Sprint 003 D2 ✅ |
+| S5 SIZE + SIMULATE | `pipeline.py` step5 Phases 2–3 | `surface_runner._select_size_and_settle` | Sprint 003 Phases 3–4 |
+| Trade log economics | M1–M3, `pnl_total`, `capital_at_risk_dollars` | `pnl_per_share` only (runner) | Sprint 003 Phases 3–4 |
+| Cap | Per-side `max_names_per_side` ([decision 003](decisions/003_position_cap_per_side.md)) | Pipeline step5 SELECT + runner aligned | Sprint 003 D2 ✅ |
 | S8 denominator | max-loss budget returns | body-credit returns | Sprint 003 |
 
 ---
@@ -346,3 +368,4 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 | 2026-06-07 | S6 collapsed into S5 — fill at S3; step6 superseded |
 | 2026-06-07 | Cap semantics: per-side `max_names_per_side` (decision 003 supersedes 002) |
 | 2026-06-07 | S5 return: `return_on_allocated_budget` + diagnostics (portfolio design § Return normalization) |
+| 2026-06-14 | S5 Phase 1 SELECT: `step5_select_and_size` built; contract test (19 tests); drift register updated |

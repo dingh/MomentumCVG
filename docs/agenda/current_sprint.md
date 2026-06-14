@@ -75,8 +75,9 @@ Tests are written **with** the code in each phase (not deferred). Each phase bel
 | Date | Deliverable / phase | Status | Notes |
 |------|---------------------|--------|-------|
 | 2026-06-13 | **D1 / Phase 1 — Config fields + validation** | ✅ Done | Added 6 fields to `BacktestRunConfig` (`sizing_mode`, `tier_a_mode`, `tier_a_short_budget`, `tier_a_long_budget`, `contract_multiplier=100`, `deployable_capital=None`); `__post_init__` rejects unset/invalid `sizing_mode`, rejects `short_structure='straddle'`, enforces Tier A budget rules, `contract_multiplier>0`, `deployable_capital>0` when set. 15 new tests in `test_run_envelope_contract.py`. Contract subset 58 ✅; full suite 393 ✅. |
+| 2026-06-14 | **D2 / Phase 2 — S5 Select extraction** | ✅ Done | Extracted per-side cap/rank from `SurfaceRunner._select_size_and_settle` into `pipeline.step5_select_and_size` (SELECT phase only — no sizing/settle). Exclusion strings: `no_tradeable_structure`, `earnings_exclusion`, `max_names_cap`, `invalid_max_loss`. 19 tests in `test_step5_select_and_size_contract.py`. Contract subset 77 ✅. Runner still inline until D4 (ORCH). |
 
-**Next start here → Deliverable 2 / Phase 2 (S5 Select).** Extract per-side cap/rank from `SurfaceRunner._select_size_and_settle` into `pipeline.step5_select_and_size` (currently a `pass` stub); reuse exclusion strings `no_tradeable_structure`, `earnings_exclusion`, `max_names_cap`, `invalid_max_loss`; honor [decision 003](../decisions/003_position_cap_per_side.md) per-side cap. Tests: `tests/contract/test_step5_select_and_size_contract.py`.
+**Next start here → Deliverable 2 / Phase 3 (S5 Size).** Implement Tier A (`conceptual`) and Tier B (`integer_lots`) sizing in `step5_select_and_size`; add contract tests for quantity sign, premium sign, max-loss geometry, Tier A budget÷count, Tier B integer lots + capital binding. Runner delegation remains Deliverable 4 (ORCH).
 
 > **Carry-over note:** `scripts/run_surface_search.py` still constructs configs without `sizing_mode`, so it now fails fast at construction (intended per Q8b). Wire a `sizing_mode` (and Tier A budgets) arg when the runner delegates to `step5` in Deliverable 4 (ORCH) — out of scope for D1.
 
@@ -86,7 +87,7 @@ Tests are written **with** the code in each phase (not deferred). Each phase bel
 
 - [x] Six config fields added with validation; `short_structure='straddle'` rejected; tests cover each (D1 — 2026-06-13)
 - [ ] `step5_select_and_size` implements select + both sizing tiers + simulate; emits the full trade-log schema (M1–M3, `pnl_total`, `capital_at_risk_dollars`, `quantity`, `fill_label`)
-- [ ] Per-side cap honored ([decision 003](../decisions/003_position_cap_per_side.md)); exclusion strings match code vocabulary
+- [x] Per-side cap honored ([decision 003](../decisions/003_position_cap_per_side.md)); exclusion strings match code vocabulary (D2 SELECT — 2026-06-14)
 - [ ] S8 produces `cycle_return_on_capital_at_risk` + `short_cycle_return` / `long_cycle_return`; Sharpe on cycle series
 - [ ] `SurfaceRunner` orchestrates pipeline steps with no duplicated business logic
 - [ ] Contract tests for S5/S8/ORCH green; synthetic end-to-end smoke green
