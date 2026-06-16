@@ -27,7 +27,7 @@
 | Parameter | Pin | Notes |
 |-----------|-----|-------|
 | Max concurrent positions | **Per-side cap via `max_names_per_side`** | Long and short pools capped independently; e.g. `25` per side → up to 50 total when both fill. See [decisions/003_position_cap_per_side.md](decisions/003_position_cap_per_side.md). |
-| Sizing method | **Tier A (`conceptual`) or Tier B (`integer_lots`)** via required `sizing_mode` | Tier A = per-side budget ÷ name count (`tier_a_mode` ∈ {`equal_premium`, `equal_max_loss`}); Tier B = integer lots × `contract_multiplier`, capital-binding. See Sprint 003 design + [decisions/003_position_cap_per_side.md](decisions/003_position_cap_per_side.md). |
+| Sizing method | **Tier A (`conceptual`) or Tier B (`integer_lots`)** via required `sizing_mode` | Tier A = per-side budget ÷ name count (`tier_a_mode` ∈ {`equal_premium`, `equal_max_loss`}). Tier B follows **[ADR 004](decisions/004_tier_b_credit_financed_long.md)**: `tier_b_short_max_loss_budget` is **required** for `sizing_mode='integer_lots'`; shorts are sized from the **total short max-loss budget** by iterative fair-share integer lots; longs are financed **only** from collected short credit (iterative fair-share integer lots). **`deployable_capital` is reserved and not used in S5 Tier B sizing.** |
 | Global max-loss budget | **Deferred — not required for v1 backtest** | Sizing budgets stay abstract risk units (`deployable_capital` optional / `None`). Revisit at paper-trading stage. |
 | Per-name max-loss cap | **Deferred — not required for v1 backtest** | Configurable if/when needed; revisit at paper-trading stage. |
 

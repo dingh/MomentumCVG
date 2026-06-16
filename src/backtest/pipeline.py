@@ -20,15 +20,16 @@ Direction model (resolved — Open Decisions #1, #7)
   Structure lookup: straddle_history.  max_loss = net_debit (premium paid).
 - direction = 'short' (low momentum)  → short vol structure per config.short_structure:
     'ironfly'  → short iron fly; wing candidate from ironfly_history.
-    'straddle' → short straddle; position from straddle_history.
+    (v1 rejects naked short straddle; short side must be defined-risk.)
   Both sides are traded simultaneously. step3 routes per-ticker based on direction.
 
 Remaining open questions
 ------------------------
-- pnl units (Open Decision #4): ironfly_history stores pnl in per-share terms
-  (same units as wing_width and net_credit).  Dollar P&L = return_pct_on_width
-  × max_loss_budget_per_trade, which avoids any per-share / per-contract
-  conversion.  Verify this assumption against the pre-compute script before use.
+- pnl units (Open Decision #4): Sprint 003 sizing stores ``quantity`` in share-equivalent
+  units for both tiers (Tier A fractional; Tier B integer lots: contracts × contract_multiplier).
+  S5 Simulate will compute ``pnl_total = quantity × pnl_per_share`` with no separate
+  contract-multiplier application. ``capital_at_risk_dollars`` will be computed from
+  quantity and the appropriate per-share at-risk denominator (Tier A vs Tier B).
 """
 
 from __future__ import annotations

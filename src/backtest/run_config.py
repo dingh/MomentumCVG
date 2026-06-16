@@ -262,8 +262,11 @@ class BacktestRunConfig:
 
     contract_multiplier: float = 100.0
     # Shares per option contract — pinned at 100 for equity options (HD decision Q4).
-    # Tier B per-contract dollar conversion: pnl_dollars = quantity × pnl_per_share × contract_multiplier.
-    # Tier A omits the multiplier (fractional units); it cancels in the cycle return ratio. Must be > 0.
+    # ADR 004 convention (Tier B): ``quantity`` is stored in share-equivalent units
+    # (contracts × contract_multiplier). Therefore S5 Simulate should compute:
+    #   pnl_total = quantity × pnl_per_share
+    # with no additional × contract_multiplier applied at simulate time.
+    # Tier A also uses share-equivalent quantity (fractional allowed). Must be > 0.
 
     deployable_capital: Optional[float] = None
     # Optional book-level capital field — **not used** in Tier B S5 sizing (ADR 004).
