@@ -1,7 +1,7 @@
 # V1 universe protocol
 
 **Status:** Active (spec only — not yet fully wired in all backtest paths)  
-**Last updated:** 2026-05-23 (Week 0 review revision)
+**Last updated:** 2026-06-11 (rolling-window liquidity tentative direction)
 
 ---
 
@@ -39,12 +39,16 @@ Use fields already consumed by pipeline step1:
 - Among ties or borderline names, prefer lower `atm_spread_pct`.
 - Exact tie-break rules should match `step1_get_universe()` implementation during Sprint 002 wiring.
 
-The panel is built from **monthly** snapshots; step1 already performs PIT `month_date` lookup. The **4-week** intent means: eligibility reflects **recent** monthly liquidity history, not a single stale month. Implementation options (pick one in Sprint 002):
+The panel is built from **monthly** snapshots; step1 already performs PIT `month_date` lookup. The intent is that eligibility reflects **recent** liquidity history, not a single stale month.
 
-- **Option A (minimal):** use step1 as-is with `--dvol-top-pct 0.20` at each rebalance (monthly panel, PIT lookup).
-- **Option B (explicit 4-week):** require ticker to appear in top 20% in **each of the last 4 panel months** ≤ t (stricter, fewer names).
+**Tentative direction (not yet wired):** smooth liquidity over a **rolling ~3-month window** — i.e. rank on a rolling-window average of `atm_straddle_dollar_vol` and `atm_spread_pct` (same column names; change is in the panel build script). Window length (`X` months) is configurable and not finalized. This supersedes the earlier trailing-4-week framing and aligns with the HD decision in [surface_engine_data_contract.md](surface_engine_data_contract.md) (fix before the end-to-end correctness check; not blocking earlier contracts). See also [v1_spec_pins.md](v1_spec_pins.md).
 
-**Week 0 pin:** start alignment with **Option A** (existing pipeline); evaluate Option B as a sensitivity if churn is too high.
+Implementation options considered:
+
+- **Option A (minimal, current code):** use step1 as-is with `--dvol-top-pct 0.20` at each rebalance (monthly panel, PIT lookup). Still the baseline until the rolling window lands.
+- **Option B (rolling window, tentative target):** rank on a rolling `X`-month average (≈3 months) of the liquidity metrics ≤ t, then take top 20%. Smooths month-boundary churn.
+
+Until the rolling-window build ships, runs use **Option A**; treat Option B as the intended direction, not a locked pin.
 
 ---
 

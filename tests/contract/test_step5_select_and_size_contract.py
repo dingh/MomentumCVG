@@ -1,13 +1,13 @@
 """
-Contract: S5 Phase 1 — step5_select_and_size SELECTION.
+Contract: S5 — step5_select_and_size SELECT + SIZE.
 
-Scope (Sprint 003 Deliverable 2 / Phase 2): per-side cap + rank extracted from
-SurfaceRunner._select_size_and_settle into a pure function on S4 output.
-Sizing (`quantity`) and simulate (S7 settle) are later phases and are NOT
-asserted here.
+Scope (Sprint 003):
+- Phase 1 (SELECT): per-side cap + rank — Deliverable 2 / Phase 2.
+- Phase 2 (SIZE): Tier A (conceptual) + Tier B (integer_lots) — Phase 3.
+Simulate (S7 settle, M1–M3, pnl_total) is NOT asserted here.
 
 See docs/surface_engine_data_contract.md § S5 and
-docs/surface_engine_portfolio_metrics_design.md § S5 Phase 1.
+docs/surface_engine_portfolio_metrics_design.md § S5.
 """
 from __future__ import annotations
 
@@ -17,8 +17,11 @@ import pytest
 from src.backtest.pipeline import (
     EXCLUSION_EARNINGS,
     EXCLUSION_INVALID_MAX_LOSS,
+    EXCLUSION_MAX_LOSS_EXCEEDS_FAIR_SHARE,
     EXCLUSION_MAX_NAMES_CAP,
+    EXCLUSION_NO_SHORT_CREDIT,
     EXCLUSION_NO_STRUCTURE,
+    EXCLUSION_PREMIUM_EXCEEDS_FAIR_SHARE,
     step5_select_and_size,
 )
 from tests.contract.conftest import make_contract_config
@@ -38,6 +41,8 @@ def _s4_row(
     had_earnings_nearby: bool = False,
     max_loss_per_share: float = 2.0,
     instrument_type: str = "short_ironfly",
+    net_credit_per_share: float = 2.0,
+    entry_cost_per_share: float = 8.0,
 ) -> dict:
     return dict(
         ticker=ticker,
@@ -50,6 +55,8 @@ def _s4_row(
         had_earnings_nearby=had_earnings_nearby,
         instrument_type=instrument_type,
         max_loss_per_share=max_loss_per_share,
+        net_credit_per_share=net_credit_per_share,
+        entry_cost_per_share=entry_cost_per_share,
     )
 
 
@@ -95,6 +102,34 @@ def test_empty_structures_returns_empty_with_columns():
     assert out.empty
     assert "included_in_portfolio" in out.columns
     assert "exclusion_reason" in out.columns
+    assert "quantity" in out.columns
+    assert "sizing_mode" in out.columns
+
+
+def _long_premium_spend(row: pd.Series) -> float:
+    """Dollar premium from quantity in share-equivalent units (Tier A and Tier B)."""
+    return abs(float(row["quantity"])) * float(row["entry_cost_per_share"])
+
+
+def _short_credit_collected(row: pd.Series) -> float:
+    return abs(float(row["quantity"])) * float(row["net_credit_per_share"])
+
+
+def _short_max_loss_deployed(row: pd.Series) -> float:
+    return abs(float(row["quantity"])) * float(row["max_loss_per_share"])
+
+
+def _tier_b_integer_lots_config(**overrides):
+    defaults = dict(
+        sizing_mode="integer_lots",
+        tier_a_mode=None,
+        tier_a_short_budget=None,
+        tier_a_long_budget=None,
+        tier_b_short_max_loss_budget=10_000.0,
+        contract_multiplier=100.0,
+    )
+    defaults.update(overrides)
+    return make_contract_config(**defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -284,3 +319,493 @@ def test_include_diagnostics_true_keeps_excluded():
     cfg = make_contract_config(include_diagnostics=True)
     out = step5_select_and_size(None, structures, cfg)
     assert set(out["ticker"]) == {"L1", "BAD"}
+
+
+# ---------------------------------------------------------------------------
+# S5 Phase 2 — SIZE (Tier A conceptual + Tier B integer_lots)
+# ---------------------------------------------------------------------------
+
+def test_tier_a_equal_premium_divides_side_budget_by_included_count():
+    # 2 shorts, tier_a_short_budget=10_000, credit=$2/sh → per-name $5_000 → 2_500 units each.
+    structures = _s4_frame(
+        [
+            _s4_row("S1", "short", 0.05, net_credit_per_share=2.0),
+            _s4_row("S2", "short", 0.10, net_credit_per_share=2.0),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_short_budget=10_000.0,
+        max_names_per_side=2,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    for tkr in ("S1", "S2"):
+        row = out[out["ticker"] == tkr].iloc[0]
+        assert bool(row["included_in_portfolio"]) is True
+        assert row["quantity"] == pytest.approx(-2_500.0)
+    assert out["sizing_mode"].eq("conceptual").all()
+
+
+def test_tier_a_does_not_apply_contract_multiplier():
+    # Same geometry as above; if ×100 were applied, abs(quantity) would be 25 not 2_500.
+    structures = _s4_frame(
+        [_s4_row("S1", "short", 0.05, net_credit_per_share=2.0)]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_short_budget=10_000.0,
+        contract_multiplier=100.0,
+        max_names_per_side=1,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert abs(float(row["quantity"])) == pytest.approx(5_000.0)
+
+
+def test_tier_a_equal_max_loss_sizes_short_by_max_loss_denominator():
+    structures = _s4_frame(
+        [_s4_row("S1", "short", 0.05, max_loss_per_share=4.0, net_credit_per_share=2.0)]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_max_loss",
+        tier_a_short_budget=8_000.0,
+        max_names_per_side=1,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    # 8_000 / 1 name / 4.0 max_loss_per_share = 2_000 units (short → negative sign).
+    assert row["quantity"] == pytest.approx(-2_000.0)
+
+
+def test_tier_a_equal_max_loss_long_quantity_from_collected_short_credit():
+    # Short: 8_000 / 4.0 max_loss = 2_000 units; credit = 2_000 × $2 = $4_000.
+    # Long: 2 names → $4_000 / 2 / $8 premium = 250 units each.
+    structures = _s4_frame(
+        [
+            _s4_row("S1", "short", 0.05, max_loss_per_share=4.0, net_credit_per_share=2.0),
+            _s4_row("L1", "long", 0.95, entry_cost_per_share=8.0, max_loss_per_share=8.0),
+            _s4_row("L2", "long", 0.85, entry_cost_per_share=8.0, max_loss_per_share=8.0),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_max_loss",
+        tier_a_short_budget=8_000.0,
+        tier_a_long_budget=99_999.0,  # ignored when shorts fund longs
+        max_names_per_side=2,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    short_row = out[out["ticker"] == "S1"].iloc[0]
+    collected = abs(float(short_row["quantity"])) * float(short_row["net_credit_per_share"])
+    assert collected == pytest.approx(4_000.0)
+    for tkr in ("L1", "L2"):
+        row = out[out["ticker"] == tkr].iloc[0]
+        expected = (collected / 2) / 8.0
+        assert float(row["quantity"]) == pytest.approx(expected)
+
+
+def test_tier_a_equal_max_loss_fallback_to_long_budget_without_shorts():
+    # No shorts → long_budget = tier_a_long_budget (edge rule).
+    structures = _s4_frame(
+        [
+            _s4_row("L1", "long", 0.95, entry_cost_per_share=10.0, max_loss_per_share=10.0),
+            _s4_row("L2", "long", 0.85, entry_cost_per_share=10.0, max_loss_per_share=10.0),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_max_loss",
+        tier_a_short_budget=8_000.0,
+        tier_a_long_budget=5_000.0,
+        max_names_per_side=2,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    for tkr in ("L1", "L2"):
+        row = out[out["ticker"] == tkr].iloc[0]
+        # 5_000 / 2 names / $10 premium = 250 units.
+        assert float(row["quantity"]) == pytest.approx(250.0)
+
+
+def test_tier_a_equal_max_loss_fallback_when_short_credit_zero():
+    # Shorts present but collect $0 credit → fall back to tier_a_long_budget.
+    structures = _s4_frame(
+        [
+            _s4_row("S1", "short", 0.05, max_loss_per_share=4.0, net_credit_per_share=0.0),
+            _s4_row("L1", "long", 0.95, entry_cost_per_share=10.0, max_loss_per_share=10.0),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_max_loss",
+        tier_a_short_budget=8_000.0,
+        tier_a_long_budget=3_000.0,
+        max_names_per_side=1,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    long_row = out[out["ticker"] == "L1"].iloc[0]
+    # 3_000 / 1 / $10 = 300 units (not financed from zero short credit).
+    assert float(long_row["quantity"]) == pytest.approx(300.0)
+
+
+def test_tier_a_equal_premium_long_side_divides_budget_by_included_count():
+    # 2 longs, tier_a_long_budget=10_000, premium=$8/sh → 5_000 / 8 = 625 units each.
+    structures = _s4_frame(
+        [
+            _s4_row("L1", "long", 0.95, entry_cost_per_share=8.0, max_loss_per_share=8.0),
+            _s4_row("L2", "long", 0.85, entry_cost_per_share=8.0, max_loss_per_share=8.0),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_short_budget=10_000.0,
+        tier_a_long_budget=10_000.0,
+        max_names_per_side=2,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    for tkr in ("L1", "L2"):
+        row = out[out["ticker"] == tkr].iloc[0]
+        assert float(row["quantity"]) == pytest.approx(625.0)
+
+
+def test_tier_b_short_sizes_from_total_max_loss_fair_share():
+    # 1 short, tier_b_short_max_loss_budget=600, max_loss=$2/sh → floor(600/200)=3 contracts.
+    structures = _s4_frame(
+        [_s4_row("S1", "short", 0.05, max_loss_per_share=2.0)]
+    )
+    cfg = _tier_b_integer_lots_config(tier_b_short_max_loss_budget=600.0, max_names_per_side=1)
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert row["quantity"] == -300.0
+    assert _short_max_loss_deployed(row) <= cfg.tier_b_short_max_loss_budget
+
+
+def test_tier_b_quantity_is_share_equivalent_units():
+    """Tier B quantity = contracts × 100; quantity/100 is always integer."""
+    structures = _s4_frame(
+        [
+            _s4_row("S1", "short", 0.05, max_loss_per_share=2.0, net_credit_per_share=5.0),
+            _s4_row(
+                "L1", "long", 0.95,
+                entry_cost_per_share=8.0,
+                max_loss_per_share=8.0,
+            ),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(tier_b_short_max_loss_budget=1_000.0)
+    out = step5_select_and_size(None, structures, cfg)
+    mult = cfg.contract_multiplier
+    for _, row in out[out["included_in_portfolio"]].iterrows():
+        qty = float(row["quantity"])
+        assert qty % mult == 0
+        assert int(abs(qty) / mult) >= 1
+
+
+def test_tier_b_short_quantity_is_integer_floor():
+    # floor(550/200)=2, not ceil(2.75)=3.
+    structures = _s4_frame(
+        [_s4_row("S1", "short", 0.05, max_loss_per_share=2.0)]
+    )
+    cfg = _tier_b_integer_lots_config(tier_b_short_max_loss_budget=550.0, max_names_per_side=1)
+    out = step5_select_and_size(None, structures, cfg)
+    assert out.iloc[0]["quantity"] == -200.0
+
+
+def test_tier_b_quantity_sign_long_positive_short_negative():
+    # Short budget $1,000 → 5 contracts; credit = 5 × $5 × 100 = $2,500 finances 3 long lots.
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "L1", "long", 0.95,
+                instrument_type="long_straddle",
+                max_loss_per_share=8.0,
+                entry_cost_per_share=8.0,
+            ),
+            _s4_row(
+                "S1", "short", 0.05,
+                max_loss_per_share=2.0,
+                net_credit_per_share=5.0,
+            ),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(tier_b_short_max_loss_budget=1_000.0)
+    out = step5_select_and_size(None, structures, cfg)
+    long_row = out[out["ticker"] == "L1"].iloc[0]
+    short_row = out[out["ticker"] == "S1"].iloc[0]
+    assert float(short_row["quantity"]) == -500.0
+    assert float(long_row["quantity"]) == 300.0
+    assert _long_premium_spend(long_row) <= _short_credit_collected(short_row)
+
+
+def test_select_excluded_rows_do_not_receive_active_sizing():
+    structures = _s4_frame(
+        [
+            _s4_row("S_best", "short", 0.05),
+            _s4_row("S_overflow", "short", 0.30),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_short_budget=10_000.0,
+        max_names_per_side=1,
+        include_diagnostics=True,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    overflow = out[out["ticker"] == "S_overflow"].iloc[0]
+    assert bool(overflow["included_in_portfolio"]) is False
+    assert overflow["exclusion_reason"] == EXCLUSION_MAX_NAMES_CAP
+    assert pd.isna(overflow["quantity"])
+
+
+def test_deployable_capital_does_not_cap_tier_b_long_budget():
+    # Long budget = collected short credit only; deployable_capital is ignored in S5 Tier B.
+    structures = _s4_frame(
+        [
+            _s4_row("S1", "short", 0.05, max_loss_per_share=2.0, net_credit_per_share=2.0),
+            _s4_row("S2", "short", 0.10, max_loss_per_share=2.0, net_credit_per_share=2.0),
+            _s4_row(
+                "L1", "long", 0.95,
+                instrument_type="long_straddle",
+                entry_cost_per_share=5.0,
+                max_loss_per_share=5.0,
+            ),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(
+        tier_b_short_max_loss_budget=4_000.0,
+        deployable_capital=600.0,
+        max_names_per_side=2,
+        include_diagnostics=True,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    shorts = out[out["direction"] == "short"]
+    assert shorts["included_in_portfolio"].all()
+    total_credit = sum(_short_credit_collected(row) for _, row in shorts.iterrows())
+    assert total_credit == pytest.approx(4_000.0)
+
+    long_row = out[out["ticker"] == "L1"].iloc[0]
+    assert bool(long_row["included_in_portfolio"]) is True
+    # fair_share = $4,000 → floor(4000/500) = 8 contracts, not capped at $600.
+    assert float(long_row["quantity"]) == 800.0
+    assert _long_premium_spend(long_row) <= total_credit
+
+
+def test_tier_b_longs_financed_from_short_credit():
+    # 1 short: budget $1,000 → 5 contracts × $5 × 100 = $2,500 credit; 2 longs at $4/sh.
+    structures = _s4_frame(
+        [
+            _s4_row("S1", "short", 0.05, max_loss_per_share=2.0, net_credit_per_share=5.0),
+            _s4_row(
+                "L1", "long", 0.95,
+                instrument_type="long_straddle",
+                entry_cost_per_share=4.0,
+                max_loss_per_share=4.0,
+            ),
+            _s4_row(
+                "L2", "long", 0.85,
+                instrument_type="long_straddle",
+                entry_cost_per_share=4.0,
+                max_loss_per_share=4.0,
+            ),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(
+        tier_b_short_max_loss_budget=1_000.0,
+        max_names_per_side=2,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    short_row = out[out["ticker"] == "S1"].iloc[0]
+    credit = _short_credit_collected(short_row)
+    longs = out[(out["direction"] == "long") & out["included_in_portfolio"]]
+    total_long_spend = sum(_long_premium_spend(row) for _, row in longs.iterrows())
+    assert total_long_spend <= credit
+    assert len(longs) == 2
+    assert (longs["quantity"] == 300.0).all()
+
+
+def test_tier_b_max_loss_exceeds_fair_share_excludes_short():
+    # Budget $6,000; 3 shorts → initial fair_share $2,000; S_expensive needs $2,500/contract.
+    structures = _s4_frame(
+        [
+            _s4_row("S_a", "short", 0.05, max_loss_per_share=2.0, net_credit_per_share=2.0),
+            _s4_row("S_b", "short", 0.10, max_loss_per_share=2.0, net_credit_per_share=2.0),
+            _s4_row(
+                "S_expensive", "short", 0.30,
+                max_loss_per_share=25.0,
+                net_credit_per_share=10.0,
+            ),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(
+        tier_b_short_max_loss_budget=6_000.0,
+        max_names_per_side=3,
+        include_diagnostics=True,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    expensive = out[out["ticker"] == "S_expensive"].iloc[0]
+    assert bool(expensive["included_in_portfolio"]) is False
+    assert expensive["exclusion_reason"] == EXCLUSION_MAX_LOSS_EXCEEDS_FAIR_SHARE
+    survivors = out[(out["direction"] == "short") & out["included_in_portfolio"]]
+    assert len(survivors) == 2
+    total_risk = sum(_short_max_loss_deployed(row) for _, row in survivors.iterrows())
+    assert total_risk <= cfg.tier_b_short_max_loss_budget
+
+
+def test_tier_b_fair_share_drops_worst_offender_one_at_a_time():
+    # Budget $6,000 across 3 shorts: $200, $2,500, $4,000 per contract.
+    # Bulk filter would keep only S_cheap (fair_share $2,000). Worst-first drops
+    # S_worst first → fair_share rises to $3,000 → S_mid ($2,500) also fits.
+    structures = _s4_frame(
+        [
+            _s4_row("S_cheap", "short", 0.05, max_loss_per_share=2.0),
+            _s4_row("S_mid", "short", 0.10, max_loss_per_share=25.0),
+            _s4_row("S_worst", "short", 0.30, max_loss_per_share=40.0),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(
+        tier_b_short_max_loss_budget=6_000.0,
+        max_names_per_side=3,
+        include_diagnostics=True,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    included = set(out.loc[out["included_in_portfolio"], "ticker"])
+    assert included == {"S_cheap", "S_mid"}
+    worst = out[out["ticker"] == "S_worst"].iloc[0]
+    assert bool(worst["included_in_portfolio"]) is False
+    assert worst["exclusion_reason"] == EXCLUSION_MAX_LOSS_EXCEEDS_FAIR_SHARE
+
+
+def test_tier_b_premium_exceeds_fair_share_excludes_long():
+    # Collected credit = $10,000 (10 short contracts × $10/sh × 100).
+    # 5 longs → initial fair_share $2,000; L_expensive needs $3,000/contract → dropped.
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "S1", "short", 0.05,
+                max_loss_per_share=2.0,
+                net_credit_per_share=10.0,
+            ),
+            _s4_row("L_a", "long", 0.95, entry_cost_per_share=12.0, max_loss_per_share=12.0),
+            _s4_row("L_b", "long", 0.90, entry_cost_per_share=15.0, max_loss_per_share=15.0),
+            _s4_row("L_c", "long", 0.85, entry_cost_per_share=18.0, max_loss_per_share=18.0),
+            _s4_row("L_d", "long", 0.80, entry_cost_per_share=20.0, max_loss_per_share=20.0),
+            _s4_row(
+                "L_expensive", "long", 0.75,
+                entry_cost_per_share=30.0,
+                max_loss_per_share=30.0,
+            ),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(
+        tier_b_short_max_loss_budget=2_500.0,
+        max_names_per_side=5,
+        include_diagnostics=True,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    expensive = out[out["ticker"] == "L_expensive"].iloc[0]
+    assert bool(expensive["included_in_portfolio"]) is False
+    assert expensive["exclusion_reason"] == EXCLUSION_PREMIUM_EXCEEDS_FAIR_SHARE
+    survivors = out[(out["direction"] == "long") & out["included_in_portfolio"]]
+    assert len(survivors) == 4
+
+
+def test_tier_b_short_only_when_no_long_fits():
+    structures = _s4_frame(
+        [
+            _s4_row("S1", "short", 0.05, max_loss_per_share=2.0, net_credit_per_share=2.0),
+            _s4_row(
+                "L_costly", "long", 0.95,
+                entry_cost_per_share=50.0,
+                max_loss_per_share=50.0,
+            ),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(
+        tier_b_short_max_loss_budget=400.0,
+        include_diagnostics=True,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    # Short: budget $400 → 2 contracts; credit $400; long needs $5,000/contract → dropped.
+    short_row = out[out["ticker"] == "S1"].iloc[0]
+    long_row = out[out["ticker"] == "L_costly"].iloc[0]
+    assert bool(short_row["included_in_portfolio"]) is True
+    assert bool(long_row["included_in_portfolio"]) is False
+    assert long_row["exclusion_reason"] == EXCLUSION_PREMIUM_EXCEEDS_FAIR_SHARE
+
+
+def test_tier_b_no_short_credit_excludes_longs():
+    structures = _s4_frame(
+        [_s4_row("L1", "long", 0.95, entry_cost_per_share=8.0, max_loss_per_share=8.0)]
+    )
+    cfg = _tier_b_integer_lots_config(
+        tier_b_short_max_loss_budget=400.0,
+        include_diagnostics=True,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert bool(row["included_in_portfolio"]) is False
+    assert row["exclusion_reason"] == EXCLUSION_NO_SHORT_CREDIT
+
+
+def test_tier_b_long_only_ignores_short_max_loss_budget():
+    """tier_b_short_max_loss_budget is required on config but unused when no shorts."""
+    structures = _s4_frame(
+        [_s4_row("L1", "long", 0.95, entry_cost_per_share=8.0, max_loss_per_share=8.0)]
+    )
+    cfg = _tier_b_integer_lots_config(tier_b_short_max_loss_budget=50_000.0)
+    out = step5_select_and_size(None, structures, cfg)
+    assert out.iloc[0]["exclusion_reason"] == EXCLUSION_NO_SHORT_CREDIT
+    assert pd.isna(out.iloc[0]["quantity"])
+
+
+def test_tier_b_short_budget_below_one_contract_max_loss_excluded():
+    # Budget $199 < 1-contract max-loss $200 → cannot fit even one lot.
+    structures = _s4_frame(
+        [_s4_row("S1", "short", 0.05, max_loss_per_share=2.0)]
+    )
+    cfg = _tier_b_integer_lots_config(tier_b_short_max_loss_budget=199.0, max_names_per_side=1)
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert bool(row["included_in_portfolio"]) is False
+    assert row["exclusion_reason"] == EXCLUSION_MAX_LOSS_EXCEEDS_FAIR_SHARE
+    assert pd.isna(row["quantity"])
+
+
+def test_tier_b_deployable_capital_none_matches_ignored_when_set():
+    """Long budget = collected credit regardless of deployable_capital (ADR 004)."""
+    structures = _s4_frame(
+        [
+            _s4_row("S1", "short", 0.05, max_loss_per_share=2.0, net_credit_per_share=5.0),
+            _s4_row("L1", "long", 0.95, entry_cost_per_share=8.0, max_loss_per_share=8.0),
+        ]
+    )
+    base = dict(tier_b_short_max_loss_budget=1_000.0)
+    out_none = step5_select_and_size(
+        None, structures, _tier_b_integer_lots_config(deployable_capital=None, **base)
+    )
+    out_set = step5_select_and_size(
+        None, structures, _tier_b_integer_lots_config(deployable_capital=600.0, **base)
+    )
+    for tkr in ("S1", "L1"):
+        assert out_none[out_none["ticker"] == tkr]["quantity"].iloc[0] == (
+            out_set[out_set["ticker"] == tkr]["quantity"].iloc[0]
+        )
+
+
+def test_tier_b_max_loss_budget_per_trade_not_echoed_on_rows():
+    """Tier B sizing does not use or echo max_loss_budget_per_trade on trade log rows."""
+    structures = _s4_frame(
+        [_s4_row("S1", "short", 0.05, max_loss_per_share=2.0, net_credit_per_share=2.0)]
+    )
+    cfg = _tier_b_integer_lots_config(
+        tier_b_short_max_loss_budget=600.0,
+        max_loss_budget_per_trade=999.0,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    assert out["max_loss_budget_per_trade"].isna().all()
+    # Sizing follows tier_b_short_max_loss_budget, not max_loss_budget_per_trade.
+    assert out.iloc[0]["quantity"] == -300.0

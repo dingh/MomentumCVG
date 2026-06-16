@@ -140,6 +140,7 @@ def make_contract_config(**overrides) -> BacktestRunConfig:
         tier_a_mode="equal_premium",
         tier_a_short_budget=10_000.0,
         tier_a_long_budget=10_000.0,
+        tier_b_short_max_loss_budget=10_000.0,
     )
     defaults.update(overrides)
     return BacktestRunConfig(**defaults)

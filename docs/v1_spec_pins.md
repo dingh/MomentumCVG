@@ -1,7 +1,7 @@
 # V1 specification pins
 
 **Status:** Active  
-**Last updated:** 2026-05-23 (Week 0 review revision)  
+**Last updated:** 2026-06-11 (Sprint 003 config-validation alignment)  
 **Purpose:** Single source of truth for v1 backtest and live-prep scope. Change only via explicit decision memo.
 
 ---
@@ -27,10 +27,9 @@
 | Parameter | Pin | Notes |
 |-----------|-----|-------|
 | Max concurrent positions | **Per-side cap via `max_names_per_side`** | Long and short pools capped independently; e.g. `25` per side → up to 50 total when both fill. See [decisions/003_position_cap_per_side.md](decisions/003_position_cap_per_side.md). |
-| Sizing method | **Equal max-loss per trade** | Subject to global budget and caps |
-| Global max-loss budget | **To pin in Sprint 002** | Tie to deployable capital (~$1M) |
-| Per-name max-loss cap | **To pin in Sprint 002** | Prevents concentration |
-| Sector / cluster cap | **To pin in Sprint 002** | Required before shadow mode |
+| Sizing method | **Tier A (`conceptual`) or Tier B (`integer_lots`)** via required `sizing_mode` | Tier A = per-side budget ÷ name count (`tier_a_mode` ∈ {`equal_premium`, `equal_max_loss`}); Tier B = integer lots × `contract_multiplier`, capital-binding. See Sprint 003 design + [decisions/003_position_cap_per_side.md](decisions/003_position_cap_per_side.md). |
+| Global max-loss budget | **Deferred — not required for v1 backtest** | Sizing budgets stay abstract risk units (`deployable_capital` optional / `None`). Revisit at paper-trading stage. |
+| Per-name max-loss cap | **Deferred — not required for v1 backtest** | Configurable if/when needed; revisit at paper-trading stage. |
 
 ---
 
@@ -39,7 +38,7 @@
 | Parameter | Pin | Notes |
 |-----------|-----|-------|
 | Pool | Broader than S&P 500 | Precompute superset; trade subset only |
-| Selection rule | **Trailing 4-week liquidity rank, top 20%** | Point-in-time; see [v1_universe_protocol.md](v1_universe_protocol.md) |
+| Selection rule | **Rolling 3-month liquidity rank, top 20%** *(tentative; window configurable)* | Point-in-time. Supersedes earlier trailing-4-week intent per [surface_engine_data_contract.md](surface_engine_data_contract.md) HD decision (rolling-window avg of `atm_straddle_dollar_vol` / `atm_spread_pct`). See [v1_universe_protocol.md](v1_universe_protocol.md) |
 | Liquidity score source | **`ticker_liquidity_panel.parquet`** via pipeline step1 | Uses `atm_straddle_dollar_vol`, `atm_spread_pct` |
 
 ---
@@ -95,3 +94,7 @@
 | 2026-05-23 | Week 0 review: short = iron fly or iron condor per run; long straddle; naked long call deferred |
 | 2026-05-25 | Clarified max concurrent positions as 50 total across long+short via Decision 002 |
 | 2026-06-07 | Per-side cap via `max_names_per_side` (Decision 003 supersedes 002); e.g. 25+25 ≈ 50-book |
+| 2026-06-11 | Sizing method → Tier A / Tier B (`sizing_mode`) per Sprint 003 design |
+| 2026-06-11 | Global max-loss budget + per-name cap → deferred (not required for v1 backtest; revisit at paper trading) |
+| 2026-06-11 | Removed sector / cluster cap from v1 scope (not considered for v1) |
+| 2026-06-11 | Universe selection → rolling 3-month liquidity (tentative, configurable window); supersedes trailing-4-week per data-contract HD decision |

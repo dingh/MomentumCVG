@@ -85,15 +85,34 @@ def test_conceptual_tier_a_combos_accepted(tier_a_mode):
     assert cfg.tier_a_mode == tier_a_mode
 
 
-def test_integer_lots_accepted_without_tier_a_fields():
-    """Tier B does not require the Tier A budget fields."""
+def test_integer_lots_requires_tier_b_short_max_loss_budget():
+    """Tier B requires a total short-side max-loss budget."""
+    with pytest.raises(ValueError):
+        make_contract_config(
+            sizing_mode="integer_lots",
+            tier_b_short_max_loss_budget=None,
+        )
+
+
+def test_integer_lots_accepted_with_tier_b_short_budget():
+    """Tier B does not require Tier A budget fields."""
     cfg = make_contract_config(
         sizing_mode="integer_lots",
         tier_a_mode=None,
         tier_a_short_budget=None,
         tier_a_long_budget=None,
+        tier_b_short_max_loss_budget=50_000.0,
     )
     assert cfg.sizing_mode == "integer_lots"
+    assert cfg.tier_b_short_max_loss_budget == 50_000.0
+
+
+def test_tier_b_short_max_loss_budget_must_be_positive():
+    with pytest.raises(ValueError):
+        make_contract_config(
+            sizing_mode="integer_lots",
+            tier_b_short_max_loss_budget=0.0,
+        )
 
 
 def test_conceptual_requires_tier_a_mode():

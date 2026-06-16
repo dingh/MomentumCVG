@@ -254,15 +254,21 @@ class BacktestRunConfig:
     # financed by collected short premium and this acts only as the edge-case fallback.
     # Required (> 0) in 'equal_premium'; optional in 'equal_max_loss'; ignored for Tier B.
 
+    tier_b_short_max_loss_budget: Optional[float] = None
+    # Tier B only (sizing_mode == 'integer_lots') — TOTAL short-side max-loss budget (dollars) for
+    # the cycle. Split via iterative fair share across included shorts, then integer contracts.
+    # Required (> 0) when sizing_mode == 'integer_lots'; ignored for Tier A.
+    # Deployed short max-loss may be less than this value (integer slack); never exceeds it.
+
     contract_multiplier: float = 100.0
     # Shares per option contract — pinned at 100 for equity options (HD decision Q4).
     # Tier B per-contract dollar conversion: pnl_dollars = quantity × pnl_per_share × contract_multiplier.
     # Tier A omits the multiplier (fractional units); it cancels in the cycle return ratio. Must be > 0.
 
     deployable_capital: Optional[float] = None
-    # Optional total-book HARD capital constraint for Tier B (HD decision Q8c).
-    # None (v1 default) ⇒ no book-level binding; only the per-name max_loss_budget_per_trade applies.
-    # When set, must be > 0.
+    # Optional book-level capital field — **not used** in Tier B S5 sizing (ADR 004).
+    # Long premium budget = collected short credit only. Retained for future / other layers.
+    # Must be > 0 when set.
 
     def __post_init__(self):
         # --- short_structure must be one of the two accepted strings ---
@@ -403,6 +409,17 @@ class BacktestRunConfig:
                 errors.append(
                     "tier_a_long_budget must be > 0 when set, "
                     f"got {self.tier_a_long_budget}"
+                )
+
+        # --- Tier B constraints (only when sizing_mode == 'integer_lots') ---
+        if self.sizing_mode == "integer_lots":
+            if (
+                self.tier_b_short_max_loss_budget is None
+                or self.tier_b_short_max_loss_budget <= 0
+            ):
+                errors.append(
+                    "tier_b_short_max_loss_budget must be > 0 when "
+                    f"sizing_mode='integer_lots', got {self.tier_b_short_max_loss_budget}"
                 )
 
         # --- contract_multiplier and deployable_capital ---

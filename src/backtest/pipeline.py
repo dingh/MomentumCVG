@@ -33,6 +33,7 @@ Remaining open questions
 
 from __future__ import annotations
 
+import math
 from datetime import date
 from typing import TYPE_CHECKING, Dict, List, Optional
 
@@ -471,6 +472,332 @@ EXCLUSION_NO_STRUCTURE = "no_tradeable_structure"
 EXCLUSION_EARNINGS = "earnings_exclusion"
 EXCLUSION_MAX_NAMES_CAP = "max_names_cap"
 EXCLUSION_INVALID_MAX_LOSS = "invalid_max_loss"
+EXCLUSION_PREMIUM_EXCEEDS_FAIR_SHARE = "premium_exceeds_fair_share"
+EXCLUSION_MAX_LOSS_EXCEEDS_FAIR_SHARE = "max_loss_exceeds_fair_share"
+EXCLUSION_NO_SHORT_CREDIT = "no_short_credit"
+
+
+def _signed_quantity(abs_qty: float, direction: str) -> float:
+    """Position sign: long = +abs_qty, short = -abs_qty."""
+    if direction == "long":
+        return abs_qty
+    return -abs_qty
+
+
+def _tier_b_record_quantity(
+    contracts: int,
+    direction: str,
+    contract_multiplier: float,
+) -> float:
+    """Tier B ``quantity`` in share-equivalent units (contracts × multiplier).
+
+    Aligns with Tier A so simulate can use ``pnl_total = quantity × pnl_per_share``
+    with no extra multiplier. ``quantity / contract_multiplier`` is always integer.
+    """
+    return _signed_quantity(float(contracts) * contract_multiplier, direction)
+
+
+def _structure_premium_per_share(row: pd.Series) -> Optional[float]:
+    """M1 / Tier-A ``equal_premium`` sizing denominator (positive magnitude)."""
+    direction = row.get("direction")
+    if direction == "long":
+        raw = row.get("entry_cost_per_share")
+    else:
+        raw = row.get("net_credit_per_share")
+    if raw is None:
+        return None
+    try:
+        if pd.isna(raw):
+            return None
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if direction == "long":
+        return abs(val)
+    return max(val, 0.0)
+
+
+def _at_risk_per_share(row: pd.Series) -> Optional[float]:
+    """Per-share capital-at-risk for Tier B sizing and ``capital_at_risk_dollars``."""
+    direction = row.get("direction")
+    if direction == "long":
+        premium = _structure_premium_per_share(row)
+        if premium is not None and premium > 0:
+            return premium
+    raw = row.get("max_loss_per_share")
+    if raw is None:
+        return None
+    try:
+        if pd.isna(raw):
+            return None
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return val if val > 0 else None
+
+
+def _one_contract_premium_dollars(
+    row: pd.Series,
+    contract_multiplier: float,
+) -> Optional[float]:
+    """Premium for one option contract (per-share premium × multiplier)."""
+    premium = _structure_premium_per_share(row)
+    if premium is None or premium <= 0:
+        return None
+    return premium * contract_multiplier
+
+
+def _one_contract_max_loss_dollars(
+    row: pd.Series,
+    contract_multiplier: float,
+) -> Optional[float]:
+    """Max-loss dollars for one short option contract."""
+    if row.get("direction") != "short":
+        return None
+    at_risk = _at_risk_per_share(row)
+    if at_risk is None or at_risk <= 0:
+        return None
+    return at_risk * contract_multiplier
+
+
+def _iterative_fair_share_survivors(
+    work: pd.DataFrame,
+    idx_list: List[object],
+    budget: float,
+    one_contract_cost_fn,
+) -> List[object]:
+    """Return indices that survive iterative fair-share affordability filtering.
+
+  Each round: compute ``fair_share = budget / n``. If any active name cannot
+  afford one contract (cost > fair_share), drop the single **worst** offender
+  (highest 1-contract cost) and recalculate. Repeat until all survivors fit or
+  the pool is empty. Dropping one expensive name raises fair_share for the rest.
+    """
+    active = list(idx_list)
+    while active:
+        n = len(active)
+        fair_share = budget / n
+        unaffordable: List[object] = []
+        for idx in active:
+            cost = one_contract_cost_fn(work.loc[idx])
+            if cost is None or cost <= 0 or cost > fair_share:
+                unaffordable.append(idx)
+        if not unaffordable:
+            return active
+        worst_idx = max(
+            unaffordable,
+            key=lambda i: one_contract_cost_fn(work.loc[i]) or float("inf"),
+        )
+        active.remove(worst_idx)
+    return []
+
+
+def _collected_short_credit_dollars(
+    work: pd.DataFrame,
+    short_idx: List[object],
+    contract_multiplier: float,
+) -> float:
+    total = 0.0
+    for idx in short_idx:
+        if not bool(work.at[idx, "included_in_portfolio"]):
+            continue
+        credit = _structure_premium_per_share(work.loc[idx])
+        qty = work.at[idx, "quantity"]
+        if credit is None or credit <= 0 or qty is None or pd.isna(qty):
+            continue
+        # quantity is share-equivalent units (contracts × multiplier).
+        total += abs(float(qty)) * credit
+    return total
+
+
+def _filter_longs_by_iterative_fair_share(
+    work: pd.DataFrame,
+    long_idx: List[object],
+    long_budget: float,
+    contract_multiplier: float,
+) -> List[object]:
+    """Return long indices that survive the iterative fair-share affordability filter."""
+    return _iterative_fair_share_survivors(
+        work,
+        long_idx,
+        long_budget,
+        lambda row: _one_contract_premium_dollars(row, contract_multiplier),
+    )
+
+
+def _exclude_sized_row(
+    work: pd.DataFrame,
+    idx: object,
+    exclusion_reason: str,
+) -> None:
+    work.at[idx, "included_in_portfolio"] = False
+    work.at[idx, "exclusion_reason"] = exclusion_reason
+    work.at[idx, "quantity"] = float("nan")
+
+
+def _apply_tier_a_sizing(work: pd.DataFrame, config: "BacktestRunConfig") -> None:
+    """Tier A — fractional units, no contract multiplier."""
+    included = work.index[work["included_in_portfolio"] == True].tolist()  # noqa: E712
+    if not included:
+        return
+
+    short_idx = [i for i in included if work.at[i, "direction"] == "short"]
+    long_idx = [i for i in included if work.at[i, "direction"] == "long"]
+    n_short = len(short_idx)
+    n_long = len(long_idx)
+
+    short_per_name_budget = (
+        config.tier_a_short_budget / n_short if n_short else None
+    )
+
+    # Short side first (equal_max_loss long financing depends on short quantities).
+    for idx in short_idx:
+        if config.tier_a_mode == "equal_premium":
+            denom = _structure_premium_per_share(work.loc[idx])
+        else:
+            denom = _at_risk_per_share(work.loc[idx])
+        if denom is None or denom <= 0 or short_per_name_budget is None:
+            work.at[idx, "included_in_portfolio"] = False
+            work.at[idx, "exclusion_reason"] = EXCLUSION_INVALID_MAX_LOSS
+            continue
+        abs_qty = short_per_name_budget / denom
+        work.at[idx, "quantity"] = _signed_quantity(abs_qty, "short")
+
+    if config.tier_a_mode == "equal_premium":
+        long_budget = config.tier_a_long_budget
+    else:
+        collected = 0.0
+        for idx in short_idx:
+            if not bool(work.at[idx, "included_in_portfolio"]):
+                continue
+            credit = _structure_premium_per_share(work.loc[idx])
+            qty = work.at[idx, "quantity"]
+            if credit is not None and credit > 0 and qty is not None and not pd.isna(qty):
+                collected += abs(float(qty)) * credit
+        if n_short == 0 or collected <= 0:
+            long_budget = config.tier_a_long_budget
+        else:
+            long_budget = collected
+
+    long_per_name_budget = long_budget / n_long if n_long and long_budget else None
+    for idx in long_idx:
+        denom = _structure_premium_per_share(work.loc[idx])
+        if (
+            denom is None
+            or denom <= 0
+            or long_per_name_budget is None
+            or long_per_name_budget <= 0
+        ):
+            work.at[idx, "included_in_portfolio"] = False
+            work.at[idx, "exclusion_reason"] = EXCLUSION_INVALID_MAX_LOSS
+            continue
+        abs_qty = long_per_name_budget / denom
+        work.at[idx, "quantity"] = _signed_quantity(abs_qty, "long")
+
+
+def _apply_tier_b_sizing(work: pd.DataFrame, config: "BacktestRunConfig") -> None:
+    """Tier B — integer shorts (total max-loss fair share) + credit-financed longs.
+
+    See docs/decisions/004_tier_b_credit_financed_long.md.
+    """
+    included = work.index[work["included_in_portfolio"] == True].tolist()  # noqa: E712
+    if not included:
+        return
+
+    short_budget = config.tier_b_short_max_loss_budget
+    multiplier = config.contract_multiplier
+    short_idx = [i for i in included if work.at[i, "direction"] == "short"]
+    long_idx = [i for i in included if work.at[i, "direction"] == "long"]
+
+    # --- Pass 1: shorts from total max-loss budget (iterative fair share + integer lots) ---
+    if short_idx and short_budget is not None and short_budget > 0:
+        short_survivors = _iterative_fair_share_survivors(
+            work,
+            short_idx,
+            short_budget,
+            lambda row: _one_contract_max_loss_dollars(row, multiplier),
+        )
+        short_survivor_set = set(short_survivors)
+
+        for idx in short_idx:
+            if idx in short_survivor_set:
+                continue
+            cost = _one_contract_max_loss_dollars(work.loc[idx], multiplier)
+            reason = (
+                EXCLUSION_INVALID_MAX_LOSS
+                if cost is None or cost <= 0
+                else EXCLUSION_MAX_LOSS_EXCEEDS_FAIR_SHARE
+            )
+            _exclude_sized_row(work, idx, reason)
+
+        if short_survivors:
+            fair_share = short_budget / len(short_survivors)
+            for idx in short_survivors:
+                cost = _one_contract_max_loss_dollars(work.loc[idx], multiplier)
+                if cost is None or cost <= 0:
+                    _exclude_sized_row(work, idx, EXCLUSION_INVALID_MAX_LOSS)
+                    continue
+                contracts = math.floor(fair_share / cost)
+                if contracts < 1:
+                    _exclude_sized_row(work, idx, EXCLUSION_INVALID_MAX_LOSS)
+                    continue
+                work.at[idx, "quantity"] = _tier_b_record_quantity(
+                    contracts, "short", multiplier
+                )
+
+    collected_credit = _collected_short_credit_dollars(work, short_idx, multiplier)
+    long_budget = collected_credit
+
+    if not long_idx:
+        return
+
+    # --- Pass 2: longs financed solely from collected short credit ---
+    if long_budget <= 0:
+        for idx in long_idx:
+            _exclude_sized_row(work, idx, EXCLUSION_NO_SHORT_CREDIT)
+        return
+
+    survivors = _filter_longs_by_iterative_fair_share(
+        work, long_idx, long_budget, multiplier
+    )
+    survivor_set = set(survivors)
+
+    for idx in long_idx:
+        if idx in survivor_set:
+            continue
+        cost = _one_contract_premium_dollars(work.loc[idx], multiplier)
+        reason = (
+            EXCLUSION_INVALID_MAX_LOSS
+            if cost is None or cost <= 0
+            else EXCLUSION_PREMIUM_EXCEEDS_FAIR_SHARE
+        )
+        _exclude_sized_row(work, idx, reason)
+
+    if not survivors:
+        return
+
+    fair_share = long_budget / len(survivors)
+    for idx in survivors:
+        cost = _one_contract_premium_dollars(work.loc[idx], multiplier)
+        if cost is None or cost <= 0:
+            _exclude_sized_row(work, idx, EXCLUSION_INVALID_MAX_LOSS)
+            continue
+        contracts = math.floor(fair_share / cost)
+        if contracts < 1:
+            _exclude_sized_row(work, idx, EXCLUSION_INVALID_MAX_LOSS)
+            continue
+        work.at[idx, "quantity"] = _tier_b_record_quantity(contracts, "long", multiplier)
+
+
+def _apply_sizing(work: pd.DataFrame, config: "BacktestRunConfig") -> None:
+    work["quantity"] = float("nan")
+    work["sizing_mode"] = config.sizing_mode
+    work["max_loss_budget_per_trade"] = float("nan")
+
+    if config.sizing_mode == "conceptual":
+        _apply_tier_a_sizing(work, config)
+    elif config.sizing_mode == "integer_lots":
+        _apply_tier_b_sizing(work, config)
 
 
 def _is_invalid_max_loss(value: object) -> bool:
@@ -500,14 +827,13 @@ def step5_select_and_size(
     config: "BacktestRunConfig",
 ) -> pd.DataFrame:
     """
-    S5 Phase 1 — SELECT (per-side cap + rank). Sizing / simulate are later phases.
+    S5 Phases 1–2 — SELECT (per-side cap + rank) + SIZE (Tier A / Tier B).
 
-    Turns post-S4 candidates into a selection-annotated trade log: every candidate
-    row gets ``included_in_portfolio`` (bool) and ``exclusion_reason`` (str | None).
-    This is the runner's per-side cap/rank logic extracted into a pure function on
-    S4 output (no I/O, no settle). Sizing (`quantity`, `pnl_total`,
-    `capital_at_risk_dollars`) and simulate (S7 settle) are added in later
-    Sprint 003 deliverables; this function does not size or settle.
+    Turns post-S4 candidates into a selection- and sizing-annotated trade log.
+    Every candidate row gets ``included_in_portfolio`` (bool) and
+    ``exclusion_reason`` (str | None). Included rows receive ``quantity`` and
+    ``sizing_mode``. Simulate (S7 settle, M1–M3, ``pnl_total``,
+    ``capital_at_risk_dollars``) is a later Sprint 003 phase — not performed here.
 
     Signal columns (`direction`, `signal_rank_pct`) are preserved onto the
     structure rows by S3, so no separate `signals` join is performed — the
@@ -533,6 +859,9 @@ def step5_select_and_size(
         empty = structures.copy() if structures is not None else pd.DataFrame()
         empty["included_in_portfolio"] = pd.Series(dtype=bool)
         empty["exclusion_reason"] = pd.Series(dtype=object)
+        empty["quantity"] = pd.Series(dtype=float)
+        empty["sizing_mode"] = pd.Series(dtype=object)
+        empty["max_loss_budget_per_trade"] = pd.Series(dtype=float)
         return empty
 
     work = structures.copy()
@@ -569,6 +898,9 @@ def step5_select_and_size(
             if _is_invalid_max_loss(work.at[idx, "max_loss_per_share"]):
                 work.at[idx, "included_in_portfolio"] = False
                 work.at[idx, "exclusion_reason"] = EXCLUSION_INVALID_MAX_LOSS
+
+    # --- Phase 2 — SIZE (Tier A conceptual or Tier B integer_lots) ---
+    _apply_sizing(work, config)
 
     if not config.include_diagnostics:
         work = work[work["included_in_portfolio"] == True].copy()  # noqa: E712
