@@ -1,18 +1,22 @@
 """
-Contract: S5 — step5_select_and_size SELECT + SIZE.
+Contract: S5 — step5_select_and_size SELECT + SIZE + SIMULATE.
 
 Scope (Sprint 003):
 - Phase 1 (SELECT): per-side cap + rank — Deliverable 2 / Phase 2.
 - Phase 2 (SIZE): Tier A (conceptual) + Tier B (integer_lots) — Phase 3.
-Simulate (S7 settle, M1–M3, pnl_total) is NOT asserted here.
+- Phase 3 (SIMULATE): S7 settle, M1–M3, pnl_total, capital_at_risk_dollars — Phase 4.
 
 See docs/surface_engine_data_contract.md § S5 and
 docs/surface_engine_portfolio_metrics_design.md § S5.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pandas as pd
 import pytest
+
+from src.backtest.option_surface import FillAssumption
 
 from src.backtest.pipeline import (
     EXCLUSION_EARNINGS,
@@ -43,8 +47,11 @@ def _s4_row(
     instrument_type: str = "short_ironfly",
     net_credit_per_share: float = 2.0,
     entry_cost_per_share: float = 8.0,
+    body_credit_per_share: float | None = None,
+    exit_spot: float = 100.0,
+    assembly=None,
 ) -> dict:
-    return dict(
+    row = dict(
         ticker=ticker,
         direction=direction,
         signal_score=signal_rank_pct,
@@ -57,7 +64,23 @@ def _s4_row(
         max_loss_per_share=max_loss_per_share,
         net_credit_per_share=net_credit_per_share,
         entry_cost_per_share=entry_cost_per_share,
+        exit_spot=exit_spot,
     )
+    if body_credit_per_share is not None:
+        row["body_credit_per_share"] = body_credit_per_share
+    if assembly is not None:
+        row["_assembly"] = assembly
+    return row
+
+
+def _mock_assembly(pnl_per_share: float):
+    """Minimal S7 stand-in returning a fixed per-share settle PnL."""
+
+    class _Assembly:
+        def settle(self, exit_spot=None, exit_date=None):
+            return SimpleNamespace(pnl=pnl_per_share)
+
+    return _Assembly()
 
 
 def _s4_frame(rows: list[dict]) -> pd.DataFrame:
@@ -809,3 +832,379 @@ def test_tier_b_max_loss_budget_per_trade_not_echoed_on_rows():
     assert out["max_loss_budget_per_trade"].isna().all()
     # Sizing follows tier_b_short_max_loss_budget, not max_loss_budget_per_trade.
     assert out.iloc[0]["quantity"] == -300.0
+
+
+# ---------------------------------------------------------------------------
+# S5 Phase 3 — SIMULATE (settle + returns)
+# ---------------------------------------------------------------------------
+
+SIMULATE_OUTPUT_COLS = [
+    "pnl_per_share",
+    "pnl_total",
+    "capital_at_risk_dollars",
+    "return_on_premium",
+    "return_on_max_loss",
+    "return_on_atm_straddle",
+    "fill_label",
+]
+
+
+def test_simulate_adds_output_columns():
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "L1", "long", 0.95,
+                instrument_type="long_straddle",
+                max_loss_per_share=8.0,
+                assembly=_mock_assembly(1.0),
+            ),
+        ]
+    )
+    out = step5_select_and_size(None, structures, make_contract_config())
+    for col in SIMULATE_OUTPUT_COLS:
+        assert col in out.columns
+
+
+def test_tier_a_long_pnl_total_is_abs_quantity_times_pnl_per_share():
+    # quantity = +1_250; pnl_per_share = +2.0 → pnl_total = abs(qty) × pnl = 2_500.
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "L1", "long", 0.95,
+                instrument_type="long_straddle",
+                entry_cost_per_share=8.0,
+                max_loss_per_share=8.0,
+                body_credit_per_share=8.0,
+                assembly=_mock_assembly(2.0),
+            ),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_long_budget=10_000.0,
+        contract_multiplier=100.0,
+        max_names_per_side=1,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert float(row["quantity"]) == pytest.approx(1_250.0)
+    assert float(row["pnl_per_share"]) == pytest.approx(2.0)
+    assert float(row["pnl_total"]) == pytest.approx(2_500.0)
+    # If ×100 were applied again, pnl_total would be 250_000.
+    assert float(row["pnl_total"]) != pytest.approx(250_000.0)
+
+
+def test_tier_b_short_pnl_total_uses_abs_quantity_not_sign():
+    # 3 contracts → quantity = -300 (sign = short); pnl_per_share = +1.0 → +300 profit.
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "S1", "short", 0.05,
+                instrument_type="iron_fly",
+                max_loss_per_share=2.0,
+                net_credit_per_share=2.0,
+                body_credit_per_share=3.0,
+                assembly=_mock_assembly(1.0),
+            ),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(tier_b_short_max_loss_budget=600.0, max_names_per_side=1)
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert float(row["quantity"]) == -300.0
+    assert float(row["pnl_per_share"]) == pytest.approx(1.0)
+    assert float(row["pnl_total"]) == pytest.approx(300.0)
+    # Signed qty × pnl would wrongly yield -300; extra ×100 would be 30_000.
+    assert float(row["pnl_total"]) != pytest.approx(-300.0)
+    assert float(row["pnl_total"]) != pytest.approx(30_000.0)
+
+
+def test_tier_b_short_losing_pnl_total_is_negative():
+    # Losing short: abs(-300) × (-1.0) = -300 (not +300 from sign cancellation).
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "S1", "short", 0.05,
+                instrument_type="iron_fly",
+                max_loss_per_share=2.0,
+                net_credit_per_share=2.0,
+                body_credit_per_share=3.0,
+                assembly=_mock_assembly(-1.0),
+            ),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(tier_b_short_max_loss_budget=600.0, max_names_per_side=1)
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert float(row["pnl_total"]) == pytest.approx(-300.0)
+
+
+def test_simulate_excluded_max_names_cap_has_nan_outputs():
+    structures = _s4_frame(
+        [
+            _s4_row("S_best", "short", 0.05, assembly=_mock_assembly(1.0)),
+            _s4_row("S_overflow", "short", 0.30, assembly=_mock_assembly(99.0)),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_short_budget=10_000.0,
+        max_names_per_side=1,
+        include_diagnostics=True,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    overflow = out[out["ticker"] == "S_overflow"].iloc[0]
+    assert overflow["exclusion_reason"] == EXCLUSION_MAX_NAMES_CAP
+    assert pd.isna(overflow["pnl_per_share"])
+    assert pd.isna(overflow["pnl_total"])
+    assert pd.isna(overflow["capital_at_risk_dollars"])
+    assert pd.isna(overflow["return_on_premium"])
+    assert pd.isna(overflow["fill_label"])
+
+
+def test_simulate_excluded_no_short_credit_has_nan_outputs():
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "L1", "long", 0.95,
+                instrument_type="long_straddle",
+                entry_cost_per_share=8.0,
+                max_loss_per_share=8.0,
+                assembly=_mock_assembly(5.0),
+            ),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(include_diagnostics=True)
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert row["exclusion_reason"] == EXCLUSION_NO_SHORT_CREDIT
+    assert pd.isna(row["pnl_per_share"])
+    assert pd.isna(row["pnl_total"])
+    assert pd.isna(row["return_on_max_loss"])
+
+
+def test_capital_at_risk_long_uses_premium_paid():
+    # quantity = 500; premium = $8/sh → CAR = 4_000.
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "L1", "long", 0.95,
+                instrument_type="long_straddle",
+                entry_cost_per_share=8.0,
+                max_loss_per_share=8.0,
+                body_credit_per_share=8.0,
+                assembly=_mock_assembly(0.0),
+            ),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_long_budget=4_000.0,
+        max_names_per_side=1,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert float(row["quantity"]) == pytest.approx(500.0)
+    assert float(row["capital_at_risk_dollars"]) == pytest.approx(4_000.0)
+
+
+def test_capital_at_risk_short_defined_risk_uses_max_loss_per_share():
+    # quantity = -300 (3 × 100); max_loss = $2/sh → CAR = 600.
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "S1", "short", 0.05,
+                instrument_type="iron_fly",
+                max_loss_per_share=2.0,
+                net_credit_per_share=2.0,
+                body_credit_per_share=3.0,
+                assembly=_mock_assembly(0.0),
+            ),
+        ]
+    )
+    cfg = _tier_b_integer_lots_config(tier_b_short_max_loss_budget=600.0, max_names_per_side=1)
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert float(row["capital_at_risk_dollars"]) == pytest.approx(600.0)
+
+
+def test_capital_at_risk_long_and_short_in_same_cycle():
+    # Long:  budget $8_000 / $8 premium = 1_000 units → CAR = 1_000 × 8 = 8_000.
+    # Short: budget $6_000 / $3 credit = 2_000 units (qty −2_000) → CAR = 2_000 × 2 max_loss = 4_000.
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "L1", "long", 0.95,
+                instrument_type="long_straddle",
+                entry_cost_per_share=8.0,
+                max_loss_per_share=8.0,
+                body_credit_per_share=8.0,
+                assembly=_mock_assembly(0.0),
+            ),
+            _s4_row(
+                "S1", "short", 0.05,
+                instrument_type="iron_fly",
+                max_loss_per_share=2.0,
+                net_credit_per_share=3.0,
+                body_credit_per_share=3.0,
+                assembly=_mock_assembly(0.0),
+            ),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_short_budget=6_000.0,
+        tier_a_long_budget=8_000.0,
+        max_names_per_side=1,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    long_row = out[out["ticker"] == "L1"].iloc[0]
+    short_row = out[out["ticker"] == "S1"].iloc[0]
+    assert float(long_row["quantity"]) == pytest.approx(1_000.0)
+    assert float(long_row["capital_at_risk_dollars"]) == pytest.approx(8_000.0)
+    assert float(short_row["quantity"]) == pytest.approx(-2_000.0)
+    assert float(short_row["capital_at_risk_dollars"]) == pytest.approx(4_000.0)
+
+
+def test_m1_m2_m3_hand_calculated_short_iron_fly():
+    # pnl = +1; net credit (M1) = 2; max_loss (M2) = 5; ATM body (M3) = 3.
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "S1", "short", 0.05,
+                instrument_type="iron_fly",
+                max_loss_per_share=5.0,
+                net_credit_per_share=2.0,
+                body_credit_per_share=3.0,
+                assembly=_mock_assembly(1.0),
+            ),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_short_budget=10_000.0,
+        max_names_per_side=1,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert float(row["return_on_premium"]) == pytest.approx(0.5)
+    assert float(row["return_on_max_loss"]) == pytest.approx(0.2)
+    assert float(row["return_on_atm_straddle"]) == pytest.approx(1.0 / 3.0)
+
+
+def test_m1_m3_equal_on_long_straddle_m2_is_nan():
+    # pnl = +4; premium paid = 8 → M1 = M3 = 0.5; M2 undefined for long straddle.
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "L1", "long", 0.95,
+                instrument_type="long_straddle",
+                entry_cost_per_share=8.0,
+                max_loss_per_share=8.0,
+                body_credit_per_share=8.0,
+                assembly=_mock_assembly(4.0),
+            ),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_long_budget=8_000.0,
+        max_names_per_side=1,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert float(row["return_on_premium"]) == pytest.approx(0.5)
+    assert float(row["return_on_atm_straddle"]) == pytest.approx(0.5)
+    assert pd.isna(row["return_on_max_loss"])
+
+
+def test_m1_nan_when_structure_premium_non_positive():
+    # equal_max_loss sizes shorts by max_loss, not net credit — row stays included with credit=0.
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "S1", "short", 0.05,
+                instrument_type="iron_fly",
+                max_loss_per_share=5.0,
+                net_credit_per_share=0.0,
+                body_credit_per_share=3.0,
+                assembly=_mock_assembly(1.0),
+            ),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_max_loss",
+        tier_a_short_budget=10_000.0,
+        max_names_per_side=1,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert bool(row["included_in_portfolio"]) is True
+    assert pd.isna(row["return_on_premium"])
+    assert float(row["return_on_atm_straddle"]) == pytest.approx(1.0 / 3.0)
+
+
+def test_m3_nan_when_atm_straddle_premium_non_positive():
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "S1", "short", 0.05,
+                instrument_type="iron_fly",
+                max_loss_per_share=5.0,
+                net_credit_per_share=2.0,
+                body_credit_per_share=0.0,
+                assembly=_mock_assembly(1.0),
+            ),
+        ]
+    )
+    cfg = make_contract_config(
+        sizing_mode="conceptual",
+        tier_a_mode="equal_premium",
+        tier_a_short_budget=10_000.0,
+        max_names_per_side=1,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    row = out.iloc[0]
+    assert float(row["return_on_premium"]) == pytest.approx(0.5)
+    assert pd.isna(row["return_on_atm_straddle"])
+
+
+def test_fill_label_on_included_rows_from_config():
+    structures = _s4_frame(
+        [
+            _s4_row(
+                "S1", "short", 0.05,
+                instrument_type="iron_fly",
+                assembly=_mock_assembly(1.0),
+            ),
+        ]
+    )
+    cfg = make_contract_config(fill=FillAssumption.cross())
+    out = step5_select_and_size(None, structures, cfg)
+    assert out.iloc[0]["fill_label"] == "cross"
+
+
+def test_fill_label_nan_on_excluded_rows():
+    structures = _s4_frame(
+        [
+            _s4_row("S_best", "short", 0.05, assembly=_mock_assembly(1.0)),
+            _s4_row("S_overflow", "short", 0.30, assembly=_mock_assembly(1.0)),
+        ]
+    )
+    cfg = make_contract_config(
+        fill=FillAssumption.mid(),
+        max_names_per_side=1,
+        include_diagnostics=True,
+    )
+    out = step5_select_and_size(None, structures, cfg)
+    included = out[out["ticker"] == "S_best"].iloc[0]
+    excluded = out[out["ticker"] == "S_overflow"].iloc[0]
+    assert included["fill_label"] == "mid"
+    assert pd.isna(excluded["fill_label"])

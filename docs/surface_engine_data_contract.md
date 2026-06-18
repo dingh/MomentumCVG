@@ -1,7 +1,7 @@
 # Surface engine — data contract (source of truth)
 
 **Status:** Accepted — Sprint 002 (HD sign-off 2026-06-10)  
-**Last updated:** 2026-06-10  
+**Last updated:** 2026-06-16  
 **Audience:** HD + agents; supersedes informal runner behavior as spec authority
 
 ---
@@ -251,9 +251,9 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 ## S5 — Select, size, and simulate (`step5_select_and_size`)
 
-> **Sprint 003 build in progress.** Authoritative design: [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S5. **Phase 1 (SELECT)** is implemented in `pipeline.py`; sizing + simulate + returns remain.
+> **Sprint 003 build in progress.** Authoritative design: [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S5. **Phases 1–3 (SELECT + SIZE + SIMULATE)** implemented in `pipeline.py`; runner still inline until ORCH (D4).
 
-**Target role:** Turn post-S4 **candidates** into **simulated trades**: (1) **select** — per-side cap (`max_names_per_side`, [decision 003](decisions/003_position_cap_per_side.md)); (2) **size** — constraint-driven policy via `sizing_mode`: **both** Tier A (per-side budget ÷ name count) and Tier B (integer lots × 100 + capital limits); (3) **simulate** — S7 settle + PnL at chosen size; (4) **return** — M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` (former S6 scope, collapsed here). See [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § Return normalization. Entry fill/cost is fixed at S3 (`config.fill`); no separate cost pass.
+**Target role:** Turn post-S4 **candidates** into **simulated trades**: (1) **select** — per-side cap (`max_names_per_side`, [decision 003](decisions/003_position_cap_per_side.md)); (2) **size** — constraint-driven policy via `sizing_mode`: **both** Tier A (per-side budget ÷ name count) and Tier B (integer lots × 100 per [ADR 004](decisions/004_tier_b_credit_financed_long.md)); (3) **simulate** — S7 settle + PnL at chosen size; (4) **return** — M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` (former S6 scope, collapsed here). Entry fill/cost is fixed at S3 (`config.fill`); no separate cost pass.
 
 ### Phase 1 — SELECT (`built` — Sprint 003 D2)
 
@@ -265,22 +265,41 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 **Invariants:**
 - **I1:** Reads `structure_ok` / `had_earnings_nearby` from upstream — does not re-run S3/S4 filters.
-- **I2:** Exclusion priority: `no_tradeable_structure` > `earnings_exclusion` > `max_names_cap` > `invalid_max_loss`.
+- **I2:** Exclusion priority: `no_tradeable_structure` > `earnings_exclusion` > `max_names_cap` > sizing rejects (`invalid_max_loss`, `max_loss_exceeds_fair_share`, `premium_exceeds_fair_share`, `no_short_credit`).
 - **I3:** Per-side cap ([decision 003](decisions/003_position_cap_per_side.md)): long and short pools ranked independently; long by `signal_rank_pct` descending, short ascending; top `max_names_per_side` per side → `included_in_portfolio == True`; overflow → `max_names_cap`.
 - **I4:** Selected row with missing or non-positive `max_loss_per_share` → `invalid_max_loss`, `included_in_portfolio == False`.
 - **I5:** When `include_diagnostics == False`, excluded rows are dropped from output.
 
-**Exclusion vocabulary:** `no_tradeable_structure`, `earnings_exclusion`, `max_names_cap`, `invalid_max_loss`.
+**Exclusion vocabulary:** `no_tradeable_structure`, `earnings_exclusion`, `max_names_cap`, `invalid_max_loss`, `max_loss_exceeds_fair_share`, `premium_exceeds_fair_share`, `no_short_credit`.
 
-**Status:** `partial` — SELECT built; SIZE + SIMULATE deferred to Sprint 003 Phases 3–4.
+### Phase 2 — SIZE (`built` — Sprint 003 D2 Phase 3)
 
-**Contract test:** `tests/contract/test_step5_select_and_size_contract.py` (19 tests — SELECT only)
+**Outputs (included rows):** `quantity`, `sizing_mode`, `max_loss_budget_per_trade` (NaN for Tier B per ADR 004).
 
-### Phases 2–3 — SIZE + SIMULATE (`deferred`)
+**Invariants:**
+- **I1:** `sizing_mode` required — `conceptual` (Tier A fractional) or `integer_lots` (Tier B per [ADR 004](decisions/004_tier_b_credit_financed_long.md)).
+- **I2:** `quantity` in **share-equivalent units**; sign encodes direction (long `+`, short `−`); magnitude used for dollar fields.
+- **I3:** Tier A: per-side total budget ÷ included name count (`tier_a_mode` ∈ {`equal_premium`, `equal_max_loss`}).
+- **I4:** Tier B: shorts from `tier_b_short_max_loss_budget` (iterative fair share + integer lots); longs from collected short credit only; `deployable_capital` not used in sizing.
+- **I5:** Excluded rows: `quantity` = NaN.
 
-Sizing (`quantity`, tier A/B policy) and simulate (S7 settle, M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label`) — see design doc § S5 Phases 2–3.
+### Phase 3 — SIMULATE (`built` — Sprint 003 D2 Phase 4)
 
-**Code today:** `pipeline.step5_select_and_size` implements SELECT; `SurfaceRunner._select_size_and_settle` still owns size + settle inline until ORCH (Sprint 003 D4).
+**Inputs:** Sized rows with `_assembly` (S3), `exit_spot`, `quantity` on included rows.
+
+**Outputs (included rows):** `pnl_per_share`, `pnl_total`, `capital_at_risk_dollars`, `return_on_premium` (M1), `return_on_max_loss` (M2), `return_on_atm_straddle` (M3), `fill_label`.
+
+**Invariants:**
+- **I1:** Settle (`assembly.settle(exit_spot)`) runs on **included rows only**; excluded rows get NaN / missing simulate fields.
+- **I2:** `pnl_per_share` = S7 per-unit P&L (positive = profit; direction-agnostic).
+- **I3:** `pnl_total = abs(quantity) × pnl_per_share` (no extra `contract_multiplier` at simulate).
+- **I4:** `capital_at_risk_dollars = abs(quantity) × at_risk_per_share` (long: premium paid; short defined-risk: `max_loss_per_share`).
+- **I5:** M1 = `pnl_per_share / structure_premium_per_share`; M2 = `pnl_per_share / max_loss_per_share` for iron fly / condor shorts only (else NaN); M3 = `pnl_per_share / body_credit_per_share`; denominators ≤ 0 → NaN.
+- **I6:** `fill_label` = `config.fill.label` on included rows.
+
+**Status:** `partial` — pipeline step5 built (SELECT + SIZE + SIMULATE); `SurfaceRunner._select_size_and_settle` still duplicates select/settle until ORCH (Sprint 003 D4).
+
+**Contract test:** `tests/contract/test_step5_select_and_size_contract.py` (57 tests — SELECT + SIZE + SIMULATE)
 
 ---
 
@@ -346,9 +365,8 @@ Sizing (`quantity`, tier A/B policy) and simulate (S7 settle, M1–M3, `pnl_tota
 
 | Component | Contract says | Code today | Resolution sprint |
 |-----------|---------------|------------|-------------------|
-| S5 SELECT | `pipeline.py` step5 Phase 1 | `pipeline.step5` built; runner still inline for size/settle | Sprint 003 D2 ✅ |
-| S5 SIZE + SIMULATE | `pipeline.py` step5 Phases 2–3 | `surface_runner._select_size_and_settle` | Sprint 003 Phases 3–4 |
-| Trade log economics | M1–M3, `pnl_total`, `capital_at_risk_dollars` | `pnl_per_share` only (runner) | Sprint 003 Phases 3–4 |
+| S5 SELECT + SIZE + SIMULATE | `pipeline.py` step5 Phases 1–3 | `pipeline.step5` built; runner still inline for ORCH | Sprint 003 D2 ✅ (ORCH D4 pending) |
+| Trade log economics | M1–M3, `pnl_total`, `capital_at_risk_dollars` | `pipeline.step5` simulate columns; runner `pnl_per_share` only | Sprint 003 D4 ORCH wires runner |
 | Cap | Per-side `max_names_per_side` ([decision 003](decisions/003_position_cap_per_side.md)) | Pipeline step5 SELECT + runner aligned | Sprint 003 D2 ✅ |
 | S8 denominator | max-loss budget returns | body-credit returns | Sprint 003 |
 
@@ -369,3 +387,4 @@ Sizing (`quantity`, tier A/B policy) and simulate (S7 settle, M1–M3, `pnl_tota
 | 2026-06-07 | Cap semantics: per-side `max_names_per_side` (decision 003 supersedes 002) |
 | 2026-06-07 | S5 return: `return_on_allocated_budget` + diagnostics (portfolio design § Return normalization) |
 | 2026-06-14 | S5 Phase 1 SELECT: `step5_select_and_size` built; contract test (19 tests); drift register updated |
+| 2026-06-16 | S5 Phases 2–3 SIZE + SIMULATE: `step5_select_and_size` full trade-construction; `pnl_total = abs(quantity) × pnl_per_share`; contract test 57 tests |

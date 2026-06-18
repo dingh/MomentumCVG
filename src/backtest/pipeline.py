@@ -27,15 +27,17 @@ Remaining open questions
 ------------------------
 - pnl units (Open Decision #4): Sprint 003 sizing stores ``quantity`` in share-equivalent
   units for both tiers (Tier A fractional; Tier B integer lots: contracts × contract_multiplier).
-  S5 Simulate will compute ``pnl_total = quantity × pnl_per_share`` with no separate
-  contract-multiplier application. ``capital_at_risk_dollars`` will be computed from
-  quantity and the appropriate per-share at-risk denominator (Tier A vs Tier B).
+  S5 Simulate will compute ``pnl_total = abs(quantity) × pnl_per_share`` (``quantity``
+  sign is long/short only; ``pnl_per_share`` is direction-agnostic settle P&L) with no
+  separate contract-multiplier application. ``capital_at_risk_dollars`` uses the same
+  magnitude convention.
 """
 
 from __future__ import annotations
 
 import math
 from datetime import date
+from decimal import Decimal
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 import pandas as pd
@@ -492,7 +494,7 @@ def _tier_b_record_quantity(
 ) -> float:
     """Tier B ``quantity`` in share-equivalent units (contracts × multiplier).
 
-    Aligns with Tier A so simulate can use ``pnl_total = quantity × pnl_per_share``
+    Aligns with Tier A so simulate can use ``pnl_total = abs(quantity) × pnl_per_share``
     with no extra multiplier. ``quantity / contract_multiplier`` is always integer.
     """
     return _signed_quantity(float(contracts) * contract_multiplier, direction)
@@ -801,6 +803,123 @@ def _apply_sizing(work: pd.DataFrame, config: "BacktestRunConfig") -> None:
         _apply_tier_b_sizing(work, config)
 
 
+def _safe_return_ratio(
+    numerator: Optional[float],
+    denominator: Optional[float],
+) -> float:
+    """Per-share return ratio; NaN when denominator is missing or non-positive."""
+    if numerator is None or denominator is None:
+        return float("nan")
+    try:
+        if pd.isna(numerator) or pd.isna(denominator):
+            return float("nan")
+    except (TypeError, ValueError):
+        return float("nan")
+    try:
+        denom = float(denominator)
+        num = float(numerator)
+    except (TypeError, ValueError):
+        return float("nan")
+    if denom <= 0:
+        return float("nan")
+    return num / denom
+
+
+def _atm_straddle_premium_per_share(row: pd.Series) -> Optional[float]:
+    """M3 denominator — maps to S3 ``body_credit_per_share`` (positive magnitude)."""
+    raw = row.get("body_credit_per_share")
+    if raw is None:
+        return None
+    try:
+        if pd.isna(raw):
+            return None
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return val if val > 0 else None
+
+
+def _return_on_max_loss_applicable(row: pd.Series) -> bool:
+    """M2 applies only to defined-risk short structures (iron fly / condor)."""
+    if row.get("direction") != "short":
+        return False
+    instrument = row.get("instrument_type")
+    return instrument in ("iron_fly", "iron_condor")
+
+
+def _apply_simulate(work: pd.DataFrame, config: "BacktestRunConfig") -> None:
+    """S5 Phase 3 — settle included rows; compute PnL, CAR, M1–M3, fill_label."""
+    work["pnl_per_share"] = float("nan")
+    work["pnl_total"] = float("nan")
+    work["capital_at_risk_dollars"] = float("nan")
+    work["return_on_premium"] = float("nan")
+    work["return_on_max_loss"] = float("nan")
+    work["return_on_atm_straddle"] = float("nan")
+    work["fill_label"] = None
+
+    fill_label = config.fill.label
+
+    for idx, row in work.iterrows():
+        if not bool(work.at[idx, "included_in_portfolio"]):
+            continue
+
+        assembly = row.get("_assembly")
+        quantity = work.at[idx, "quantity"]
+        if assembly is None or quantity is None or pd.isna(quantity):
+            continue
+
+        exit_spot = row.get("exit_spot")
+        if exit_spot is None:
+            continue
+        try:
+            if pd.isna(exit_spot):
+                continue
+        except (TypeError, ValueError):
+            pass
+
+        position = assembly.settle(exit_spot=Decimal(str(exit_spot)))
+        pnl_per_share = (
+            float(position.pnl) if position.pnl is not None else float("nan")
+        )
+
+        qty = float(quantity)
+        qty_mag = abs(qty)
+        # pnl_per_share is settle P&L per unit (positive = profit); quantity sign
+        # is long/short only — scale dollars by magnitude, not direction.
+        pnl_total = qty_mag * pnl_per_share
+
+        at_risk = _at_risk_per_share(row)
+        capital_at_risk = (
+            qty_mag * at_risk if at_risk is not None and at_risk > 0 else float("nan")
+        )
+
+        structure_premium = _structure_premium_per_share(row)
+        atm_premium = _atm_straddle_premium_per_share(row)
+
+        work.at[idx, "pnl_per_share"] = pnl_per_share
+        work.at[idx, "pnl_total"] = pnl_total
+        work.at[idx, "capital_at_risk_dollars"] = capital_at_risk
+        work.at[idx, "return_on_premium"] = _safe_return_ratio(
+            pnl_per_share, structure_premium
+        )
+        if _return_on_max_loss_applicable(row):
+            raw_ml = row.get("max_loss_per_share")
+            m2_denom: Optional[float]
+            try:
+                m2_denom = None if raw_ml is None or pd.isna(raw_ml) else float(raw_ml)
+            except (TypeError, ValueError):
+                m2_denom = None
+            work.at[idx, "return_on_max_loss"] = _safe_return_ratio(
+                pnl_per_share, m2_denom
+            )
+        else:
+            work.at[idx, "return_on_max_loss"] = float("nan")
+        work.at[idx, "return_on_atm_straddle"] = _safe_return_ratio(
+            pnl_per_share, atm_premium
+        )
+        work.at[idx, "fill_label"] = fill_label
+
+
 def _is_invalid_max_loss(value: object) -> bool:
     """A row fails the geometric max-loss check when its per-share max loss is
     missing or non-positive (defined-risk structures must risk > 0 per share).
@@ -828,13 +947,14 @@ def step5_select_and_size(
     config: "BacktestRunConfig",
 ) -> pd.DataFrame:
     """
-    S5 Phases 1–2 — SELECT (per-side cap + rank) + SIZE (Tier A / Tier B).
+    S5 Phases 1–3 — SELECT (per-side cap + rank) + SIZE (Tier A / Tier B) +
+    SIMULATE (S7 settle + returns).
 
-    Turns post-S4 candidates into a selection- and sizing-annotated trade log.
-    Every candidate row gets ``included_in_portfolio`` (bool) and
-    ``exclusion_reason`` (str | None). Included rows receive ``quantity`` and
-    ``sizing_mode``. Simulate (S7 settle, M1–M3, ``pnl_total``,
-    ``capital_at_risk_dollars``) is a later Sprint 003 phase — not performed here.
+    Turns post-S4 candidates into a selection-, sizing-, and simulate-annotated
+    trade log. Every candidate row gets ``included_in_portfolio`` (bool) and
+    ``exclusion_reason`` (str | None). Included rows receive ``quantity``,
+    ``sizing_mode``, settled PnL, ``capital_at_risk_dollars``, M1–M3, and
+    ``fill_label``. Excluded rows keep NaN / missing simulate fields.
 
     Signal columns (`direction`, `signal_rank_pct`) are preserved onto the
     structure rows by S3, so no separate `signals` join is performed — the
@@ -863,6 +983,13 @@ def step5_select_and_size(
         empty["quantity"] = pd.Series(dtype=float)
         empty["sizing_mode"] = pd.Series(dtype=object)
         empty["max_loss_budget_per_trade"] = pd.Series(dtype=float)
+        empty["pnl_per_share"] = pd.Series(dtype=float)
+        empty["pnl_total"] = pd.Series(dtype=float)
+        empty["capital_at_risk_dollars"] = pd.Series(dtype=float)
+        empty["return_on_premium"] = pd.Series(dtype=float)
+        empty["return_on_max_loss"] = pd.Series(dtype=float)
+        empty["return_on_atm_straddle"] = pd.Series(dtype=float)
+        empty["fill_label"] = pd.Series(dtype=object)
         return empty
 
     work = structures.copy()
@@ -902,6 +1029,9 @@ def step5_select_and_size(
 
     # --- Phase 2 — SIZE (Tier A conceptual or Tier B integer_lots) ---
     _apply_sizing(work, config)
+
+    # --- Phase 3 — SIMULATE (S7 settle + returns on included rows only) ---
+    _apply_simulate(work, config)
 
     if not config.include_diagnostics:
         work = work[work["included_in_portfolio"] == True].copy()  # noqa: E712

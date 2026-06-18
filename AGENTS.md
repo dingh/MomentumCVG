@@ -12,7 +12,8 @@ Active spec: [docs/v1_spec_pins.md](docs/v1_spec_pins.md).
 
 1. Read [docs/agenda/current_sprint.md](docs/agenda/current_sprint.md) for this week's goal and **mode**.
 2. Skim [docs/v1_spec_pins.md](docs/v1_spec_pins.md) before strategy or backtest changes.
-3. Do not treat [docs/archive/](docs/archive/) as current truth.
+3. When editing builders or `option_surface.py`, check [docs/known_bugs.md](docs/known_bugs.md).
+4. Do not treat [docs/archive/](docs/archive/) as current truth.
 
 ## Workflow rules
 

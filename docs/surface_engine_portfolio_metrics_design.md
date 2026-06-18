@@ -172,7 +172,7 @@ Purpose: assess whether the **signal** has alpha before lot rounding and capital
 | Short (×10) | `10,000 / 10 = $1,000` credit | net credit `$2.00`/sh | `1,000 / 2.00 = 500` units |
 | Long (×5) | `10,000 / 5 = $2,000` spend | straddle premium `$8.00`/sh | `2,000 / 8.00 = 250` units |
 
-Then per name `capital_at_risk_dollars = quantity × at_risk_per_share` (short: `× max_loss_per_share`; long: `× premium_paid_per_share`) and `pnl_total = quantity × pnl_per_share`. **`equal_max_loss` (mode b)** is identical on the short side but uses `max_loss_per_share` as the per-name denominator, and the long side spends the **realized** `collected_short_premium` (not a configured `$10,000`) split across the 5 longs.
+Then per name `capital_at_risk_dollars = abs(quantity) × at_risk_per_share` (short: `× max_loss_per_share`; long: `× premium_paid_per_share`) and `pnl_total = abs(quantity) × pnl_per_share`. **`quantity` sign** encodes direction (long `+`, short `−`); **`pnl_per_share`** is settle P&L per unit (positive = profit). Dollar fields always scale by **magnitude**, not sign. **`equal_max_loss` (mode b)** is identical on the short side but uses `max_loss_per_share` as the per-name denominator, and the long side spends the **realized** `collected_short_premium` (not a configured `$10,000`) split across the 5 longs.
 
 This tier answers: *“If I spread premium/risk evenly across selected signals, does the signal side still win?”* — alpha at a **conceptual** level, free of lot rounding.
 
@@ -183,7 +183,7 @@ Purpose: approximate what is **placeable** under real constraints while still no
 | Rule | Intent |
 |------|--------|
 | Integer contracts | `quantity = floor(max_loss_budget_per_trade / (at_risk_per_share × contract_multiplier))` where `at_risk_per_share` is structure-specific (see § Return normalization — not always `max_loss_per_share`); reject or flag if `< 1`. **`at_risk_per_share` is per share; `contract_multiplier = 100` (pinned, equity options) converts to per-contract dollars — omitting it oversizes by 100×.** |
-| Contract multiplier | `pnl_dollars = quantity × pnl_per_share × contract_multiplier` (`contract_multiplier = 100`) |
+| Contract multiplier | Tier B: `quantity` = share-equivalent units (`contracts × 100`); simulate uses `abs(quantity) × pnl_per_share` (no second multiplier). Legacy design line `× contract_multiplier` at simulate time is **superseded** by ADR 004. |
 | Per-name budget | Equal `max_loss_budget_per_trade` per name (no proportional rescaling — when the book is too large, drop names by rank, see residual policy) |
 | Capital check | If `deployable_capital` is set: `sum(quantity × at_risk_per_share × contract_multiplier) ≤ deployable_capital` — same as `Σ capital_at_risk_dollars`. **If `deployable_capital` is `None` (v1 default): no book-level binding** — only the per-name `max_loss_budget_per_trade` applies and no capital-driven drops occur. |
 | Residual policy | **Capital is a hard constraint (only when `deployable_capital` is set).** With correct sizing, no overrun is expected. If even the **minimum** position (1 contract) for a name cannot fit within remaining capital: **drop names by rank** (lowest `signal_rank_pct` first) until the book fits, or **skip the date** if the minimum book is infeasible. Never silently exceed `deployable_capital` and never proportionally rescale quantities. |
@@ -214,7 +214,7 @@ For each sized, included row:
 |------|------|
 | Settle | `position = assembly.settle(exit_spot)` (S7 math) |
 | Per share | `pnl_per_share = position.pnl` (already reflects fill chosen at assembly) |
-| Total | `pnl_total = quantity × pnl_per_share × contract_multiplier` (Tier B, `contract_multiplier = 100`); **Tier A: `quantity × pnl_per_share`** (no multiplier) |
+| Total | `pnl_total = abs(quantity) × pnl_per_share` (both tiers; no extra `contract_multiplier` at simulate — embedded in Tier B `quantity`) |
 | Return | **M1–M3** per share + **`pnl_total`** + **`capital_at_risk_dollars`** (structure-specific; see § Return normalization) |
 | Audit | `fill_label` = `config.fill.label` on row / run summary |
 | Trade log | Row is a **simulated trade**: identity + structure + size + PnL + return |
@@ -243,7 +243,7 @@ For each sized, included row:
 | `max_loss_budget_per_trade` | Config echo — **Tier B only** (per-name max-loss budget); Tier A uses `tier_a_short_budget` / `tier_a_long_budget` instead |
 | `max_loss_per_share` | From structure |
 | `pnl_per_share` | S7 settle |
-| `pnl_total` (or `pnl_dollars`) | Tier B: `quantity × pnl_per_share × contract_multiplier`; Tier A: `quantity × pnl_per_share` (fractional, no multiplier) |
+| `pnl_total` (or `pnl_dollars`) | `abs(quantity) × pnl_per_share` (both tiers; Tier B `quantity` already share-equivalent) |
 | `capital_at_risk_dollars` | Structure-specific total capital at risk (see § Portfolio return) — **S8 cycle denominator building block** |
 | `return_on_premium` (M1) | Per § Return normalization |
 | `return_on_max_loss` (M2) | Realized `pnl_per_share / max_loss_per_share`; `NaN` for straddles — **not** S3 entry `theoretical_return_on_max_loss` |
@@ -395,10 +395,10 @@ Sprint 003: **derive these in S5 from existing S3 fields** (see § "Where these 
 
 #### Per-trade: `capital_at_risk_dollars` (cycle building block)
 
-| Structure | `capital_at_risk_dollars` (Tier B) | Matches |
-|-----------|-----------------------------------|---------|
-| Iron fly / condor (short) | `quantity × max_loss_per_share × contract_multiplier` | Total **max-loss** capital |
-| Long straddle | `quantity × premium_paid_per_share × contract_multiplier` | Total **premium paid** |
+| Structure | `capital_at_risk_dollars` | Matches |
+|-----------|---------------------------|---------|
+| Iron fly / condor (short) | `abs(quantity) × max_loss_per_share` | Total **max-loss** capital |
+| Long straddle | `abs(quantity) × premium_paid_per_share` | Total **premium paid** |
 | Short straddle | **Out of scope for v1** | Short side is defined-risk only |
 
 Also store **`pnl_total`** per included row. Optional per-trade audit: `return_on_capital_at_risk = pnl_total / capital_at_risk_dollars`.
@@ -491,8 +491,8 @@ Items below were deliberate TBDs during design; **all are now resolved** (2026-0
 > **Minimum v1:** always compute **M1–M3 from `pnl_per_share`** (size-agnostic per-share economics).
 >
 > **Resolved (2026-06-07):** Tier A **does** emit `pnl_total` and `capital_at_risk_dollars` from its fractional `quantity`:
-> - `pnl_total = quantity × pnl_per_share` (multiplier omitted in Tier A)
-> - `capital_at_risk_dollars = quantity × at_risk_per_share`
+> - `pnl_total = abs(quantity) × pnl_per_share` (multiplier omitted; sign = direction only)
+> - `capital_at_risk_dollars = abs(quantity) × at_risk_per_share`
 >
 > So Tier A produces the **same** `cycle_return_on_capital_at_risk` and side splits as Tier B. **The `contract_multiplier` cancels in the cycle ratio** (`Σ pnl_total / Σ capital_at_risk_dollars`), so Tier A and Tier B cycle returns differ **only** by Tier B's integer-lot rounding. Tier A sizing is set by `tier_a_mode` (`equal_premium` / `equal_max_loss`) over **per-side total budgets** (`tier_a_short_budget`, `tier_a_long_budget`) split equally across each side's included names — see § Tier A.
 
@@ -637,3 +637,4 @@ Sprint 003: extract runner tail to `step5`; add orchestration contract test.
 | 2026-06-07 | **Implementation-readiness pass (vs code):** exclusion strings aligned to code (`max_names_cap`, `invalid_max_loss`); flagged NEW config fields vs existing; defined `deployable_capital=None` behavior; Tier A `quantity` fractional (not NaN); `risk_fraction` demoted to descriptive; denominator sign convention + zero-denominator NaN rules; noted `short_structure='straddle'` config tension. |
 | 2026-06-07 | **Tier A sizing reframed (HD):** control is a **per-side total budget** split equally by name count (not a per-name slot). `tier_a_mode` ∈ {`equal_premium`, `equal_max_loss`}; `tier_a_short_budget` / `tier_a_long_budget` (long financed by collected short premium in `equal_max_loss`). Replaces the `$T = max_loss_budget_per_trade` reuse; added worked example. |
 | 2026-06-07 | Final sweep: clarified sizing denominator (premium in `equal_premium`) vs at-risk denominator (always `at_risk_per_share` for `capital_at_risk_dollars`); Tier A `pnl_total` has no multiplier; denominators derived in S5 (not S3); tagged short-straddle reference rows out-of-scope. |
+| 2026-06-16 | **Sprint 003 Phase 4 pin:** `quantity` sign = long/short only; dollar fields use `abs(quantity)`. `pnl_total = abs(quantity) × pnl_per_share`; `capital_at_risk_dollars = abs(quantity) × at_risk_per_share`. Aligns S7 settle (pnl positive = profit) with S8 cycle sums. Supersedes earlier `quantity × pnl_per_share` wording and Tier B simulate-time `× contract_multiplier`. |

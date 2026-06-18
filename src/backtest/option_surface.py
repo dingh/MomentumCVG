@@ -785,6 +785,8 @@ def build_ironcondor_from_surface(
         "put_spread_width":             float(put_spread_width),
         "width_asymmetry":              float(abs(call_spread_width - put_spread_width)),
         "fill_model":                   fill.label,
+        # BUG KB-001: should use is_body ATM call+put (same as iron fly), not short_call+short_put.
+        # See docs/known_bugs.md § KB-001. M3 cross-structure comparison is wrong until fixed.
         # body_credit_per_share: premium received from the short OTM legs alone,
         # before deducting the cost of the further-OTM long wings.  Enables fair
         # comparison with iron fly and short straddle — all three share the same

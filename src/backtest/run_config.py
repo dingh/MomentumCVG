@@ -264,7 +264,7 @@ class BacktestRunConfig:
     # Shares per option contract — pinned at 100 for equity options (HD decision Q4).
     # ADR 004 convention (Tier B): ``quantity`` is stored in share-equivalent units
     # (contracts × contract_multiplier). Therefore S5 Simulate should compute:
-    #   pnl_total = quantity × pnl_per_share
+    #   pnl_total = abs(quantity) × pnl_per_share
     # with no additional × contract_multiplier applied at simulate time.
     # Tier A also uses share-equivalent quantity (fractional allowed). Must be > 0.
 

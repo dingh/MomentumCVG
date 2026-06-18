@@ -46,7 +46,7 @@ Integer sizing on survivors:
   contracts = floor(fair_share / (max_loss_per_share × contract_multiplier))
   quantity = sign × (contracts × contract_multiplier)   # share-equivalent units, same as Tier A
 
-**Quantity units (Tier B):** stored in **share-equivalent units** (`contracts × contract_multiplier`), not raw contract count. `quantity / contract_multiplier` is always an integer. Settlement matches Tier A: `pnl_total = quantity × pnl_per_share` (no separate multiplier in simulate).
+**Quantity units (Tier B):** stored in **share-equivalent units** (`contracts × contract_multiplier`), not raw contract count. `quantity / contract_multiplier` is always an integer. Sign encodes direction (long `+`, short `−`); dollar fields use magnitude. Settlement matches Tier A: `pnl_total = abs(quantity) × pnl_per_share` (no separate multiplier in simulate).
 ```
 
 Total deployed short max-loss ≤ `tier_b_short_max_loss_budget` (integer slack may leave budget unspent — no second pass to spend slack).

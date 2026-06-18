@@ -36,6 +36,7 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [development_workflow.md](development_workflow.md) | Human + agent sprint workflow | 2026-05-23 |
 | [baseline_status.md](baseline_status.md) | Test and smoke-command baseline | 2026-05-23 |
 | [agenda/current_sprint.md](agenda/current_sprint.md) | Current sprint (Sprint 003 — S5/S8 build) | 2026-06-10 |
+| [known_bugs.md](known_bugs.md) | Open bugs and spec drift (fix deferred) | 2026-06-14 |
 
 ## Decisions
 
