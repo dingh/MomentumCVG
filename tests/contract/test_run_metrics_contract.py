@@ -24,9 +24,9 @@ _compute_max_drawdown
 rank_run_summaries
   TestRankRunSummaries
 
-Private helpers (_safe_cycle_return, _sum_included_column, _cycle_side_metrics,
-_cycle_book_metrics, _mean_return_on_body_credit) are exercised on primary paths
-through build_date_summary integration tests (not isolated unit tests).
+Private helpers (_cycle_economics_complete, _cycle_aggregate, _safe_cycle_return,
+_mean_return_on_body_credit) are exercised on primary paths through
+build_date_summary integration tests (not isolated unit tests).
 """
 from __future__ import annotations
 
@@ -257,6 +257,30 @@ class TestSummarizeTradeLogRunLevel:
         assert summary["avg_spread_cost_ratio"] == pytest.approx(0.20)
         assert summary["avg_leg_spread_to_credit_ratio"] == pytest.approx(0.30)
 
+    def test_hit_rate_ignores_nan_pnl_per_share(self):
+        """summarize_trade_log: hit_rate excludes NaN pnl_per_share; all-NaN → NaN."""
+        d1 = date(2024, 1, 5)
+        d2 = date(2024, 1, 12)
+        trade_log = pd.DataFrame(
+            [
+                _trade_row(d1, "A", "short", pnl_total=100.0, capital_at_risk_dollars=1000.0, pnl_per_share=1.0),
+                _trade_row(d1, "B", "long", pnl_total=50.0, capital_at_risk_dollars=500.0, pnl_per_share=float("nan")),
+                _trade_row(d1, "C", "short", pnl_total=-50.0, capital_at_risk_dollars=500.0, pnl_per_share=-1.0),
+                _trade_row(d2, "D", "long", pnl_total=10.0, capital_at_risk_dollars=100.0, pnl_per_share=float("nan")),
+                _trade_row(d2, "E", "long", pnl_total=20.0, capital_at_risk_dollars=200.0, pnl_per_share=float("nan")),
+            ]
+        )
+
+        summary = summarize_trade_log(trade_log)
+        assert summary["hit_rate"] == pytest.approx(0.5)
+
+        all_nan = pd.DataFrame(
+            [
+                _trade_row(d1, "A", "short", pnl_total=100.0, capital_at_risk_dollars=1000.0, pnl_per_share=float("nan")),
+            ]
+        )
+        assert np.isnan(summarize_trade_log(all_nan)["hit_rate"])
+
     def test_all_nan_cycle_returns_yield_nan_drawdown(self):
         """summarize_trade_log: max_drawdown is NaN when no finite cycle returns exist."""
         td = date(2024, 1, 5)
@@ -443,6 +467,51 @@ class TestZeroOrMissingDenominator:
         trade_log = pd.DataFrame([row_dict])
 
         row = build_date_summary(trade_log).iloc[0]
+
+        assert row["cycle_capital_at_risk"] == pytest.approx(0.0)
+        assert np.isnan(row["cycle_return_on_capital_at_risk"])
+
+
+class TestInvalidCycleEconomics:
+    """Tests for build_date_summary: partial missing S5 economics invalidate cycle returns."""
+
+    def test_included_row_with_missing_car_invalidates_book_and_long_side(self):
+        """build_date_summary: one bad CAR row → book and long return NaN; short side valid."""
+        td = date(2024, 1, 5)
+        trade_log = pd.DataFrame(
+            [
+                _trade_row(td, "S1", "short", pnl_total=500.0, capital_at_risk_dollars=2000.0),
+                _trade_row(td, "L1", "long", pnl_total=300.0, capital_at_risk_dollars=float("nan")),
+            ]
+        )
+
+        row = build_date_summary(trade_log).iloc[0]
+
+        assert row["cycle_pnl_total"] == pytest.approx(800.0)
+        assert row["cycle_capital_at_risk"] == pytest.approx(2000.0)
+        assert np.isnan(row["cycle_return_on_capital_at_risk"])
+        assert row["short_cycle_return"] == pytest.approx(0.25)
+        assert np.isnan(row["long_cycle_return"])
+        assert row["long_cycle_pnl_total"] == pytest.approx(300.0)
+        assert row["long_cycle_capital_at_risk"] == pytest.approx(0.0)
+
+    def test_included_row_with_missing_pnl_invalidates_cycle_return(self):
+        """build_date_summary: NaN pnl_total on an included row → cycle return NaN."""
+        td = date(2024, 1, 5)
+        trade_log = pd.DataFrame(
+            [_trade_row(td, "S1", "short", pnl_total=float("nan"), capital_at_risk_dollars=2000.0)]
+        )
+        row = build_date_summary(trade_log).iloc[0]
+
+        assert np.isnan(row["cycle_return_on_capital_at_risk"])
+        assert np.isnan(row["short_cycle_return"])
+
+    def test_missing_capital_column_invalidates_cycle_return(self):
+        """build_date_summary: absent capital_at_risk_dollars column → cycle return NaN."""
+        td = date(2024, 1, 5)
+        row_dict = _trade_row(td, "S1", "short", pnl_total=100.0, capital_at_risk_dollars=1000.0)
+        del row_dict["capital_at_risk_dollars"]
+        row = build_date_summary(pd.DataFrame([row_dict])).iloc[0]
 
         assert row["cycle_capital_at_risk"] == pytest.approx(0.0)
         assert np.isnan(row["cycle_return_on_capital_at_risk"])

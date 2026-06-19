@@ -9,8 +9,10 @@ Return metrics (two families — do not mix for go/no-go)
 
     cycle_return = Σ pnl_total / Σ capital_at_risk_dollars
 
-Dollar-weighted over included rows on a ``trade_date``. Sharpe, drawdown,
-and ``robust_score`` use this series. See
+Dollar-weighted over included rows on a ``trade_date``. All included rows must
+have finite ``pnl_total`` and ``capital_at_risk_dollars``; otherwise the cycle
+return is ``NaN`` (sums may still report partial finite totals). Sharpe,
+drawdown, and ``robust_score`` use this series. See
 ``docs/surface_engine_portfolio_metrics_design.md`` § Portfolio return.
 
 **Legacy (interim):** ``date_return_on_body_credit`` and related
@@ -40,40 +42,66 @@ def _safe_cycle_return(numerator: float, denominator: float) -> float:
     return float(numerator / denominator)
 
 
-def _sum_included_column(subset: pd.DataFrame, column: str) -> float:
-    """Sum a numeric column over included rows; missing column ⇒ 0."""
+_CYCLE_PNL_COL = "pnl_total"
+_CYCLE_CAR_COL = "capital_at_risk_dollars"
+
+
+def _cycle_economics_complete(subset: pd.DataFrame) -> bool:
+    """
+    True when ``subset`` is empty or every row has finite ``pnl_total`` and
+    ``capital_at_risk_dollars``. Missing columns or any NaN/non-finite value
+    on a non-empty subset → False.
+    """
+    if subset.empty:
+        return True
+    for col in (_CYCLE_PNL_COL, _CYCLE_CAR_COL):
+        if col not in subset.columns:
+            return False
+        values = pd.to_numeric(subset[col], errors="coerce")
+        if values.isna().any() or not np.isfinite(values.to_numpy()).all():
+            return False
+    return True
+
+
+def _sum_cycle_column(subset: pd.DataFrame, column: str) -> float:
+    """Sum a cycle column for reporting; missing column or empty subset → 0."""
     if subset.empty or column not in subset.columns:
         return 0.0
-    return float(subset[column].sum(skipna=True))
+    return float(pd.to_numeric(subset[column], errors="coerce").sum(skipna=True))
+
+
+def _cycle_aggregate(subset: pd.DataFrame) -> tuple[float, float, float]:
+    """
+    Return (pnl_sum, capital_at_risk_sum, cycle_return) for included rows in ``subset``.
+
+    Sums include finite values only (NaN skipped). ``cycle_return`` is NaN when
+    any included row lacks valid cycle economics, or when the capital sum is
+    not positive. Empty ``subset`` → sums 0, return NaN.
+    """
+    pnl_total = _sum_cycle_column(subset, _CYCLE_PNL_COL)
+    capital_at_risk = _sum_cycle_column(subset, _CYCLE_CAR_COL)
+    if not _cycle_economics_complete(subset):
+        cycle_return = np.nan
+    else:
+        cycle_return = _safe_cycle_return(pnl_total, capital_at_risk)
+    return pnl_total, capital_at_risk, cycle_return
 
 
 def _cycle_side_metrics(traded: pd.DataFrame, direction: str) -> Dict[str, float]:
     """Aggregate cycle PnL, capital at risk, and return for one direction."""
     side = traded[traded["direction"] == direction]
     prefix = "short" if direction == "short" else "long"
-    pnl_total = _sum_included_column(side, "pnl_total")
-    capital_at_risk = _sum_included_column(side, "capital_at_risk_dollars")
+    pnl_total, capital_at_risk, cycle_return = _cycle_aggregate(side)
     return {
         f"{prefix}_cycle_pnl_total": pnl_total,
         f"{prefix}_cycle_capital_at_risk": capital_at_risk,
-        f"{prefix}_cycle_return": _safe_cycle_return(pnl_total, capital_at_risk),
+        f"{prefix}_cycle_return": cycle_return,
     }
 
 
 def _cycle_book_metrics(traded: pd.DataFrame) -> Dict[str, float]:
     """Aggregate whole-book cycle PnL, capital at risk, and return."""
-    pnl_total = _sum_included_column(traded, "pnl_total")
-    capital_at_risk = _sum_included_column(traded, "capital_at_risk_dollars")
-    has_cycle_inputs = (
-        not traded.empty
-        and "pnl_total" in traded.columns
-        and "capital_at_risk_dollars" in traded.columns
-    )
-    cycle_return = (
-        _safe_cycle_return(pnl_total, capital_at_risk)
-        if has_cycle_inputs
-        else np.nan
-    )
+    pnl_total, capital_at_risk, cycle_return = _cycle_aggregate(traded)
     return {
         "cycle_pnl_total": pnl_total,
         "cycle_capital_at_risk": capital_at_risk,
@@ -115,6 +143,10 @@ def build_date_summary(trade_log: pd.DataFrame) -> pd.DataFrame:
     Primary return (per ``trade_date``, included rows only)::
 
         cycle_return_on_capital_at_risk = Σ pnl_total / Σ capital_at_risk_dollars
+
+    Every included row must have finite ``pnl_total`` and ``capital_at_risk_dollars``;
+    otherwise the cycle return (book and affected side) is ``NaN``. Sums still report
+    finite values where present (NaN rows skipped in the sum).
 
     Legacy body-credit columns (``date_return_on_body_credit``,
     ``long_date_return_on_body_credit``, ``short_date_return_on_body_credit``)
@@ -241,7 +273,14 @@ def summarize_trade_log(trade_log: pd.DataFrame) -> Dict[str, float]:
 
     mean_trade_return = float(traded["_robc"].mean()) if not traded.empty else np.nan
     median_trade_return = float(traded["_robc"].median()) if not traded.empty else np.nan
-    hit_rate = float((traded["pnl_per_share"] > 0).mean()) if "pnl_per_share" in traded.columns and not traded.empty else np.nan
+    if "pnl_per_share" in traded.columns and not traded.empty:
+        valid_pnl = traded["pnl_per_share"].notna()
+        if not valid_pnl.any():
+            hit_rate = np.nan
+        else:
+            hit_rate = float((traded.loc[valid_pnl, "pnl_per_share"] > 0).mean())
+    else:
+        hit_rate = np.nan
 
     long_n_traded_rows  = int(date_summary["long_n_traded"].sum())  if "long_n_traded"  in date_summary.columns else 0
     short_n_traded_rows = int(date_summary["short_n_traded"].sum()) if "short_n_traded" in date_summary.columns else 0
