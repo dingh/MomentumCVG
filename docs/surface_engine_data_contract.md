@@ -1,7 +1,7 @@
 # Surface engine — data contract (source of truth)
 
 **Status:** Accepted — Sprint 002 (HD sign-off 2026-06-10)  
-**Last updated:** 2026-06-16  
+**Last updated:** 2026-06-17  
 **Audience:** HD + agents; supersedes informal runner behavior as spec authority
 
 ---
@@ -251,11 +251,11 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 ## S5 — Select, size, and simulate (`step5_select_and_size`)
 
-> **Sprint 003 build in progress.** Authoritative design: [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S5. **Phases 1–3 (SELECT + SIZE + SIMULATE)** implemented in `pipeline.py`; runner still inline until ORCH (D4).
+> **Sprint 003 build in progress.** Authoritative design: [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S5. **Sprint Phases 2–4 (SELECT + SIZE + SIMULATE)** implemented in `pipeline.py`; runner still inline until ORCH (D4).
 
 **Target role:** Turn post-S4 **candidates** into **simulated trades**: (1) **select** — per-side cap (`max_names_per_side`, [decision 003](decisions/003_position_cap_per_side.md)); (2) **size** — constraint-driven policy via `sizing_mode`: **both** Tier A (per-side budget ÷ name count) and Tier B (integer lots × 100 per [ADR 004](decisions/004_tier_b_credit_financed_long.md)); (3) **simulate** — S7 settle + PnL at chosen size; (4) **return** — M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` (former S6 scope, collapsed here). Entry fill/cost is fixed at S3 (`config.fill`); no separate cost pass.
 
-### Phase 1 — SELECT (`built` — Sprint 003 D2)
+### Phase 2 — SELECT (`built` — Sprint 003 Phase 2; design § S5 Phase 1)
 
 **Inputs:** `structures` after S3+S4 (`structure_ok`, `had_earnings_nearby`, `direction`, `signal_rank_pct`, `max_loss_per_share`, …). The `signals` parameter is accepted for orchestration symmetry but unused — S3 preserves signal columns on structure rows.
 
@@ -272,7 +272,7 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 **Exclusion vocabulary:** `no_tradeable_structure`, `earnings_exclusion`, `max_names_cap`, `invalid_max_loss`, `max_loss_exceeds_fair_share`, `premium_exceeds_fair_share`, `no_short_credit`.
 
-### Phase 2 — SIZE (`built` — Sprint 003 D2 Phase 3)
+### Phase 3 — SIZE (`built` — Sprint 003 Phase 3; design § S5 Phase 2)
 
 **Outputs (included rows):** `quantity`, `sizing_mode`, `max_loss_budget_per_trade` (NaN for Tier B per ADR 004).
 
@@ -283,7 +283,7 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 - **I4:** Tier B: shorts from `tier_b_short_max_loss_budget` (iterative fair share + integer lots); longs from collected short credit only; `deployable_capital` not used in sizing.
 - **I5:** Excluded rows: `quantity` = NaN.
 
-### Phase 3 — SIMULATE (`built` — Sprint 003 D2 Phase 4)
+### Phase 4 — SIMULATE (`built` — Sprint 003 Phase 4; design § S5 Phase 3)
 
 **Inputs:** Sized rows with `_assembly` (S3), `exit_spot`, `quantity` on included rows.
 
@@ -335,15 +335,34 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 ## S8 — Run metrics (`build_date_summary`, `summarize_trade_log`)
 
-> **Deferred — Sprint 002 Session C.** See [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S8.
+**Owner:** `src/backtest/surface_metrics.py`; invoked from `SurfaceRunner` after the trade-log loop.
 
-**Target role:** Run/date summaries on **return_on_max_loss** series for go/no-go (Sharpe, drawdown, availability).
+**Target role:** Collapse trade log → **date summary** + **run summary**. Primary go/no-go series is per-date **`cycle_return_on_capital_at_risk`** (Sharpe, drawdown, `robust_score`). See [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S8 and § Portfolio return.
 
-**Code today:** `partial` — body-credit returns only (`surface_metrics.py`).
+**Inputs:** S5 trade log. Minimum: `trade_date`, `included_in_portfolio`, `direction`. Cycle metrics require `pnl_total` and `capital_at_risk_dollars` on included rows. Legacy body-credit columns require `pnl_per_share` and `body_credit_per_share`.
 
-**Status:** `deferred` — design draft (interim metrics usable for config search only)
+**Outputs — date summary** (one row per `trade_date`):
 
-**Contract test:** _planned Sprint 003_ — `tests/contract/test_run_metrics_contract.py`
+| Column family | Definition |
+|---------------|------------|
+| **Cycle (primary)** | `cycle_pnl_total` = `Σ pnl_total`; `cycle_capital_at_risk` = `Σ capital_at_risk_dollars`; `cycle_return_on_capital_at_risk` = ratio (included rows only). Side splits: `short_cycle_*`, `long_cycle_*`. |
+| **Legacy (interim)** | `date_return_on_body_credit` = **mean**(`pnl_per_share / body_credit_per_share`) per trade/name — equal-weight, **not** `Σ pnl_total / Σ body-credit dollars`. Side splits: `long_date_return_on_body_credit`, `short_date_return_on_body_credit`. Not used for Sharpe/drawdown after Sprint 003 S8. |
+| **Counts** | `n_candidates`, `n_traded`, `long_n_candidates`, `short_n_candidates`, `long_n_traded`, `short_n_traded` |
+
+**Outputs — run summary** (`summarize_trade_log`): `annualized_sharpe`, `max_drawdown`, `robust_score`, `mean_cycle_return_on_capital_at_risk`, `availability_rate`, `hit_rate`, plus legacy body-credit means for config search.
+
+**Invariants:**
+- **I1:** S8 **aggregates S5 output only** — does not recompute trade-level PnL or sizing.
+- **I2:** Cycle return uses **included** rows only (`included_in_portfolio == True`).
+- **I3:** `cycle_return_on_capital_at_risk` = `Σ pnl_total / Σ capital_at_risk_dollars`; side returns use the same formula within `direction`.
+- **I4:** Denominator zero, missing, or non-positive → return **`NaN`** (not 0 or ±∞).
+- **I5:** Empty side (no included long or short rows) → that side's cycle return is **`NaN`**; book return still computes from included rows on the other side.
+- **I6:** Date with no included rows → cycle sums `0`, cycle return **`NaN`**.
+- **I7:** `annualized_sharpe` requires ≥ 2 finite per-date `cycle_return_on_capital_at_risk` values (weekly √52 annualization).
+
+**Status:** `built` (Sprint 003 Phase 5 — 2026-06-17)
+
+**Contract test:** `tests/contract/test_run_metrics_contract.py` (23 tests)
 
 ---
 
@@ -365,10 +384,10 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 | Component | Contract says | Code today | Resolution sprint |
 |-----------|---------------|------------|-------------------|
-| S5 SELECT + SIZE + SIMULATE | `pipeline.py` step5 Phases 1–3 | `pipeline.step5` built; runner still inline for ORCH | Sprint 003 D2 ✅ (ORCH D4 pending) |
+| S5 SELECT + SIZE + SIMULATE | `pipeline.py` sprint Phases 2–4 | `pipeline.step5` built; runner still inline for ORCH | Sprint 003 D2 ✅ (ORCH D4 pending) |
 | Trade log economics | M1–M3, `pnl_total`, `capital_at_risk_dollars` | `pipeline.step5` simulate columns; runner `pnl_per_share` only | Sprint 003 D4 ORCH wires runner |
 | Cap | Per-side `max_names_per_side` ([decision 003](decisions/003_position_cap_per_side.md)) | Pipeline step5 SELECT + runner aligned | Sprint 003 D2 ✅ |
-| S8 denominator | max-loss budget returns | body-credit returns | Sprint 003 |
+| S8 denominator | `cycle_return_on_capital_at_risk` (Σ pnl_total / Σ CAR); Sharpe on cycle series | `surface_metrics.py` built; legacy body-credit mean retained | Sprint 003 D3 ✅ (2026-06-17) |
 
 ---
 
@@ -387,4 +406,5 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 | 2026-06-07 | Cap semantics: per-side `max_names_per_side` (decision 003 supersedes 002) |
 | 2026-06-07 | S5 return: `return_on_allocated_budget` + diagnostics (portfolio design § Return normalization) |
 | 2026-06-14 | S5 Phase 1 SELECT: `step5_select_and_size` built; contract test (19 tests); drift register updated |
-| 2026-06-16 | S5 Phases 2–3 SIZE + SIMULATE: `step5_select_and_size` full trade-construction; `pnl_total = abs(quantity) × pnl_per_share`; contract test 57 tests |
+| 2026-06-16 | S5 SIZE + SIMULATE (sprint Phases 3–4): `step5_select_and_size` full trade-construction; `pnl_total = abs(quantity) × pnl_per_share`; contract test 57 tests |
+| 2026-06-17 | S8 cycle metrics (Phase 5): `cycle_return_on_capital_at_risk` + side splits; Sharpe/drawdown on cycle series; legacy body-credit documented as equal-weight mean; `test_run_metrics_contract.py` (23 tests) |

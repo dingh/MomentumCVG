@@ -1,10 +1,10 @@
 """
 Contract: S5 — step5_select_and_size SELECT + SIZE + SIMULATE.
 
-Scope (Sprint 003):
-- Phase 1 (SELECT): per-side cap + rank — Deliverable 2 / Phase 2.
-- Phase 2 (SIZE): Tier A (conceptual) + Tier B (integer_lots) — Phase 3.
-- Phase 3 (SIMULATE): S7 settle, M1–M3, pnl_total, capital_at_risk_dollars — Phase 4.
+Scope (Sprint 003 work-breakdown phases):
+- Phase 2 — SELECT: per-side cap + rank
+- Phase 3 — SIZE: Tier A (conceptual) + Tier B (integer_lots)
+- Phase 4 — SIMULATE: S7 settle, M1–M3, pnl_total, capital_at_risk_dollars
 
 See docs/surface_engine_data_contract.md § S5 and
 docs/surface_engine_portfolio_metrics_design.md § S5.
@@ -835,7 +835,7 @@ def test_tier_b_max_loss_budget_per_trade_not_echoed_on_rows():
 
 
 # ---------------------------------------------------------------------------
-# S5 Phase 3 — SIMULATE (settle + returns)
+# S5 Phase 4 — SIMULATE (settle + returns)
 # ---------------------------------------------------------------------------
 
 SIMULATE_OUTPUT_COLS = [

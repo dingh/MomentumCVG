@@ -848,7 +848,7 @@ def _return_on_max_loss_applicable(row: pd.Series) -> bool:
 
 
 def _apply_simulate(work: pd.DataFrame, config: "BacktestRunConfig") -> None:
-    """S5 Phase 3 — settle included rows; compute PnL, CAR, M1–M3, fill_label."""
+    """S5 Phase 4 — simulate: settle included rows; PnL, CAR, M1–M3, fill_label."""
     work["pnl_per_share"] = float("nan")
     work["pnl_total"] = float("nan")
     work["capital_at_risk_dollars"] = float("nan")
@@ -947,8 +947,7 @@ def step5_select_and_size(
     config: "BacktestRunConfig",
 ) -> pd.DataFrame:
     """
-    S5 Phases 1–3 — SELECT (per-side cap + rank) + SIZE (Tier A / Tier B) +
-    SIMULATE (S7 settle + returns).
+    S5 SELECT + SIZE + SIMULATE (sprint Phases 2–4; design doc § S5 Phases 1–3).
 
     Turns post-S4 candidates into a selection-, sizing-, and simulate-annotated
     trade log. Every candidate row gets ``included_in_portfolio`` (bool) and
@@ -1027,10 +1026,10 @@ def step5_select_and_size(
                 work.at[idx, "included_in_portfolio"] = False
                 work.at[idx, "exclusion_reason"] = EXCLUSION_INVALID_MAX_LOSS
 
-    # --- Phase 2 — SIZE (Tier A conceptual or Tier B integer_lots) ---
+    # --- Phase 3 — SIZE (Tier A conceptual or Tier B integer_lots) ---
     _apply_sizing(work, config)
 
-    # --- Phase 3 — SIMULATE (S7 settle + returns on included rows only) ---
+    # --- Phase 4 — SIMULATE (S7 settle + returns on included rows only) ---
     _apply_simulate(work, config)
 
     if not config.include_diagnostics:
