@@ -64,7 +64,7 @@ S4 candidates (structure_ok; earnings flag already set)
                    mark included_in_portfolio + exclusion_reason on every row
   → (2) SIZE     — apply sizing policy under config constraints (not config quantities):
                    Tier A: per-side total budget ÷ name count → fractional units (premium or max-loss); no 100× lot
-                   Tier B: integer lots from max-loss budget + capital binding
+                   Tier B: integer lots per [ADR 004](decisions/004_tier_b_credit_financed_long.md) — fair share on `tier_b_short_max_loss_budget`; longs from short credit
   → (3) SIMULATE — S7 settle; M1–M3 + pnl_total + capital_at_risk_dollars + quantity (fractional in A, integer in B)
                    → trade log row (fill_label from S3)
 ```
@@ -105,9 +105,7 @@ S4 has already set `had_earnings_nearby` and S3 has set `structure_ok`. S5 **rea
 | Sizing reject | A row that passes selection but fails sizing (e.g. non-positive geometric max loss) gets `exclusion_reason = 'invalid_max_loss'` and `included_in_portfolio == False` |
 | Output flags | `included_in_portfolio`, `exclusion_reason` on **every** candidate row (included and excluded) |
 
-**Exclusion-reason vocabulary (match existing code):** `no_tradeable_structure`, `earnings_exclusion`, `max_names_cap`, `invalid_max_loss`. Sprint 003 reuses these strings — do not invent new labels without updating `surface_runner.py` and tests.
-
-**Runner today:** per-side cap via `max_names_per_side` matches v1 target ([decision 003](decisions/003_position_cap_per_side.md)); still partial — earnings/eligibility inline rather than clean S4→S5 handoff; no sizing/returns.
+**Exclusion-reason vocabulary (match existing code):** `no_tradeable_structure`, `earnings_exclusion`, `max_names_cap`, `invalid_max_loss`, `max_loss_exceeds_fair_share`, `premium_exceeds_fair_share`, `no_short_credit`. Sprint 003 reuses these strings — do not invent new labels without updating tests.
 
 ### Phase 2 — Size (constraint-driven; required for simulated trade)
 
@@ -118,14 +116,14 @@ Sizing is where candidates become **trades with economic weight**. The goal is t
 | Constraint | Typical config / source | Role |
 |------------|-------------------------|------|
 | Position count | `max_names_per_side` (per direction; e.g. 25 → up to 50 total book) | Diversification per side |
-| Per-position max loss | `max_loss_budget_per_trade` (or per-name cap) | Risk per signal |
-| Total deployable capital | Global budget (abstract units until $ pinned) | Book-level binding constraint |
-| Lot granularity | 1 contract = 100 shares (equity options) | Realistic trade simulation |
-| Structure geometry | `at_risk_per_share` from S3 — **defined-risk only** for geometric max loss | Converts budget → contracts (see below) |
+| Tier A side budgets | `tier_a_short_budget`, `tier_a_long_budget`, `tier_a_mode` | Per-side totals split equally across included names |
+| Tier B short max loss | `tier_b_short_max_loss_budget` (**required** when `sizing_mode='integer_lots'`) | Total short-book max-loss dollars this cycle |
+| Lot granularity | `contract_multiplier` = 100 (equity options) | Tier B integer lots → share-equivalent `quantity` |
+| Structure geometry | `at_risk_per_share` from S3 — **defined-risk only** for geometric max loss | Converts budget → units (see below) |
 
 **Structure geometry note:** Only **defined-risk** structures (iron fly, iron condor) supply a true geometric `max_loss_per_share` for sizing. **Long straddle** uses **premium paid** as `at_risk_per_share` (debit at risk, not wing geometry). **Naked / short straddle is out of scope for v1** — the short side is defined-risk only (iron fly/condor).
 
-When constraints conflict (e.g. up to `2 × max_names_per_side` included names × `max_loss_budget_per_trade` exceeds `deployable_capital`), **capital is the hard constraint**: drop names by rank (lowest `signal_rank_pct` first) until the book fits, or skip the date if even the minimum book is infeasible. Never silently exceed `deployable_capital` (see Tier B residual policy).
+**Tier B note:** `deployable_capital` and `max_loss_budget_per_trade` are **not used** in Tier B S5 sizing ([ADR 004](decisions/004_tier_b_credit_financed_long.md)). Long premium is capped by collected short credit only; shorts are capped by `tier_b_short_max_loss_budget`.
 
 #### Two fidelity tiers (HD — not an optimizer)
 
@@ -164,21 +162,25 @@ Then per name `capital_at_risk_dollars = abs(quantity) × at_risk_per_share` (sh
 
 This tier answers: *“If I spread premium/risk evenly across selected signals, does the signal side still win?”* — alpha at a **conceptual** level, free of lot rounding.
 
-**Tier B — Deployable simulation (next level)**
+**Tier B — Deployable simulation (`integer_lots`)**
 
-Purpose: approximate what is **placeable** under real constraints while still not doing portfolio optimization.
+Purpose: approximate what is **placeable** under real lot constraints while still not doing portfolio optimization.
+
+> **Superseded language:** Earlier drafts sized Tier B per name from `max_loss_budget_per_trade` and optionally bound the book with `deployable_capital`. **[ADR 004](decisions/004_tier_b_credit_financed_long.md)** is authoritative for Tier B S5 sizing (implemented Sprint 003 in `pipeline._apply_tier_b_sizing`).
 
 | Rule | Intent |
 |------|--------|
-| Integer contracts | `quantity = floor(max_loss_budget_per_trade / (at_risk_per_share × contract_multiplier))` where `at_risk_per_share` is structure-specific (see § Return normalization — not always `max_loss_per_share`); reject or flag if `< 1`. **`at_risk_per_share` is per share; `contract_multiplier = 100` (pinned, equity options) converts to per-contract dollars — omitting it oversizes by 100×.** |
-| Contract multiplier | Tier B: `quantity` = share-equivalent units (`contracts × 100`); simulate uses `abs(quantity) × pnl_per_share` (no second multiplier). Legacy design line `× contract_multiplier` at simulate time is **superseded** by ADR 004. |
-| Per-name budget | Equal `max_loss_budget_per_trade` per name (no proportional rescaling — when the book is too large, drop names by rank, see residual policy) |
-| Capital check | If `deployable_capital` is set: `sum(quantity × at_risk_per_share × contract_multiplier) ≤ deployable_capital` — same as `Σ capital_at_risk_dollars`. **If `deployable_capital` is `None` (v1 default): no book-level binding** — only the per-name `max_loss_budget_per_trade` applies and no capital-driven drops occur. |
-| Residual policy | **Capital is a hard constraint (only when `deployable_capital` is set).** With correct sizing, no overrun is expected. If even the **minimum** position (1 contract) for a name cannot fit within remaining capital: **drop names by rank** (lowest `signal_rank_pct` first) until the book fits, or **skip the date** if the minimum book is infeasible. Never silently exceed `deployable_capital` and never proportionally rescale quantities. |
+| Short budget | **`tier_b_short_max_loss_budget`** — total max-loss dollars across the short book this cycle; deployed ≤ budget (integer slack may leave budget unspent) |
+| Short pass | **Iterative worst-first fair share** on max-loss dollars → integer lots; drop offenders with `max_loss_exceeds_fair_share` |
+| Long budget | **`collected_short_credit`** = Σ(\|short `quantity`\| × `net_credit_per_share`) — longs financed from short credit only |
+| Long pass | Same iterative fair share on premium → integer lots; `premium_exceeds_fair_share` or `no_short_credit` when no credit |
+| Quantity units | **Share-equivalent:** `quantity = sign × (contracts × contract_multiplier)`; `quantity / contract_multiplier` is integer; dollar fields use **`abs(quantity)`** |
+| Simulate | `pnl_total = abs(quantity) × pnl_per_share`; no second multiplier at simulate |
+| Not used in Tier B S5 | **`deployable_capital`**, **`max_loss_budget_per_trade`** — retained on config for legacy / future layers only |
 
-This tier answers: *“After lots and capital bind, is alpha still there?”* — closer to shadow/paper, still not full optimization.
+This tier answers: *“After lots and credit-financing bind, is alpha still there?”* — closer to shadow/paper, still not full optimization.
 
-Both tiers live in **S5** (same select phase; sizing policy branch). S8 aggregates S5 return fields.
+Both tiers live in **S5** (`pipeline.step5_select_and_size`; same select phase; sizing policy branch). S8 aggregates S5 return fields.
 
 #### What this is not
 
@@ -188,9 +190,7 @@ Both tiers live in **S5** (same select phase; sizing policy branch). S8 aggregat
 
 Those can come later if Tier B backtests justify them.
 
-**Runner today:** **no sizing phase** — `quantity` absent; per-share settle only; no tier A weights or tier B capital check.
-
-**Sprint 003 (HD — 2026-06-07):** implement **both** tiers in S5. Runner config `sizing_mode` switches between Tier A (`conceptual`) and Tier B (`integer_lots`). **`sizing_mode` is required — there is no default; a backtest fails fast if it is not specified.** Same select + simulate path; sizing policy branch only. Both code paths required for Sprint 003 done.
+**Implemented (Sprint 003):** `sizing_mode` is **required** (`conceptual` vs `integer_lots`); both tiers share the same select + simulate path.
 
 ### Phase 3 — Simulate trade (settle + returns)
 
@@ -226,9 +226,9 @@ For each sized, included row:
 | Field | Purpose |
 |-------|---------|
 | `sizing_mode` | Echo config: `conceptual` (Tier A) or `integer_lots` (Tier B) |
-| `quantity` | **Tier B:** integer contracts; **Tier A:** fractional units (e.g. `1.23`). Always populated (no NaN) for included rows |
+| `quantity` | **Tier B:** share-equivalent units (`contracts × contract_multiplier`); **Tier A:** fractional units. Sign = direction; dollar fields use `abs(quantity)` |
 | `risk_fraction` | **Descriptive only** (per-side weight, e.g. realized `capital_at_risk_dollars` share within the side); **not** the sizing mechanism — Tier A sizes by the per-side total budget ÷ name count |
-| `max_loss_budget_per_trade` | Config echo — **Tier B only** (per-name max-loss budget); Tier A uses `tier_a_short_budget` / `tier_a_long_budget` instead |
+| `max_loss_budget_per_trade` | Config echo on Tier A rows; **NaN for Tier B** (Tier B shorts sized from `tier_b_short_max_loss_budget` per ADR 004) |
 | `max_loss_per_share` | From structure |
 | `pnl_per_share` | S7 settle |
 | `pnl_total` (or `pnl_dollars`) | `abs(quantity) × pnl_per_share` (both tiers; Tier B `quantity` already share-equivalent) |
@@ -249,14 +249,15 @@ For each sized, included row:
 
 | Config field | Status | Role |
 |--------------|--------|------|
-| `sizing_mode` | **NEW** (add to `BacktestRunConfig`) | **Required** — no default; `conceptual` (Tier A) vs `integer_lots` (Tier B); validation fails if unset |
-| `tier_a_mode` | **NEW** | Tier A only — `equal_premium` (mode a) vs `equal_max_loss` (mode b); see § Tier A |
-| `tier_a_short_budget` | **NEW** | Tier A only — **total** short-side budget (premium to collect in mode a; max loss in mode b), split equally across short names |
-| `tier_a_long_budget` | **NEW** | Tier A only — **total** long-side spend (mode a); **ignored in mode b** (long financed by collected short premium; used only as the edge-case fallback) |
-| `contract_multiplier` | **NEW** | **Pinned = 100** (equity options); Tier B per-contract conversion |
-| `deployable_capital` | **NEW** (optional; `None` in v1) | Total book **hard** constraint for Tier B; `None` ⇒ only per-name budget binds |
+| `sizing_mode` | built | **Required** — no default; `conceptual` (Tier A) vs `integer_lots` (Tier B); validation fails if unset |
+| `tier_a_mode` | built | Tier A only — `equal_premium` (mode a) vs `equal_max_loss` (mode b); see § Tier A |
+| `tier_a_short_budget` | built | Tier A only — **total** short-side budget (premium to collect in mode a; max loss in mode b), split equally across short names |
+| `tier_a_long_budget` | built | Tier A only — **total** long-side spend (mode a); **ignored in mode b** (long financed by collected short premium; edge-case fallback only) |
+| `tier_b_short_max_loss_budget` | built | **Required** for `integer_lots` — total short-book max-loss dollars (ADR 004) |
+| `contract_multiplier` | built | **Pinned = 100** (equity options); Tier B converts contracts → share-equivalent `quantity` |
+| `deployable_capital` | optional | **Not used** in Tier B S5 sizing (reserved for future / other layers) |
 | `max_names_per_side` | exists | Per-direction position cap (long and short ranked separately) |
-| `max_loss_budget_per_trade` | exists | **Tier B** per-name max-loss budget (Tier A uses `tier_a_*_budget` totals) |
+| `max_loss_budget_per_trade` | exists | **Not used** for Tier B short sizing (legacy; Tier A uses `tier_a_*_budget` totals) |
 | `include_diagnostics` | exists | Keep excluded candidates in log |
 | `earnings_exclusion_days` | exists | Already applied in S4 |
 
@@ -435,9 +436,11 @@ short_cycle_return = 500 / 2000 = 25%
 long_cycle_return  = 300 / 1500 = 20%
 ```
 
-#### Relation to `max_loss_budget_per_trade`
+#### Relation to sizing budgets vs realized capital at risk
 
-Config **`max_loss_budget_per_trade`** is a **sizing constraint** (target per-name budget when deriving `quantity`). **`capital_at_risk_dollars`** is the **realized** dollars at risk after sizing (`quantity × at_risk_per_share × multiplier`). Cycle return uses **realized** capital at risk in the denominator, not `n × max_loss_budget_per_trade`, unless sizing makes them equal by construction.
+**Tier B (ADR 004):** shorts are sized from **`tier_b_short_max_loss_budget`** (total book budget), not per-name **`max_loss_budget_per_trade`**. Longs are capped by **collected short credit**, not **`deployable_capital`**.
+
+**Both tiers:** **`capital_at_risk_dollars`** is the **realized** dollars at risk after sizing. Cycle return uses **realized** capital at risk in the denominator (`Σ pnl_total / Σ capital_at_risk_dollars`), not configured budget totals, unless sizing makes them equal by construction.
 
 ### Mixed-book example (per-share M1–M3)
 
@@ -468,7 +471,7 @@ Config **`max_loss_budget_per_trade`** is a **sizing constraint** (target per-na
 
 ---
 
-## Implementation annotations (pin before Sprint 003 build)
+## Implementation annotations (Sprint 003 build notes)
 
 Items below were deliberate TBDs during design; **all are now resolved** (2026-06-07). They are retained as implementation notes for the Sprint 003 build.
 
@@ -617,5 +620,5 @@ S7 `settle()` is invoked **inside** S5, not a separate orchestration step after 
 | 2026-06-07 | **Implementation-readiness pass (vs code):** exclusion strings aligned to code (`max_names_cap`, `invalid_max_loss`); flagged NEW config fields vs existing; defined `deployable_capital=None` behavior; Tier A `quantity` fractional (not NaN); `risk_fraction` demoted to descriptive; denominator sign convention + zero-denominator NaN rules; noted `short_structure='straddle'` config tension. |
 | 2026-06-07 | **Tier A sizing reframed (HD):** control is a **per-side total budget** split equally by name count (not a per-name slot). `tier_a_mode` ∈ {`equal_premium`, `equal_max_loss`}; `tier_a_short_budget` / `tier_a_long_budget` (long financed by collected short premium in `equal_max_loss`). Replaces the `$T = max_loss_budget_per_trade` reuse; added worked example. |
 | 2026-06-07 | Final sweep: clarified sizing denominator (premium in `equal_premium`) vs at-risk denominator (always `at_risk_per_share` for `capital_at_risk_dollars`); Tier A `pnl_total` has no multiplier; denominators derived in S5 (not S3); tagged short-straddle reference rows out-of-scope. |
-| 2026-06-20 | Sprint 003 implementation closed: S5/S8/ORCH built; S6 stub removed; cycle CAR return series is primary Sharpe input |
+| 2026-06-20 | Sprint 003 closeout: § Tier B rewritten per ADR 004; removed stale “Runner today” / per-name `deployable_capital` Tier B language |
 | 2026-06-16 | **Sprint 003 Phase 4 pin:** `quantity` sign = long/short only; dollar fields use `abs(quantity)`. `pnl_total = abs(quantity) × pnl_per_share`; `capital_at_risk_dollars = abs(quantity) × at_risk_per_share`. Aligns S7 settle (pnl positive = profit) with S8 cycle sums. Supersedes earlier `quantity × pnl_per_share` wording and Tier B simulate-time `× contract_multiplier`. |
