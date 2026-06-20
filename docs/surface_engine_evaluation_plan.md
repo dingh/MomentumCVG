@@ -36,11 +36,11 @@ Sprint 002 delivers **L1 for all components**; L2 where docstrings already pin m
 | S2 | Signals | `test_step2_signals_contract.py` | ✅ | ☐ | Pool disjointness |
 | S3 | Structures | `test_step3_structures_contract.py` | ✅ | ✅ | Synthetic surface; iron fly credit golden |
 | S4 | Exclusions | `test_step4_exclusions_contract.py` | ✅ | — | Earnings window flags |
-| S5 | Select + size + simulate + return | `test_step5_select_and_size_contract.py` | — | — | **Deferred** — design doc; Sprint 003 build (incl. former S6) |
+| S5 | Select + size + simulate + return | `test_step5_select_and_size_contract.py` | ✅ | — | 57 tests; SELECT + SIZE + SIMULATE |
 | S6 | Cost+return | — | — | — | **Superseded** — collapsed into S5; no contract test |
 | S7 | Settle | `test_settle_contract.py` | ✅ | ✅ | Iron fly + long straddle PnL golden |
-| S8 | Run metrics | `test_run_metrics_contract.py` | — | — | **Deferred** — design doc; Sprint 003 build |
-| ORCH | Orchestration | `test_orchestration_contract.py` | — | — | **Deferred** — Sprint 003 build |
+| S8 | Run metrics | `test_run_metrics_contract.py` | ✅ | — | 23 tests; cycle return + Sharpe on cycle series |
+| ORCH | Orchestration | `test_orchestration_contract.py` | ✅ | — | 10 tests; runner delegates S5 |
 
 Check boxes during Sprint 002 sessions.
 

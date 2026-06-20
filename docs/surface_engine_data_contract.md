@@ -251,7 +251,7 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 ## S5 — Select, size, and simulate (`step5_select_and_size`)
 
-> **Sprint 003 build in progress.** Authoritative design: [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S5. **Sprint Phases 2–4 (SELECT + SIZE + SIMULATE)** implemented in `pipeline.py`; runner still inline until ORCH (D4).
+> **Sprint 003 build in progress.** Authoritative design: [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S5. **Sprint Phases 2–4 (SELECT + SIZE + SIMULATE)** implemented in `pipeline.py`; invoked by `SurfaceRunner` via ORCH (D4 ✅).
 
 **Target role:** Turn post-S4 **candidates** into **simulated trades**: (1) **select** — per-side cap (`max_names_per_side`, [decision 003](decisions/003_position_cap_per_side.md)); (2) **size** — constraint-driven policy via `sizing_mode`: **both** Tier A (per-side budget ÷ name count) and Tier B (integer lots × 100 per [ADR 004](decisions/004_tier_b_credit_financed_long.md)); (3) **simulate** — S7 settle + PnL at chosen size; (4) **return** — M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` (former S6 scope, collapsed here). Entry fill/cost is fixed at S3 (`config.fill`); no separate cost pass.
 
@@ -297,7 +297,7 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 - **I5:** M1 = `pnl_per_share / structure_premium_per_share`; M2 = `pnl_per_share / max_loss_per_share` for iron fly / condor shorts only (else NaN); M3 = `pnl_per_share / body_credit_per_share`; denominators ≤ 0 → NaN.
 - **I6:** `fill_label` = `config.fill.label` on included rows.
 
-**Status:** `partial` — pipeline step5 built (SELECT + SIZE + SIMULATE); `SurfaceRunner._select_size_and_settle` still duplicates select/settle until ORCH (Sprint 003 D4).
+**Status:** `built` — `pipeline.step5_select_and_size` (SELECT + SIZE + SIMULATE); `SurfaceRunner` delegates (ORCH D4 ✅ 2026-06-18).
 
 **Contract test:** `tests/contract/test_step5_select_and_size_contract.py` (57 tests — SELECT + SIZE + SIMULATE)
 
@@ -315,7 +315,7 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 ## S7 — Settlement (hold to expiry)
 
-**Owner:** `StrategyAssemblyResult.settle` (`src/backtest/option_surface.py`); runner calls it from `_select_size_and_settle` with `exit_spot` from structure row (meta).
+**Owner:** `StrategyAssemblyResult.settle` (`src/backtest/option_surface.py`); S5 `_apply_simulate` calls it with `exit_spot` from the structure row (meta).
 
 **Inputs:** `exit_spot` (from A1 meta / structure row), optional `exit_date` (defaults to `expiry_date`).
 
@@ -368,15 +368,24 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 ## ORCH — Orchestration (`SurfaceRunner`)
 
-> **Deferred — Sprint 002 Session C.** See [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § ORCH.
+**Owner:** `src/backtest/surface_runner.py` — thin S1→S8 loop per [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § ORCH.
 
-**Target:** Thin loop S1→S8 via `pipeline.py`; no duplicate business logic.
+**Per trade date:**
+1. S1 `step1_get_universe` (liquidity panel)
+2. S2 `step2_score_signals` (features × universe) — skip date if empty
+3. S3 `step3_get_eligible_structures` (surface DB)
+4. S4 `step4_apply_exclusions` (earnings)
+5. S5 `step5_select_and_size` — drop `_assembly` before appending to trade log
+6. S8 `build_date_summary` + `summarize_trade_log` after the date loop
 
-**Code today:** S1–S4 delegate; S5+settle inline; S6 superseded (not called); S8 after loop.
+**Invariants:**
+- **I1:** No duplicate S5 select/size/settle logic in the runner.
+- **I2:** `include_diagnostics` honored via S5 output filtering.
+- **I3:** Trade log sorted by `trade_date`, `included_in_portfolio`, `direction`, `ticker`.
 
-**Status:** `deferred` — design draft
+**Status:** `built` (Sprint 003 Phase 6 — 2026-06-18)
 
-**Contract test:** _planned Sprint 003_ — `test_orchestration_contract.py` + `test_surface_runner_data_flow.py`
+**Contract test:** `tests/contract/test_orchestration_contract.py` (10 tests) + `tests/unit/test_surface_runner_data_flow.py`
 
 ---
 
@@ -384,8 +393,9 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 | Component | Contract says | Code today | Resolution sprint |
 |-----------|---------------|------------|-------------------|
-| S5 SELECT + SIZE + SIMULATE | `pipeline.py` sprint Phases 2–4 | `pipeline.step5` built; runner still inline for ORCH | Sprint 003 D2 ✅ (ORCH D4 pending) |
-| Trade log economics | M1–M3, `pnl_total`, `capital_at_risk_dollars` | `pipeline.step5` simulate columns; runner `pnl_per_share` only | Sprint 003 D4 ORCH wires runner |
+| S5 SELECT + SIZE + SIMULATE | `pipeline.py` sprint Phases 2–4 | `pipeline.step5` built; runner delegates | Sprint 003 D2 ✅ |
+| Trade log economics | M1–M3, `pnl_total`, `capital_at_risk_dollars` | Full S5 columns in runner trade log via ORCH | Sprint 003 D4 ✅ (2026-06-18) |
+| ORCH thin loop | S1→S8 via pipeline + metrics | `SurfaceRunner` delegates S5; no inline settle | Sprint 003 D4 ✅ (2026-06-18) |
 | Cap | Per-side `max_names_per_side` ([decision 003](decisions/003_position_cap_per_side.md)) | Pipeline step5 SELECT + runner aligned | Sprint 003 D2 ✅ |
 | S8 denominator | `cycle_return_on_capital_at_risk` (Σ pnl_total / Σ CAR); Sharpe on cycle series | `surface_metrics.py` built; legacy body-credit mean retained | Sprint 003 D3 ✅ (2026-06-17) |
 
@@ -408,3 +418,4 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 | 2026-06-14 | S5 Phase 1 SELECT: `step5_select_and_size` built; contract test (19 tests); drift register updated |
 | 2026-06-16 | S5 SIZE + SIMULATE (sprint Phases 3–4): `step5_select_and_size` full trade-construction; `pnl_total = abs(quantity) × pnl_per_share`; contract test 57 tests |
 | 2026-06-17 | S8 cycle metrics (Phase 5): `cycle_return_on_capital_at_risk` + side splits; Sharpe/drawdown on cycle series; legacy body-credit documented as equal-weight mean; `test_run_metrics_contract.py` (23 tests) |
+| 2026-06-18 | ORCH (Phase 6): `SurfaceRunner` delegates S5; removed inline `_select_size_and_settle`; `test_orchestration_contract.py` (10 tests); S5/ORCH status → built |

@@ -98,10 +98,10 @@ Use this table with the diagram. Link each row to contract § and evaluation pla
 | S2 Signals | `step2` | 🟢 ✅ | Disjoint long/short pools; CVG filter; no NaN scores | candidates → S3 |
 | S3 Structures | `step3` | 🟢 ✅ | One row per signal; `structure_ok`; `_assembly` for settle | built → S4; fail → exclusion |
 | S4 Exclusions | `step4` | 🟢 ✅ | `had_earnings_nearby` flag | → S5 |
-| S5 Select + size + simulate + return | `step5` / runner | 📋 design | Select, size, S7 settle, `return_on_max_loss`; fill at S3 only — see [portfolio_metrics_design](surface_engine_portfolio_metrics_design.md) | → LOG |
+| S5 Select + size + simulate + return | `step5` | 🟢 ✅ | Select, size, S7 settle, M1–M3, `pnl_total`, `capital_at_risk_dollars`; fill at S3 only | → LOG |
 | S7 Settle | `settle` (called from S5) | 🟢 ✅ | `pnl` consistent with `exit_spot` | internal to S5 |
-| S8 Metrics | `surface_metrics` | 🟡 design | Target: Sharpe on max-loss series; today body-credit | → RSUM |
-| ORCH | `SurfaceRunner` | 🟡 partial | S1–S4 pipeline; S5 inline | Sprint 003 thin loop |
+| S8 Metrics | `surface_metrics` | 🟢 ✅ | `cycle_return_on_capital_at_risk`; Sharpe/drawdown on cycle series | → RSUM |
+| ORCH | `SurfaceRunner` | 🟢 ✅ | S1–S4 + S5 delegate; S8 after loop | `test_orchestration_contract.py` |
 
 ---
 
@@ -119,7 +119,7 @@ Use this table with the diagram. Link each row to contract § and evaluation pla
 
 ## Architecture note
 
-**Target:** `SurfaceRunner` orchestrates; **all** behavior in `pipeline.py` steps (decoupled). Remaining drift: runner inlines S5 select/size/settle/return. Outcomes for S5/S8: [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md); implementation Sprint 003. S6 collapsed into S5.
+**Target:** `SurfaceRunner` orchestrates; S5 select/size/simulate in `pipeline.py` (decoupled). ORCH wired (Sprint 003 Phase 6). S6 collapsed into S5. Full contract § fill remains Deliverable 7.
 
 ---
 

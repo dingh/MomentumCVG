@@ -1,6 +1,6 @@
 # Current sprint — 003
 
-**Updated:** 2026-06-17  
+**Updated:** 2026-06-18  
 **Status:** Active — Build  
 **Mode:** **Build** (implementation scoped to the accepted Sprint 002 design; tests written with code)
 
@@ -81,10 +81,11 @@ Tests are written **with** the code in each phase (not deferred). Each phase bel
 | 2026-06-14 | **D2 / Phase 3 — S5 Size (Tier A + Tier B)** | ✅ Done | Tier A `conceptual` + Tier B `integer_lots` per [ADR 004](../decisions/004_tier_b_credit_financed_long.md): credit-financed longs, symmetric worst-first fair share, `tier_b_short_max_loss_budget`, share-equivalent `quantity`. Added `tier_b_short_max_loss_budget` config field. `test_step5_select_and_size_contract.py` (33 sizing/select tests). Contract subset 94 ✅. |
 | 2026-06-16 | **D2 / Phase 4 — S5 Simulate** | ✅ Done | S7 settle on included rows; M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label`. Dollar fields use `abs(quantity)` (sign = direction only). 57 tests in `test_step5_select_and_size_contract.py`. Contract subset 117 ✅. Runner still inline until D4 (ORCH). |
 | 2026-06-17 | **D3 / Phase 5 — S8 cycle metrics** | ✅ Done | `cycle_return_on_capital_at_risk` + short/long side splits in `surface_metrics.py`; Sharpe/drawdown/`robust_score` on cycle series; legacy body-credit documented as equal-weight mean (not Σ/Σ). `test_run_metrics_contract.py` (23 tests). Contract subset 140 ✅. |
+| 2026-06-18 | **D4 / Phase 6 — ORCH thin loop** | ✅ Done | `SurfaceRunner` delegates S5 to `pipeline.step5_select_and_size`; removed inline `_select_size_and_settle`. Drops `_assembly` from trade log. `test_orchestration_contract.py` (10 tests). Contract subset 154 ✅. |
 
-**Next start here → Deliverable 4 / Phase 6 (ORCH).** Runner delegates to pipeline steps; no duplicated S5 business logic.
+**Next start here → Deliverable 6 / Phase 7 (synthetic smoke + full-suite verification).**
 
-> **Carry-over note:** `scripts/run_surface_search.py` still constructs configs without `sizing_mode` / Tier B budgets — fails fast at construction (intended). Wire sizing args when runner delegates to `step5` in Deliverable 4 (ORCH).
+> **Carry-over note:** `scripts/run_surface_search.py` still constructs configs without `sizing_mode` / Tier B budgets — fails fast at construction (intended). Wire sizing CLI args in a follow-on (not blocking smoke).
 
 ---
 
@@ -107,8 +108,8 @@ Fix KB-001 when reviewing `option_surface.py` (post–Sprint 003 or iron fly vs 
 - [x] S5 SELECT + SIZE: both tiers implemented; Tier B per [ADR 004](../decisions/004_tier_b_credit_financed_long.md) (Phase 3 — 2026-06-14)
 - [x] S5 SIMULATE: settle + M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` on included rows (Phase 4 — 2026-06-16; `pnl_total = abs(quantity) × pnl_per_share`)
 - [x] S8 produces `cycle_return_on_capital_at_risk` + `short_cycle_return` / `long_cycle_return`; Sharpe on cycle series (Phase 5 — 2026-06-17)
-- [ ] `SurfaceRunner` orchestrates pipeline steps with no duplicated business logic
-- [ ] Contract tests for S5/S8/ORCH green; synthetic end-to-end smoke green (S8 ✅ 2026-06-17; ORCH pending)
+- [x] `SurfaceRunner` orchestrates pipeline steps with no duplicated business logic (Phase 6 — 2026-06-18)
+- [ ] Contract tests for S5/S8/ORCH green; synthetic end-to-end smoke green (S5/S8/ORCH contract tests ✅ 2026-06-18; smoke pending Phase 7)
 - [ ] Full suite green (`tests/`) — no regressions on Sprint 002 contract tests
 - [ ] Financial checks verified in tests: leg type, strike, expiry, **quantity sign, premium sign**, payoff, **max loss** (per AGENTS.md)
 - [ ] Data contract § S5 / S8 / ORCH filled; design doc Tier B drift resolved via ADR 004 in Deliverable 7 (S8 § filled 2026-06-17)
