@@ -282,7 +282,9 @@ class TestSurfaceRunnerDataFlow:
     def test_produces_trade_log_and_summaries(self, run_result):
         assert not run_result.trade_log.empty
         assert not run_result.date_summary.empty
+        assert run_result.run_summary
         assert run_result.run_summary.get("n_traded_rows", 0) >= 1
+        assert run_result.run_summary.get("n_trade_dates", 0) >= 1
 
     def test_pit_universe_uses_month_snapshot(self, run_result):
         traded = run_result.trade_log[
@@ -351,6 +353,7 @@ class TestSurfaceRunnerS5Economics:
             assert col in run_result.trade_log.columns
         for col in self.S5_FINITE_ON_ALL_INCLUDED:
             assert traded[col].notna().all()
+        assert (traded["capital_at_risk_dollars"] > 0).all()
         short_traded = traded[traded["direction"] == "short"]
         assert short_traded["return_on_max_loss"].notna().all()
 

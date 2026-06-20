@@ -1,6 +1,6 @@
 # Current sprint — 003
 
-**Updated:** 2026-06-18  
+**Updated:** 2026-06-20  
 **Status:** Active — Build  
 **Mode:** **Build** (implementation scoped to the accepted Sprint 002 design; tests written with code)
 
@@ -16,7 +16,7 @@ Source of truth (all Accepted, do not re-litigate without an ADR):
 - [decisions/003_position_cap_per_side.md](../decisions/003_position_cap_per_side.md) — per-side cap
 - [decisions/004_tier_b_credit_financed_long.md](../decisions/004_tier_b_credit_financed_long.md) — **Tier B sizing** (integer lots, credit-financed longs, fair-share passes)
 
-> **Precedence (S5/S8/ORCH):** the data contract's S5/S8/ORCH sections still carry pre-design vocabulary (`return_on_allocated_budget`, `return_on_max_loss`-series go/no-go) and lag the design doc — they are flagged as Sprint 003 work in that doc's own drift table. **Until Deliverable 7 fills them at closeout, the S5/S8 design doc (`cycle_return_on_capital_at_risk` = `Σ pnl_total / Σ capital_at_risk_dollars`, M1–M3) is authoritative** for those sections, **except Tier B sizing mechanics** which follow [ADR 004](../decisions/004_tier_b_credit_financed_long.md) (supersedes design doc § Tier B per-name `max_loss_budget_per_trade` and `deployable_capital` CAR binding).
+> **Precedence (S5/S8/ORCH):** data contract § S5 / S8 / ORCH core sections are filled (2026-06-18). Deliverable 7 polish may still replace stale vocabulary (`return_on_allocated_budget`, per-trade max-loss-series go/no-go language). **Authoritative for economics:** design doc (`cycle_return_on_capital_at_risk` = `Σ pnl_total / Σ capital_at_risk_dollars`, M1–M3), **except Tier B sizing mechanics** which follow [ADR 004](../decisions/004_tier_b_credit_financed_long.md).
 
 **Capital / dollars:** sizing budgets remain abstract risk units; do not pin $1M this sprint. **`deployable_capital`** stays on config (optional, validated when set) but is **not used in S5 Tier B sizing** per ADR 004 — long budget = collected short credit only; short budget = `tier_b_short_max_loss_budget`.
 
@@ -82,10 +82,53 @@ Tests are written **with** the code in each phase (not deferred). Each phase bel
 | 2026-06-16 | **D2 / Phase 4 — S5 Simulate** | ✅ Done | S7 settle on included rows; M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label`. Dollar fields use `abs(quantity)` (sign = direction only). 57 tests in `test_step5_select_and_size_contract.py`. Contract subset 117 ✅. Runner still inline until D4 (ORCH). |
 | 2026-06-17 | **D3 / Phase 5 — S8 cycle metrics** | ✅ Done | `cycle_return_on_capital_at_risk` + short/long side splits in `surface_metrics.py`; Sharpe/drawdown/`robust_score` on cycle series; legacy body-credit documented as equal-weight mean (not Σ/Σ). `test_run_metrics_contract.py` (23 tests). Contract subset 140 ✅. |
 | 2026-06-18 | **D4 / Phase 6 — ORCH thin loop** | ✅ Done | `SurfaceRunner` delegates S5 to `pipeline.step5_select_and_size`; removed inline `_select_size_and_settle`. Drops `_assembly` from trade log. `test_orchestration_contract.py` (10 tests). Contract subset 154 ✅. |
+| 2026-06-20 | **D6 / Phase 7 — Synthetic smoke + full-suite verification** | ✅ Done | Existing tests cover S1→S8 synthetic path; no new smoke file. See **Phase 7 verification** below. Contract 154 ✅; data-flow 8 ✅; full suite 488 ✅. |
 
-**Next start here → Deliverable 6 / Phase 7 (synthetic smoke + full-suite verification).**
+**Next start here → Deliverable 7 / Phase 8 (cleanup + data-contract fill + memo).**
 
 > **Carry-over note:** `scripts/run_surface_search.py` still constructs configs without `sizing_mode` / Tier B budgets — fails fast at construction (intended). Wire sizing CLI args in a follow-on (not blocking smoke).
+
+---
+
+## Phase 7 verification (2026-06-20)
+
+**Status: passed** — synthetic S1→S8 path verified on fixtures; no real ORATS/cache data; no strategy or live/paper claims.
+
+### Synthetic smoke tests (existing; no new `tests/smoke/` file)
+
+| Acceptance area | Primary tests |
+|-----------------|---------------|
+| Non-empty `trade_log` / `date_summary` / `run_summary` | `TestSurfaceRunnerDataFlow.test_produces_trade_log_and_summaries` |
+| Included long + short + excluded diagnostic row | `test_long_and_short_routing`, `test_invalid_surface_row_excluded_with_reason`; ORCH `TestDiagnosticsBehavior` |
+| S5 economics columns on trade log | `TestSurfaceRunnerS5Economics`, ORCH `TestS5ColumnsSurviveIntoTradeLog` |
+| Valid S5 economics on included rows | above + positive `capital_at_risk_dollars` assertion |
+| `_assembly` not in trade log | ORCH `test_assembly_not_leaked_into_trade_log` |
+| S8 cycle metrics vs included rows | `test_cycle_metrics_from_s5_economics`; ORCH `test_excluded_rows_do_not_affect_cycle_return` |
+| Diagnostics on/off | ORCH `TestDiagnosticsBehavior` |
+| Empty / no-signal path | ORCH `TestEmptyInputs` (`test_no_trade_dates_yields_empty_summaries`, `test_empty_signals_date_skipped_without_s5_call`) |
+
+Fixtures: `tests/unit/test_surface_runner_data_flow.py` (Session B synthetic parquet layout); reused by `tests/contract/test_orchestration_contract.py`.
+
+### Assertions added (minimal)
+
+- `test_produces_trade_log_and_summaries`: assert non-empty `run_summary`, `n_trade_dates >= 1`
+- `TestSurfaceRunnerS5Economics.test_s5_columns_present_on_traded_rows`: `capital_at_risk_dollars > 0` on included rows
+- `TestEmptyInputs.test_empty_signals_date_skipped_without_s5_call`: empty `date_summary`, default run summary when signals empty
+
+### Commands and results
+
+```powershell
+& C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/contract/ -q
+# 154 passed in 1.76s
+
+& C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_surface_runner_data_flow.py -q
+# 8 passed in 0.80s
+
+& C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/ -q
+# 488 passed in 5.59s
+```
+
+**Failures:** none. No Sprint 003 regressions, legacy drift, or environment issues observed.
 
 ---
 
@@ -109,10 +152,11 @@ Fix KB-001 when reviewing `option_surface.py` (post–Sprint 003 or iron fly vs 
 - [x] S5 SIMULATE: settle + M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` on included rows (Phase 4 — 2026-06-16; `pnl_total = abs(quantity) × pnl_per_share`)
 - [x] S8 produces `cycle_return_on_capital_at_risk` + `short_cycle_return` / `long_cycle_return`; Sharpe on cycle series (Phase 5 — 2026-06-17)
 - [x] `SurfaceRunner` orchestrates pipeline steps with no duplicated business logic (Phase 6 — 2026-06-18)
-- [ ] Contract tests for S5/S8/ORCH green; synthetic end-to-end smoke green (S5/S8/ORCH contract tests ✅ 2026-06-18; smoke pending Phase 7)
-- [ ] Full suite green (`tests/`) — no regressions on Sprint 002 contract tests
+- [x] Contract tests for S5, S8, and ORCH green — 154 tests in `tests/contract/` subset (2026-06-18)
+- [x] Synthetic end-to-end smoke green (Phase 7 — 2026-06-20)
+- [x] Full suite green (`tests/`) — 488 passed, no Sprint 003 regressions (2026-06-20)
 - [ ] Financial checks verified in tests: leg type, strike, expiry, **quantity sign, premium sign**, payoff, **max loss** (per AGENTS.md)
-- [ ] Data contract § S5 / S8 / ORCH filled; design doc Tier B drift resolved via ADR 004 in Deliverable 7 (S8 § filled 2026-06-17)
+- [x] Data contract § S5 / S8 / ORCH core sections filled (2026-06-18); Deliverable 7 polish (Tier B drift language, stale vocabulary) pending
 - [ ] No real-data backtest treated as go/no-go evidence
 
 ---
@@ -124,7 +168,7 @@ Fix KB-001 when reviewing `option_surface.py` (post–Sprint 003 or iron fly vs 
 | A | Config fields + validation (Phase 1); S5 Select extraction (Phase 2) + tests ✅ |
 | B | S5 Size both tiers (Phase 3) ✅ + S5 Simulate / returns (Phase 4) ✅ + tests |
 | C | S8 cycle metrics (Phase 5) + ORCH thin loop (Phase 6) + tests |
-| D | Synthetic smoke (Phase 7); cleanup, data-contract fill, close memo (Phase 8) |
+| D | Synthetic smoke (Phase 7) ✅; cleanup, data-contract fill, close memo (Phase 8) |
 
 ---
 

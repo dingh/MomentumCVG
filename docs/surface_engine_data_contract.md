@@ -1,7 +1,7 @@
 # Surface engine — data contract (source of truth)
 
 **Status:** Accepted — Sprint 002 (HD sign-off 2026-06-10)  
-**Last updated:** 2026-06-17  
+**Last updated:** 2026-06-18  
 **Audience:** HD + agents; supersedes informal runner behavior as spec authority
 
 ---
@@ -32,7 +32,7 @@ A backtest run is **structurally valid** when:
 - [ ] Every rebalance date uses PIT universe and same-day features  
 - [ ] Every candidate row is traceable through S1→S8 with explicit `exclusion_reason` when not traded  
 - [ ] Traded rows include risk-unit fields (abstract budget, not necessarily USD yet)  
-- [ ] Metrics use agreed return denominator (max-loss budget units, not body-credit only)  
+- [ ] Metrics use primary **`cycle_return_on_capital_at_risk`** (Σ pnl_total / Σ capital_at_risk_dollars); legacy body-credit means retained for config search only  
 
 ### Decision-quality success (later sprints)
 
@@ -251,7 +251,7 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 ## S5 — Select, size, and simulate (`step5_select_and_size`)
 
-> **Sprint 003 build in progress.** Authoritative design: [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S5. **Sprint Phases 2–4 (SELECT + SIZE + SIMULATE)** implemented in `pipeline.py`; invoked by `SurfaceRunner` via ORCH (D4 ✅).
+> **Sprint 003 built.** Authoritative design: [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) § S5. **SELECT + SIZE + SIMULATE** in `pipeline.step5_select_and_size`; invoked by `SurfaceRunner` (ORCH ✅).
 
 **Target role:** Turn post-S4 **candidates** into **simulated trades**: (1) **select** — per-side cap (`max_names_per_side`, [decision 003](decisions/003_position_cap_per_side.md)); (2) **size** — constraint-driven policy via `sizing_mode`: **both** Tier A (per-side budget ÷ name count) and Tier B (integer lots × 100 per [ADR 004](decisions/004_tier_b_credit_financed_long.md)); (3) **simulate** — S7 settle + PnL at chosen size; (4) **return** — M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` (former S6 scope, collapsed here). Entry fill/cost is fixed at S3 (`config.fill`); no separate cost pass.
 

@@ -212,3 +212,6 @@ class TestEmptyInputs:
 
         assert len(calls) == 0
         assert result.trade_log.empty
+        assert result.date_summary.empty
+        assert result.run_summary.get("n_traded_rows", 0) == 0
+        assert np.isnan(result.run_summary.get("mean_cycle_return_on_capital_at_risk"))

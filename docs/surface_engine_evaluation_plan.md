@@ -1,7 +1,7 @@
 # Surface engine — component evaluation plan
 
 **Status:** Accepted — Sprint 002 (HD sign-off 2026-06-10)  
-**Last updated:** 2026-06-10  
+**Last updated:** 2026-06-18  
 **Companion:** [surface_engine_data_contract.md](surface_engine_data_contract.md), [surface_engine_data_flow.md](surface_engine_data_flow.md)
 
 ---
@@ -18,7 +18,7 @@ Define **how** each component is verified, linked to **contract tests** and (lat
 |-------|----------------|-------------|
 | **L1 Contract** | Output schema, columns, dtypes, grain, invariants | Every component — Sprint 002 |
 | **L2 Golden** | Hand-calculated numeric values on synthetic fixture | S3, S7, S5 when built |
-| **L3 Integration** | Multi-step chain on synthetic parquets | ORCH — exists (`test_surface_runner_data_flow.py`) |
+| **L3 Integration** | Multi-step chain on synthetic parquets | ORCH — `test_orchestration_contract.py` + `test_surface_runner_data_flow.py` |
 | **L4 Smoke** | Real cache, short date window | After S5 built (incl. returns) — not Sprint 002 |
 | **L5 Tier B** | 2020+ go/no-go | After structural success — not Sprint 002 |
 
@@ -83,7 +83,7 @@ Copy into contract doc as each section is completed.
 Sprint 002 is done when:
 
 - Components **IN, R0, S1–S4, S7** have L1 contract tests (green)  
-- **S5, S8, ORCH** have outcomes documented in [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) (S6 collapsed into S5; contracts deferred to Sprint 003)  
+- **S5, S8, ORCH** outcomes documented in [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md); **Sprint 003** delivered contract tests (154 in `tests/contract/` subset as of Phase 6)  
 - Core three docs + design doc HD-reviewed  
 - Precompute gap log reviewed (empty or accepted)  
 - No requirement for L4/L5  
@@ -96,7 +96,8 @@ Sprint 002 is done when:
 |-------------------------|----------------------------|
 | S4 | Earnings exclusion |
 | S5 + drift | Portfolio cap, sizing, returns, runner→pipeline |
-| S8 | Metrics on max-loss return series |
+| S8 | Metrics on **`cycle_return_on_capital_at_risk`** (Σ pnl_total / Σ CAR); Sharpe/drawdown on cycle series |
+| ORCH | Thin S1→S8 loop; runner delegates S5 |
 | IN gaps | Precompute schema / coverage sprint |
 
 ---
@@ -110,3 +111,4 @@ Sprint 002 is done when:
 | 2026-05-31 | Session B: L1+L2 for S3, S4, S7 (43 contract tests green) |
 | 2026-05-31 | Session C: S5/S8/ORCH deferred; portfolio/metrics design doc |
 | 2026-06-07 | S6 collapsed into S5 — fill at S3; no step6 contract |
+| 2026-06-18 | S5/S8/ORCH contract tests marked ✅; S8 forward mapping uses cycle CAR return series |

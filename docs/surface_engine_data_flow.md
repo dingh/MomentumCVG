@@ -1,7 +1,7 @@
 # Surface engine — data flow and component diagram
 
 **Status:** Accepted — Sprint 002 (HD sign-off 2026-06-10); canonical for Stage B  
-**Last updated:** 2026-06-10  
+**Last updated:** 2026-06-18  
 **Companion:** [surface_engine_data_contract.md](surface_engine_data_contract.md), [surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md)
 
 ---
@@ -39,24 +39,25 @@ flowchart TB
     DATES["Trade date list"]
   end
 
-  subgraph pipeline ["Stage B — Pipeline steps"]
+  subgraph pipeline ["Stage B — Pipeline + ORCH 🟢"]
     S1["S1 Universe<br/>step1_get_universe 🟢"]
     S2["S2 Signals<br/>step2_score_signals 🟢"]
     S3["S3 Structures<br/>step3_get_eligible_structures 🟢"]
     S4["S4 Exclusions<br/>step4_apply_exclusions 🟢"]
-    S5["S5 Select + size + simulate + return<br/>step5_select_and_size 📋 design"]
+    S5["S5 Select + size + simulate + return<br/>step5_select_and_size 🟢"]
     S7["S7 Settle (inside S5)<br/>assembly.settle 🟢"]
+    ORCH["ORCH<br/>SurfaceRunner 🟢"]
   end
 
-  subgraph outputs ["Run outputs 🟡"]
+  subgraph outputs ["Run outputs 🟢"]
     LOG["Trade log"]
     DSUM["Date summary"]
     RSUM["Run summary"]
     MAN["Run manifest 📋"]
   end
 
-  subgraph metrics ["S8 Metrics 🟡 design"]
-    MET["surface_metrics"]
+  subgraph metrics ["S8 Metrics 🟢"]
+    MET["surface_metrics<br/>cycle_return_on_capital_at_risk"]
   end
 
   META --> S3
@@ -66,13 +67,15 @@ flowchart TB
   CFG --> envelope
   PATHS --> envelope
   envelope --> DATES
-  DATES --> S1
+  DATES --> ORCH
+  ORCH --> S1
   S1 --> S2
   S2 --> S3
   S3 --> S4
   S4 --> S5
   S5 --> LOG
   S5 -.-> S7
+  ORCH --> LOG
   LOG --> DSUM
   LOG --> RSUM
   LOG --> MET
@@ -138,3 +141,4 @@ Use this table with the diagram. Link each row to contract § and evaluation pla
 | 2026-05-31 | Session B: S3/S4/S7 contract-pinned (✅) |
 | 2026-05-31 | Session C: S5/S8/ORCH design-deferred; portfolio/metrics design doc |
 | 2026-06-07 | S6 collapsed into S5; diagram S5 → LOG, S7 internal |
+| 2026-06-18 | Sprint 003: S5/S8/ORCH diagram labels → 🟢 built; ORCH box added; outputs + S8 metrics subgraphs → 🟢 |
