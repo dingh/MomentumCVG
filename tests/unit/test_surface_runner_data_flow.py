@@ -325,14 +325,42 @@ class TestSurfaceRunnerDataFlow:
         assert "metadata_error" in str(bad.get("failure_reason", ""))
 
 
-class TestSurfaceRunnerV1Gaps:
-    """Document missing v1 engine fields (expected until Sprint 002 build)."""
+class TestSurfaceRunnerS5Economics:
+    """S5 columns from pipeline.step5_select_and_size appear in the trade log."""
 
-    def test_contracts_not_implemented(self, run_result):
-        assert "contracts" not in run_result.trade_log.columns
+    S5_COLUMNS = [
+        "quantity",
+        "sizing_mode",
+        "pnl_per_share",
+        "pnl_total",
+        "capital_at_risk_dollars",
+        "return_on_premium",
+        "return_on_max_loss",
+        "return_on_atm_straddle",
+        "fill_label",
+    ]
+    S5_FINITE_ON_ALL_INCLUDED = [
+        c for c in S5_COLUMNS if c != "return_on_max_loss"
+    ]
 
-    def test_pnl_dollars_not_implemented(self, run_result):
-        assert "pnl_dollars" not in run_result.trade_log.columns
+    def test_s5_columns_present_on_traded_rows(self, run_result):
+        traded = run_result.trade_log[
+            run_result.trade_log["included_in_portfolio"] == True  # noqa: E712
+        ]
+        for col in self.S5_COLUMNS:
+            assert col in run_result.trade_log.columns
+        for col in self.S5_FINITE_ON_ALL_INCLUDED:
+            assert traded[col].notna().all()
+        short_traded = traded[traded["direction"] == "short"]
+        assert short_traded["return_on_max_loss"].notna().all()
 
-    def test_return_on_max_loss_not_implemented(self, run_result):
-        assert "return_on_max_loss" not in run_result.trade_log.columns
+    def test_cycle_metrics_from_s5_economics(self, run_result):
+        assert not run_result.date_summary.empty
+        cycle = run_result.date_summary.iloc[0]["cycle_return_on_capital_at_risk"]
+        assert cycle == pytest.approx(
+            run_result.run_summary["mean_cycle_return_on_capital_at_risk"]
+        )
+        assert cycle == pytest.approx(
+            run_result.date_summary.iloc[0]["cycle_pnl_total"]
+            / run_result.date_summary.iloc[0]["cycle_capital_at_risk"]
+        )

@@ -17,9 +17,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import pandas as pd
 
@@ -30,6 +29,7 @@ from src.backtest.pipeline import (
     step2_score_signals,
     step3_get_eligible_structures,
     step4_apply_exclusions,
+    step5_select_and_size,
 )
 from src.backtest.surface_run_config import (
     SurfaceDataPaths,
@@ -50,11 +50,8 @@ class SurfaceRunner:
     """
     Execute one BacktestRunConfig on the precomputed option surface.
 
-    Design choices
-    --------------
-    - Step 1 universe and Step 2 signal ranking are reused from pipeline.py.
-    - Step 3 structure assembly and Step 4 earnings exclusions are in pipeline.py.
-    - Step 5 select/size/settle remains in this runner until step5 is implemented.
+    Thin S1→S8 orchestrator: universe → signals → structures → exclusions →
+    ``pipeline.step5_select_and_size`` → ``surface_metrics`` date/run summaries.
     """
 
     def __init__(
@@ -101,14 +98,14 @@ class SurfaceRunner:
                 trade_date, signals, self.surface_db, config
             )
             structures = step4_apply_exclusions(structures, self.earnings, config)
-            trade_rows.extend(
-                self._select_size_and_settle(
-                    trade_date=trade_date,
-                    signals=signals,
-                    structures=structures,
-                    config=config,
-                )
+            s5_out = step5_select_and_size(
+                signals=signals,
+                structures=structures,
+                config=config,
             )
+            if "_assembly" in s5_out.columns:
+                s5_out = s5_out.drop(columns=["_assembly"])
+            trade_rows.extend(s5_out.to_dict(orient="records"))
 
         trade_log = pd.DataFrame(trade_rows)
         if not trade_log.empty and "trade_date" in trade_log.columns:
@@ -183,106 +180,3 @@ class SurfaceRunner:
                 "Ensure the features DataFrame and universe are populated correctly."
             )
         return signals
-
-    # ------------------------------------------------------------------
-    # Step 5 — select, size, settle (runner until pipeline step5 exists)
-    # ------------------------------------------------------------------
-    #   1. Mark rows excluded due to missing structure or earnings.
-    #   2. From eligible rows, select up to max_names_per_side per direction
-    #      (ranked by signal_rank_pct).
-    #   3. For each selected row: compute integer contract count from budget,
-    #      call assembly.settle(exit_spot) to get realised P&L.
-    #   4. When include_diagnostics=False, excluded rows are DROPPED entirely
-    #      from the returned list (trade log only contains traded positions).
-    # ------------------------------------------------------------------
-
-    def _select_size_and_settle(
-        self,
-        trade_date: date,
-        signals: pd.DataFrame,  # NOTE: not used directly; signal columns are already merged into structures
-        structures: pd.DataFrame,
-        config: BacktestRunConfig,
-    ) -> List[Dict[str, object]]:
-        if structures.empty:
-            return []
-
-        rows: List[Dict[str, object]] = []
-        work = structures.copy()
-
-        # exclusion priority 1: no structure
-        work["included_in_portfolio"] = False
-        work["exclusion_reason"] = None
-
-        missing_mask = work["structure_ok"] != True  # noqa: E712
-        work.loc[missing_mask, "exclusion_reason"] = "no_tradeable_structure"
-
-        earnings_mask = (work["structure_ok"] == True) & (work["had_earnings_nearby"] == True)  # noqa: E712
-        work.loc[earnings_mask, "exclusion_reason"] = "earnings_exclusion"
-
-        eligible = work[
-            (work["structure_ok"] == True)  # noqa: E712
-            & (work["had_earnings_nearby"] == False)  # noqa: E712
-        ].copy()
-
-        selected_idx = []
-        for direction, g in eligible.groupby("direction", sort=False):
-            if direction == "long":
-                g_sorted = g.sort_values("signal_rank_pct", ascending=False)
-            else:
-                g_sorted = g.sort_values("signal_rank_pct", ascending=True)
-            selected_idx.extend(g_sorted.head(config.max_names_per_side).index.tolist())
-            cap_excluded = g_sorted.iloc[config.max_names_per_side:]
-            if not cap_excluded.empty:
-                work.loc[cap_excluded.index, "exclusion_reason"] = "max_names_cap"
-
-        if selected_idx:
-            work.loc[selected_idx, "included_in_portfolio"] = True
-
-        # size and settle included rows
-        for idx, row in work.iterrows():
-            out = row.to_dict()
-            max_loss_per_share = out.get("max_loss_per_share")
-            assembly = out.pop("_assembly", None)
-
-            if not bool(out["included_in_portfolio"]):
-                if config.include_diagnostics:
-                    out.update({"pnl_per_share": None})
-                    rows.append(out)
-                continue
-
-            max_loss_per_share = self._resolve_max_loss_per_share(out, max_loss_per_share)
-            if max_loss_per_share is None or max_loss_per_share <= 0:
-                out["included_in_portfolio"] = False
-                out["exclusion_reason"] = "invalid_max_loss"
-                if config.include_diagnostics:
-                    rows.append(out)
-                continue
-
-            exit_spot = Decimal(str(out["exit_spot"]))
-            position = assembly.settle(exit_spot=exit_spot)
-            pnl_per_share = float(position.pnl) if position.pnl is not None else None
-
-            out.update({"pnl_per_share": pnl_per_share})
-            rows.append(out)
-
-        return rows
-
-    def _resolve_max_loss_per_share(
-        self,
-        row: Dict[str, object],
-        max_loss_per_share: Optional[float],
-    ) -> Optional[float]:
-        if max_loss_per_share is not None:
-            return float(max_loss_per_share)
-
-        instrument_type = row.get("instrument_type")
-
-        # short straddle has no bounded max loss; use a configurable risk proxy.
-        # Default multiplier is 2.0x the net credit received, meaning the position
-        # is treated as having a "max loss" of 2x the initial premium collected.
-        # This is an approximation: tune short_straddle_risk_multiplier carefully.
-        if instrument_type == "short_straddle":
-            net_credit = max(float(row.get("net_credit_per_share", 0.0)), 0.0)
-            return net_credit * self.settings.short_straddle_risk_multiplier
-
-        return None
