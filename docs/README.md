@@ -29,13 +29,13 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [correctness_audit.md](correctness_audit.md) | Sprint 001 test inventory and correctness gaps | 2026-05-24 |
 | [surface_runner_data_flow.md](surface_runner_data_flow.md) | Sprint 001 Session A.1 SurfaceRunner data-flow map | 2026-05-25 |
 | [surface_runner_reading_guide.md](surface_runner_reading_guide.md) | Guided code read-through (Sprint 001) | 2026-05-27 |
-| [surface_engine_data_contract.md](surface_engine_data_contract.md) | Sprint 002 per-component I/O contracts (canonical) | 2026-06-18 |
-| [surface_engine_data_flow.md](surface_engine_data_flow.md) | Sprint 002 flow diagram + box status | 2026-06-18 |
-| [surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md) | Sprint 002 component verification plan | 2026-06-18 |
-| [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) | S5/S8 portfolio & metrics design (Accepted) | 2026-06-10 |
+| [surface_engine_data_contract.md](surface_engine_data_contract.md) | Sprint 002 per-component I/O contracts (canonical) | 2026-06-20 |
+| [surface_engine_data_flow.md](surface_engine_data_flow.md) | Sprint 002 flow diagram + box status | 2026-06-20 |
+| [surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md) | Sprint 002 component verification plan | 2026-06-20 |
+| [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) | S5/S8 portfolio & metrics design (Accepted; built Sprint 003) | 2026-06-20 |
 | [development_workflow.md](development_workflow.md) | Human + agent sprint workflow | 2026-05-23 |
 | [baseline_status.md](baseline_status.md) | Test and smoke-command baseline | 2026-05-23 |
-| [agenda/current_sprint.md](agenda/current_sprint.md) | Current sprint (Sprint 003 — S5/S8 build) | 2026-06-18 |
+| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 003 closeout (closed 2026-06-20) | 2026-06-20 |
 | [known_bugs.md](known_bugs.md) | Open bugs and spec drift (fix deferred) | 2026-06-14 |
 
 ## Decisions
@@ -52,6 +52,8 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 |--------|----------|
 | 000 | [Week 0 kickoff](sprint_memos/000_week0_kickoff.md) |
 | 001 | [Repo audit and verification](sprint_memos/001_repo_audit_verification.md) _(closed 2026-05-28)_ |
+| 002 | [Data contracts and S5/S8 design](sprint_memos/002_data_contracts.md) _(closed 2026-06-10)_ |
+| 003 | [S5/S8 build and ORCH](sprint_memos/003_s5_s8_build.md) _(closed 2026-06-20)_ |
 | — | [Week 0 review notes](sprint_memos/week0_review_notes.md) _(archived from agenda)_ |
 
 ## Planned (not yet created)

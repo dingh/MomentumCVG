@@ -1,7 +1,7 @@
 # Surface engine — data flow and component diagram
 
 **Status:** Accepted — Sprint 002 (HD sign-off 2026-06-10); canonical for Stage B  
-**Last updated:** 2026-06-18  
+**Last updated:** 2026-06-20  
 **Companion:** [surface_engine_data_contract.md](surface_engine_data_contract.md), [surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md)
 
 ---
@@ -122,7 +122,7 @@ Use this table with the diagram. Link each row to contract § and evaluation pla
 
 ## Architecture note
 
-**Target:** `SurfaceRunner` orchestrates; S5 select/size/simulate in `pipeline.py` (decoupled). ORCH wired (Sprint 003 Phase 6). S6 collapsed into S5. Full contract § fill remains Deliverable 7.
+**Architecture (Sprint 003):** `SurfaceRunner` orchestrates S1→S4 and delegates S5 to `pipeline.step5_select_and_size` (select + size + S7 settle + returns). S8 metrics run after the date loop. S6 is collapsed into S5; fill economics are fixed at S3 assembly.
 
 ---
 
@@ -142,3 +142,4 @@ Use this table with the diagram. Link each row to contract § and evaluation pla
 | 2026-05-31 | Session C: S5/S8/ORCH design-deferred; portfolio/metrics design doc |
 | 2026-06-07 | S6 collapsed into S5; diagram S5 → LOG, S7 internal |
 | 2026-06-18 | Sprint 003: S5/S8/ORCH diagram labels → 🟢 built; ORCH box added; outputs + S8 metrics subgraphs → 🟢 |
+| 2026-06-20 | Sprint 003 closeout: architecture note aligned to built ORCH + pipeline S5 |

@@ -87,7 +87,7 @@ Existing reasons unchanged: `no_tradeable_structure`, `earnings_exclusion`, `max
 - `pipeline._apply_tier_b_sizing`: symmetric iterative fair-share on short max-loss, then credit-financed longs.
 - `BacktestRunConfig` gains `tier_b_short_max_loss_budget` (required for `integer_lots`).
 - ADR amended in place (no ADR 005).
-- Design doc § Tier B glossary update deferred to Sprint 003 closeout (Deliverable 7).
+- Design doc § Tier B glossary updated Sprint 003 closeout (ADR 004 is authoritative for Tier B sizing).
 
 ---
 

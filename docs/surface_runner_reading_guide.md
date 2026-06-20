@@ -211,7 +211,7 @@ Used only to reject `invalid_max_loss` before settle — **not** for sizing. Sho
 | `step3_get_eligible_structures` | Implemented in file but **not called** by SurfaceRunner (runner duplicates logic inline) |
 | `step4_apply_exclusions` | `pass` |
 | `step5_select_and_size` | `pass` |
-| `step6_apply_cost` | `pass` |
+| `step6_apply_cost` | **Removed** — S6 collapsed into S5; fill at S3 |
 
 **Design intent:** SurfaceRunner orchestrates; pipeline holds **pure, testable** steps. Runner currently inlines steps 3–5.
 

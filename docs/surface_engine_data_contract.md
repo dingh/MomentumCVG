@@ -1,7 +1,7 @@
 # Surface engine — data contract (source of truth)
 
 **Status:** Accepted — Sprint 002 (HD sign-off 2026-06-10)  
-**Last updated:** 2026-06-18  
+**Last updated:** 2026-06-20  
 **Audience:** HD + agents; supersedes informal runner behavior as spec authority
 
 ---
@@ -307,7 +307,7 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 > **Collapsed into S5 (Sprint 002 Session C).** No separate v1 pipeline step or contract test.
 
-**Was:** Post-settle spread penalty and `return_on_max_loss` labeling. **Now:** `return_on_max_loss` and `fill_label` are S5 outputs; conservative entry is `FillAssumption` at S3 assembly. `config.cost_model` is legacy — use `fill` only. `pipeline.step6_apply_cost` remains a deprecated `pass` stub until Sprint 003 cleanup.
+**Was:** Post-settle spread penalty and `return_on_max_loss` labeling. **Now:** `return_on_max_loss` and `fill_label` are S5 outputs; conservative entry is `FillAssumption` at S3 assembly. `config.cost_model` is legacy — use `fill` only. No active runner path calls a separate S6 step (removed Sprint 003 Phase 8).
 
 **Status:** `superseded` — see S5
 
@@ -391,13 +391,14 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 
 ## Implementation drift register
 
-| Component | Contract says | Code today | Resolution sprint |
-|-----------|---------------|------------|-------------------|
-| S5 SELECT + SIZE + SIMULATE | `pipeline.py` sprint Phases 2–4 | `pipeline.step5` built; runner delegates | Sprint 003 D2 ✅ |
-| Trade log economics | M1–M3, `pnl_total`, `capital_at_risk_dollars` | Full S5 columns in runner trade log via ORCH | Sprint 003 D4 ✅ (2026-06-18) |
-| ORCH thin loop | S1→S8 via pipeline + metrics | `SurfaceRunner` delegates S5; no inline settle | Sprint 003 D4 ✅ (2026-06-18) |
-| Cap | Per-side `max_names_per_side` ([decision 003](decisions/003_position_cap_per_side.md)) | Pipeline step5 SELECT + runner aligned | Sprint 003 D2 ✅ |
-| S8 denominator | `cycle_return_on_capital_at_risk` (Σ pnl_total / Σ CAR); Sharpe on cycle series | `surface_metrics.py` built; legacy body-credit mean retained | Sprint 003 D3 ✅ (2026-06-17) |
+S5, S8, and ORCH are **resolved** (Sprint 003 closed 2026-06-20). Remaining drift is outside the S5/S8/ORCH build scope:
+
+| Item | Contract / spec | Code today | Action |
+|------|-----------------|------------|--------|
+| **KB-001** | M3 denominator = ATM body straddle for all structures | Iron condor uses condor short-leg sum | Fix deferred — [known_bugs.md](known_bugs.md) |
+| `earnings_date` in Stage A | S4 earnings exclusion | Not in precompute artifacts | Precompute / data sprint |
+| Liquidity panel grain | 3-month rolling avg (HD decision) | Monthly snapshot | Panel build script (Sprint 004+) |
+| `scripts/run_surface_search.py` | Valid `BacktestRunConfig` | Missing `sizing_mode` / Tier B fields | Wire CLI args in follow-on |
 
 ---
 
@@ -419,3 +420,4 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 | 2026-06-16 | S5 SIZE + SIMULATE (sprint Phases 3–4): `step5_select_and_size` full trade-construction; `pnl_total = abs(quantity) × pnl_per_share`; contract test 57 tests |
 | 2026-06-17 | S8 cycle metrics (Phase 5): `cycle_return_on_capital_at_risk` + side splits; Sharpe/drawdown on cycle series; legacy body-credit documented as equal-weight mean; `test_run_metrics_contract.py` (23 tests) |
 | 2026-06-18 | ORCH (Phase 6): `SurfaceRunner` delegates S5; removed inline `_select_size_and_settle`; `test_orchestration_contract.py` (10 tests); S5/ORCH status → built |
+| 2026-06-20 | Sprint 003 Phase 8 closeout: S5/S8/ORCH drift resolved; S6 stub removed; stale vocabulary cleaned; synthetic S1→S8 verified (488 tests green) |

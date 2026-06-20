@@ -1,7 +1,7 @@
 # Surface engine — component evaluation plan
 
 **Status:** Accepted — Sprint 002 (HD sign-off 2026-06-10)  
-**Last updated:** 2026-06-18  
+**Last updated:** 2026-06-20  
 **Companion:** [surface_engine_data_contract.md](surface_engine_data_contract.md), [surface_engine_data_flow.md](surface_engine_data_flow.md)
 
 ---
@@ -112,3 +112,4 @@ Sprint 002 is done when:
 | 2026-05-31 | Session C: S5/S8/ORCH deferred; portfolio/metrics design doc |
 | 2026-06-07 | S6 collapsed into S5 — fill at S3; no step6 contract |
 | 2026-06-18 | S5/S8/ORCH contract tests marked ✅; S8 forward mapping uses cycle CAR return series |
+| 2026-06-20 | Sprint 003 closed: 154 contract tests + synthetic S1→S8 smoke verified; full suite 488 green |

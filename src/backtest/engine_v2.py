@@ -34,7 +34,6 @@ from src.backtest.pipeline import (
     step3_get_eligible_structures,
     step4_apply_exclusions,
     step5_select_and_size,
-    step6_apply_cost,
 )
 
 if TYPE_CHECKING:

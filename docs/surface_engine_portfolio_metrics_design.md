@@ -1,23 +1,12 @@
 # Surface engine — portfolio and metrics design (S5 / S8)
 
-**Status:** Accepted — design complete, all open questions resolved; HD sign-off 2026-06-10; ready for Sprint 003 build  
-**Last updated:** 2026-06-10  
-**Audience:** HD + agents  
-**Companion:** [surface_engine_data_contract.md](surface_engine_data_contract.md), [surface_engine_data_flow.md](surface_engine_data_flow.md), [backtest_evaluation_protocol.md](backtest_evaluation_protocol.md)
-
----
-
-## Purpose
-
-Sprint 002 Sessions A–B pinned contracts through **structure build, exclusions, and per-share settlement** (S1–S4, S7). The remaining pipeline tail — **S5, S8, and full orchestration** — is not ready for contract tests because:
-
-1. **S5 today is not a portfolio layer** — it is selection + settle wiring in `SurfaceRunner._select_size_and_settle`.
-2. **Return columns** are not fully wired — M1–M3, `pnl_total`, and `capital_at_risk_dollars` are designed but not on the trade log yet; S8 cycle returns not implemented.
-3. **Sizing is a constraint-satisfaction decision**, not an optimizer — config supplies limits (capital, max loss per name, cap count); S5 applies rules to preserve signal alpha at the chosen fidelity tier.
+**Status:** Accepted — design complete; implemented Sprint 003 (closed 2026-06-20)  
+**Last updated:** 2026-06-20  
+**Implementation:** Sprint 003 built S5, S8, and ORCH per this design (2026-06-20 closeout).
 
 **S6 collapsed into S5 (HD decision):** Entry fill/cost is fixed at structure assembly (S3 + `FillAssumption`). A separate post-trade cost step is redundant for v1; trade returns (M1–M3, `pnl_total`, `capital_at_risk_dollars`) and `fill_label` are computed in S5 Phase 3.
 
-This document defines **what each step must achieve** before Sprint 003 writes contracts and implementation together.
+This document defines **what each step must achieve** — the authoritative economics spec for S5/S8. Implementation lives in `pipeline.step5_select_and_size`, `surface_metrics.py`, and `SurfaceRunner` (ORCH).
 
 **Out of scope here:** broker execution, live early exit, sector caps, deployable $ pinning (deferred per Sprint 002 HD decision).
 
@@ -31,18 +20,17 @@ This document defines **what each step must achieve** before Sprint 003 writes c
 | S5 | **Select, size, and simulate trades** — turn S4 candidates into sized trade log rows (config dials, not an optimizer) |
 | S6 | **Collapsed into S5** — fill at S3; no separate `step6_apply_cost` for v1 |
 | S8 | Metrics must support **decision-quality** per [backtest_evaluation_protocol.md](backtest_evaluation_protocol.md) (Sharpe on agreed return series) |
-| Contracts | **Deferred** for S5/S8/ORCH until this doc is reviewed and Sprint 003 build starts |
+| Contracts | **Built** in Sprint 003 — `tests/contract/` (S5, S8, ORCH) |
 
 ---
 
-## Current vs target (honest snapshot)
+## Current vs target (post–Sprint 003)
 
-| Step | Code today | Gap |
-|------|------------|-----|
-| **S5** | Runner: eligibility filter + per-**side** cap → settle → `pnl_per_share` only | **No sizing policy** (`quantity` / tier weights missing); no `capital_at_risk_dollars`; settle bundled here; cap semantics **aligned** with [decision 003](decisions/003_position_cap_per_side.md) |
-| **S5 returns** | Fill at S3; no separate cost step | No M1–M3, `pnl_total`, or `capital_at_risk_dollars` on trade log yet |
-| **S8** | `surface_metrics` on **body credit** (`pnl / body_credit_per_share`) | Target: **`cycle_return_on_capital_at_risk`** per rebalance + side splits |
-| **ORCH** | S1–S4 via `pipeline.py`; S5 inline in runner | Not a thin S1–S8 loop |
+| Step | Status |
+|------|--------|
+| **S5** | `pipeline.step5_select_and_size` — SELECT + SIZE (Tier A + Tier B per [ADR 004](decisions/004_tier_b_credit_financed_long.md)) + SIMULATE (S7 settle, M1–M3, `pnl_total`, `capital_at_risk_dollars`) |
+| **S8** | `surface_metrics.py` — `cycle_return_on_capital_at_risk` + side splits; Sharpe/drawdown/`robust_score` on cycle series; legacy body-credit mean retained for config search |
+| **ORCH** | `SurfaceRunner` thin S1→S8 loop; delegates S5; no inline business logic |
 
 ---
 
@@ -529,7 +517,7 @@ Items below were deliberate TBDs during design; **all are now resolved** (2026-0
 | `pnl_total`, `capital_at_risk_dollars`, M1–M3 on trade log | **S5 Phase 3** after size + settle |
 | `cost_model` vs `fill` dual knobs | **`fill` only** for v1; `cost_model` legacy / unused |
 
-`pipeline.step6_apply_cost` remains a `pass` stub with a deprecation note until code cleanup in Sprint 003. No contract test for S6.
+S6 has no pipeline function or contract test. No active runner path calls a separate cost step.
 
 ---
 
@@ -539,13 +527,7 @@ Items below were deliberate TBDs during design; **all are now resolved** (2026-0
 
 Collapse trade log → **date summary** + **run summary** so config search and go/no-go use one return definition.
 
-### Current (keep as interim)
-
-- `date_return_on_body_credit`, `mean_trade_return_on_body_credit`, Sharpe on that series
-- Useful for **relative** config search until max-loss series exists
-- **Not** sufficient for v1 go/no-go ([backtest_evaluation_protocol.md](backtest_evaluation_protocol.md))
-
-### Target (Sprint 003+)
+### Implemented (Sprint 003)
 
 | Metric | Definition |
 |--------|------------|
@@ -557,7 +539,7 @@ Collapse trade log → **date summary** + **run summary** so config search and g
 | `max_drawdown` | On per-date **cycle** return series |
 | Side diagnostics | Long/short PnL totals, capital at risk totals, and side cycle returns |
 
-Migrate S8 from interim `body_credit` Sharpe to **`cycle_return_on_capital_at_risk`**. M1–M3 remain **trade-log only** (see § Implementation annotations).
+Legacy `date_return_on_body_credit` and equal-weight body-credit means remain for interim config search only — not used for Sharpe/drawdown after Sprint 003 S8.
 
 ### ORCH (orchestration)
 
@@ -569,9 +551,7 @@ S1 → S2 → S3 → S4 → S5 (select, size, settle, return) → trade log → 
 
 S7 `settle()` is invoked **inside** S5, not a separate orchestration step after S5.
 
-**Today:** S5+settle inline in runner; S8 after loop.
-
-Sprint 003: extract runner tail to `step5`; add orchestration contract test.
+**Implemented (Sprint 003):** `SurfaceRunner.run_single_config` calls pipeline steps only; S7 `settle()` is invoked inside S5. Contract tests: `test_orchestration_contract.py`, `test_surface_runner_data_flow.py`.
 
 ---
 
@@ -637,4 +617,5 @@ Sprint 003: extract runner tail to `step5`; add orchestration contract test.
 | 2026-06-07 | **Implementation-readiness pass (vs code):** exclusion strings aligned to code (`max_names_cap`, `invalid_max_loss`); flagged NEW config fields vs existing; defined `deployable_capital=None` behavior; Tier A `quantity` fractional (not NaN); `risk_fraction` demoted to descriptive; denominator sign convention + zero-denominator NaN rules; noted `short_structure='straddle'` config tension. |
 | 2026-06-07 | **Tier A sizing reframed (HD):** control is a **per-side total budget** split equally by name count (not a per-name slot). `tier_a_mode` ∈ {`equal_premium`, `equal_max_loss`}; `tier_a_short_budget` / `tier_a_long_budget` (long financed by collected short premium in `equal_max_loss`). Replaces the `$T = max_loss_budget_per_trade` reuse; added worked example. |
 | 2026-06-07 | Final sweep: clarified sizing denominator (premium in `equal_premium`) vs at-risk denominator (always `at_risk_per_share` for `capital_at_risk_dollars`); Tier A `pnl_total` has no multiplier; denominators derived in S5 (not S3); tagged short-straddle reference rows out-of-scope. |
+| 2026-06-20 | Sprint 003 implementation closed: S5/S8/ORCH built; S6 stub removed; cycle CAR return series is primary Sharpe input |
 | 2026-06-16 | **Sprint 003 Phase 4 pin:** `quantity` sign = long/short only; dollar fields use `abs(quantity)`. `pnl_total = abs(quantity) × pnl_per_share`; `capital_at_risk_dollars = abs(quantity) × at_risk_per_share`. Aligns S7 settle (pnl positive = profit) with S8 cycle sums. Supersedes earlier `quantity × pnl_per_share` wording and Tier B simulate-time `× contract_multiplier`. |
