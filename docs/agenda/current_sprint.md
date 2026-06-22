@@ -1,190 +1,586 @@
-# Current sprint — 003
+# Current sprint — 004
 
-**Updated:** 2026-06-20  
-**Status:** Closed — Completed  
-**Mode:** Build (closed)
+**Updated:** 2026-06-21 (planning v7 — C1 receipt schema aligned)  
+**Status:** Active — **C1 implemented** (`src/data/input_snapshot.py`); C2+ in progress  
+**Mode:** Build (HD decisions locked below)
+
+**C1 receipt design (canonical):** [docs/tmp/c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md)
+
+**Execution guardrails (read with this doc):** [sprint004_execution_guardrails.md](sprint004_execution_guardrails.md)
 
 ---
 
 ## Goal
 
-Turn the accepted Sprint 002 design into **trusted code**: implement the **S5 trade-construction layer** (select + size + simulate + return), **S8 cycle-return metrics**, and a **thin S1→S8 orchestration**, each with **contract tests** plus one **synthetic end-to-end smoke**.
+Build the **trustworthy weekly input layer** for future real-data backtesting and trade-decision generation.
 
-Source of truth (all Accepted, do not re-litigate without an ADR):
-- [surface_engine_portfolio_metrics_design.md](../surface_engine_portfolio_metrics_design.md) — S5/S8 economics (Tier A; Tier B sizing per [ADR 004](../decisions/004_tier_b_credit_financed_long.md))
-- [surface_engine_data_contract.md](../surface_engine_data_contract.md) — component contracts
-- [decisions/003_position_cap_per_side.md](../decisions/003_position_cap_per_side.md) — per-side cap
-- [decisions/004_tier_b_credit_financed_long.md](../decisions/004_tier_b_credit_financed_long.md) — Tier B sizing
+**Sprint question (the only question this sprint answers):**
 
-> **Precedence (S5/S8/ORCH):** data contract § S5 / S8 / ORCH are **built** and aligned with code (Sprint 003 closed 2026-06-20). **Authoritative for economics:** `cycle_return_on_capital_at_risk` = `Σ pnl_total / Σ capital_at_risk_dollars`, M1–M3 per design doc; Tier B sizing per ADR 004.
+> Can we refresh weekly input data, build/update a point-in-time universe, and trust that split-adjusted prices/strikes/option economics are internally consistent enough for downstream backtesting?
 
-**Capital / dollars:** sizing budgets remain abstract risk units; do not pin $1M this sprint. **`deployable_capital`** stays on config (optional, validated when set) but is **not used in S5 Tier B sizing** per ADR 004.
+**This sprint does NOT answer:**
+
+- Is the strategy profitable?
+- Does Sharpe survive?
+- What parameters are best?
+- Is the strategy ready for paper/live trading?
 
 ---
 
-## HD decisions (locked for Sprint 003)
+## Real-data scope (HD locked)
 
-| Topic | Decision |
-|-------|----------|
-| Tiers | Build **both** Tier A (`conceptual`) and Tier B (`integer_lots`) in S5 |
-| `sizing_mode` | **Required** config field — no default; run fails fast if unset |
-| Tier A control | **Per-side total budget** ÷ name count (`tier_a_mode` ∈ {`equal_premium`, `equal_max_loss`}) |
-| Tier B control | **[ADR 004](../decisions/004_tier_b_credit_financed_long.md):** shorts from **`tier_b_short_max_loss_budget`** → iterative worst-first fair share → integer lots; longs from **collected short credit** only |
-| `contract_multiplier` | Pinned = 100 (equity options); embedded in Tier B `quantity` |
-| Short side | **Defined-risk only** — reject `short_structure='straddle'` |
-| Trade-log grain | One row per `(trade_date, ticker, direction)` |
-| Primary metric | `cycle_return_on_capital_at_risk` (+ short/long side splits) |
-| Scope | Implementation + contract tests + **synthetic smoke**; **no real-data backtest run** |
+| In Sprint 004 | Deferred |
+|---------------|----------|
+| **Input-layer** validation on real cache: splits, spot, liquidity panel, **option surface precompute (A1/A2)** | **Backtesting** (SurfaceRunner S1→S8, trade logs, Sharpe) → Sprint **006** |
+| PIT universe checks on real panel | Tier B baseline / go-no-go → Sprint **007** |
+| Split audit on real ORATS-adjusted chains | Parameter search, paper/live |
+
+**Rule:** “Real-data validation” in 004 means **input artifacts and precompute correctness**, not strategy backtest runs.
+
+---
+
+## Source of truth
+
+- [v1_universe_protocol.md](../v1_universe_protocol.md) — PIT top-20% universe rule (update at 004 closeout for rolling panel)
+- [surface_engine_data_contract.md](../surface_engine_data_contract.md) — Stage A (A1–A4) + drift register
+- [surface_engine_data_flow.md](../surface_engine_data_flow.md) — Stage A vs Stage B boundary
+- [surface_engine_evaluation_plan.md](../surface_engine_evaluation_plan.md) — L4/L5 deferred to Sprint 006+
+
+**Precedence:** Sprint 003 S5/S8/ORCH economics remain locked. Sprint 004 touches **Stage A input scripts** (splits, spot, liquidity, **option surface precompute**); **no** changes to `pipeline.py` S2+ signal logic, S5 sizing, S8 metrics, or ORCH.
+
+**Previous sprint:** [sprint_memos/003_s5_s8_build.md](../sprint_memos/003_s5_s8_build.md) _(closed 2026-06-20)_.
+
+> **Feature branch (A4):** All momentum/CVG / straddle history / `build_features` work → **Sprint 005 only**. Not wired, audited, or inventoried in 004 except a one-line “deferred to 005” note in `plan`/`validate`.
+
+---
+
+## Closeout blockers vs stretch / report-only
+
+### Closeout blockers (required to close Sprint 004)
+
+| # | Blocker |
+|---|---------|
+| 1 | CLI skeleton: **`plan`**, **`validate`**, **`split-audit`**, **`surface-audit`**, **`refresh --dry-run`** |
+| 2 | **`--as-of`** on all subcommands → resolves to **last trading day ≤ `--as-of`** |
+| 3 | **`snapshot_id`** (deterministic) + **`build_id`** (timestamped); manifest on executed runs |
+| 4 | Input **inventory / validation report** (PASS / WARN / FAIL) for **A1, A2, A3** + splits + spot — **not A4** |
+| 5 | Rolling **3-month liquidity panel**: **rebuild attempted**; PASS/WARN on success, or **explicit FAIL** if source data insufficient (§ Blocks Sprint 005) |
+| 6 | **PIT universe validation** on sample dates (§ PIT universe criteria) |
+| 7 | **Split unit/golden tests** on ≥1 multi-split fixture |
+| 8 | **Split audit** script + ≥1 substantive documented run (scope configurable) |
+| 9 | **`precompute_option_surface.py` audit + tests** (§ Option surface precompute spec) |
+| 10 | **[v1_weekly_runbook.md](../v1_weekly_runbook.md)** written |
+| 11 | **Full pytest suite green** |
+| 12 | **No** strategy / S5 / S8 / ORCH logic changed |
+
+### Stretch / report-only (not required for closeout)
+
+| Item | Notes |
+|------|-------|
+| Full **`refresh`** runs every wired script without manual steps | Surface + core chain wired; feature branch absent by design |
+| Full-cache split scan **perfectly clean** | Script + ≥1 run required; WARN OK |
+| Full historical **surface backfill** beyond audit sample window | Sample + coverage report sufficient |
+| Tagging every artifact with `snapshot_id` | Manifest path refs enough |
+| **`precompute_option_surface.py` full-universe rebuild** via CLI | Audit + sample rebuild sufficient |
+| Backtest / **S1→S8 smoke** | Sprint **006** |
+| Watermark-scoped audits (audit only unseen dates/tickers) | Stretch; full behavior in **005** |
+| Incremental append in every precompute script | **005**; 004 may batch by window |
+
+---
+
+## Validation severity (PASS / WARN / FAIL)
+
+| Status | Meaning |
+|--------|---------|
+| **PASS** | Safe for downstream use at this check |
+| **WARN** | Usable; limitation documented; does not block closeout unless `--strict` or blocking |
+| **FAIL** | Blocks downstream real-data backtest input trust |
+
+**Exit codes:** `0` = pass · `1` = blocking FAIL · `2` = usage/config error
+
+---
+
+## HD decisions (locked — 2026-06-21)
+
+| ID | Topic | Decision |
+|----|-------|----------|
+| HD-004-0 | Real-data scope | **Input / liquidity / precompute** on real cache = **004**; **backtesting** = **006+** |
+| HD-004-1 | Rolling panel | **Rebuild preferred.** If ORATS/cache lacks months needed for rolling window, report **FAIL** with documented gap — do not silently ship monthly-only panel as rolling |
+| HD-004-2 | `--as-of` | **Last trading day ≤ `--as-of`** (align ORATS / `get_trading_fridays`) |
+| HD-004-3 | Split audit scope | **Configurable** (`--sample-tickers`, date window); **≥1 substantive run** for closeout |
+| — | `snapshot_id` | Deterministic **16-hex** hash of receipt identity only: `schema_version`, `as_of_resolved_trading_day`, `data_source`, `artifacts`, `params` — **not** a content fingerprint |
+| — | `build_id` | Timestamped execution ID (`{UTC ts}_{6-hex}`); manifest has **both**; excluded from `snapshot_id` |
+| — | Feature branch | **Entirely Sprint 005** — not in 004 CLI wiring |
+| — | Stale doc conflicts | Update `backtest_evaluation_protocol.md`, memos, etc. **when that later sprint starts** — not in 004 |
+| — | Rolling protocol doc | **Implement rolling in 004**; update [v1_universe_protocol.md](../v1_universe_protocol.md) **at 004 closeout** |
+| — | Manifest layers | `input_snapshot_manifest` (004) ≠ `run_manifest` (007) |
+| HD-004-4 | Weekly operator model | **`incremental` \| `backfill` \| `repair`** — routine refresh must not require full-history recompute; split events trigger **repair** scope; schema/column changes use **backfill** window |
+| HD-004-5 | Incremental engines vs orchestration | **004** delivers CLI **`--mode`** + runbook contract for modes; **receipt schema stays minimal (C1)** — `refresh_mode` / watermarks / pipeline telemetry **not** in manifest; **full incremental append** in precompute scripts → **005**; 004 scripts may still run year/window batch |
+
+---
+
+## Sprint boundary: 004 input + surface precompute vs 005 features
+
+| Topic | Sprint 004 | Sprint 005 |
+|-------|------------|------------|
+| Splits, spot, liquidity (A3) | Build, validate, rebuild rolling | — |
+| Option surface precompute (A1/A2) | **Audit + test + validate on real cache** | Maintain; earnings_date if needed |
+| Straddle history | **Out of scope** | Build + audit |
+| `build_features` / mom / CVG (A4) | **Out of scope** | Audit + cleanup + paths |
+| Incremental append / watermark-driven audits | CLI `--mode` + runbook; stretch audit scoping (watermarks **not** in C1 receipt) | Harden all Stage A append + feature tail recompute |
+| Trade-date schedule (features ∩ surface) | Surface `entry_date` / Friday logic audited in 004 | Runner calendar + feature alignment |
+| CLI pipeline | Core + surface only | Adds feature branch |
+
+---
+
+## Option surface precompute spec (closeout blocker)
+
+**Scope:** `scripts/precompute_option_surface.py`, `src/features/option_surface_analyzer.py`, on-disk A1/A2 parquets.  
+**Existing baseline:** `tests/contract/test_precompute_input_contract.py` (producer row schema, L1).
+
+### A. Tests to add or extend
+
+| # | Test | Location (proposed) | Requirement |
+|---|------|---------------------|-------------|
+| T1 | **A1 invariant:** `surface_valid ⇔ (has_body_call ∧ has_body_put ∧ n_surface_quotes > 0)` on producer rows | extend contract or `tests/unit/test_option_surface_analyzer.py` | Green on synthetic success/failure rows |
+| T2 | **A1/A2 join:** every quote row’s `(ticker, entry_date)` has a meta row; valid quotes only when `surface_valid` | contract or unit | Green on fixture parquet |
+| T3 | **Quote grain:** no duplicate `(ticker, entry_date, strike, side)` | audit test | FAIL if duplicates in sample |
+| T4 | **`generate_trade_dates` / `--as-of` alignment:** resolved trading day matches meta `entry_date` set for that week | unit on `get_trading_fridays` + sample meta | Same resolution rule as HD-004-2 |
+| T5 | **Hold-to-expiry fields:** for `surface_valid` rows, `exit_spot`, `expiry_date`, `body_strike`, `entry_spot` non-null; `dte_actual == (expiry − entry).days` | contract/audit | FAIL on valid rows with nulls |
+| T6 | **Failure vocabulary:** `failure_reason` ∈ documented snake_case set when `surface_valid == False` | contract | WARN on unknown tags |
+| T7 | **Real-cache sample:** load existing `option_surface_meta_*` / `option_surface_quotes_*` from cache; assert required columns + row counts > 0 for sample window | `tests/` or audit module | ≥1 window documented in sprint memo |
+
+### B. Audit report (`surface-audit` subcommand)
+
+Produces PASS/WARN/FAIL report (manifest-linked), minimum sections:
+
+| Section | Checks |
+|---------|--------|
+| **Artifact inventory** | Meta + quotes paths exist; date range; ticker count |
+| **Schema** | A1/A2 required columns present (data contract § A1/A2) |
+| **Validity rate** | `% surface_valid` overall and by year (sample) |
+| **Failure breakdown** | Top `failure_reason` counts |
+| **Join integrity** | Orphan quotes; meta without quotes when `surface_valid` |
+| **Settlement readiness** | `% valid rows with non-null `exit_spot` |
+| **Date alignment** | `entry_date` ⊆ resolved trading Fridays in sample range |
+| **v1 weekly DTE** | Flag rows where `dte_actual` far from 7 (weekly) — WARN only |
+
+**Closeout:** T1–T6 green in pytest; T7 + audit report with **≥1 substantive sample run** (e.g. 1–3 tickers × 4–12 weeks, or HD-agreed window). Full-universe rebuild **not** required.
+
+### C. CLI / refresh wiring (surface only)
+
+```text
+── Sprint 004 pipeline (no feature branch) ──
+1. fetch_splits.py
+2. apply_split_adjustment.py
+3. extract_spot_prices.py
+4. build_liquidity_panel.py              → 3-month rolling rebuild
+5. precompute_option_surface.py          → optional on refresh; required for surface-audit sample if cache stale
+6. validate / split-audit / surface-audit
+```
+
+`--skip-surface` allowed on `refresh`; `surface-audit` must run against existing or freshly built cache.
+
+---
+
+## Weekly operator model (incremental vs backfill vs repair)
+
+**Intent:** When new weekly ORATS data arrives, the pipeline should **adjust and extend** inputs — not recompute entire history every run — while remaining correct after splits and schema changes.
+
+This is the **target operator model** for `refresh_weekly_inputs`. Sprint 004 proves orchestration, manifest traceability, and audits; Sprint 005 hardens incremental engines for the feature branch and surface append.
+
+### Three modes
+
+| Mode | Trigger | What runs | 004 closeout |
+|------|---------|-----------|--------------|
+| **`incremental`** (default) | Routine weekly refresh `--as-of <Fri>` | New splits → adjust new ZIPs (skip-existing) → append spot → **recompute rolling liquidity window** through `as_of` → append surface rows for new dates (when not skipped) | CLI `--mode incremental`; operator/runbook only — **not** receipt `snapshot_id` fields |
+| **`backfill`** | New column/feature, schema bump, history gap, first cache build | Batch recompute declared `--start-date` … `--end-date` (or year range) across wired steps | CLI `--mode backfill` + date window; operator/runbook only |
+| **`repair`** | New split in period; golden FAIL; known bad ticker | Re-adjust affected tickers (`apply_split_adjustment --tickers …`) → downstream tail for scope | CLI `--mode repair` + `--sample-tickers`; split-audit documents scope |
+
+```text
+incremental  →  touch new dates + rolling liquidity window; audit since watermark (stretch)
+repair       →  split-triggered historical correction; scoped audit
+backfill     →  batch window for schema/feature migrations
+```
+
+### Step semantics (not all append-only)
+
+| Step | Incremental | Repair | Backfill |
+|------|-------------|--------|----------|
+| `fetch_splits` | Append/update | Re-fetch if needed | Window N/A |
+| `apply_split_adjustment` | New ZIPs only (skip existing) | **`--tickers`** re-adjust history | Year/ticker window |
+| `extract_spot_prices` | Append new dates | Re-extract scoped dates | Date range |
+| `build_liquidity_panel` | **Bounded rolling recompute** through `as_of` (HD-004-1) | Rebuild months touching repair dates | Full or window rebuild |
+| `precompute_option_surface` | New `entry_date` rows (005 hardens append) | Recompute scoped ticker×dates | `--start-year` / `--end-year` window |
+| Straddle / features / signals | — | — | **Sprint 005** (tail recompute for max_lag) |
+
+### Watermarks and audit scope
+
+Per-artifact **watermarks** (e.g. `max_entry_date`, `max_month_date`, `max_split_date`) are **deferred from the C1 receipt schema** (Sprint 005 incremental ops). Target behavior lives in CLI/runbook and audit reports:
+
+- **Incremental:** audits prioritize coverage with `date > watermark` (stretch in 004; full in 005).
+- **Repair:** golden tests + cache scan on repair-scoped tickers.
+- **Backfill:** acceptance sample over declared date window.
+
+**`snapshot_id`** is a **logical input-receipt ID** — hash of `schema_version`, `as_of_resolved_trading_day`, `data_source`, cache-relative `artifacts`, and identity-relevant `params` only. It is **not** a bytes-on-disk fingerprint. Content-level validation is handled by validation/audit reports (C3+) and may gain artifact fingerprints later if needed. Weekly runs normally differ by `as_of_resolved_trading_day`. Implementation: `src/data/input_snapshot.py`; design: [c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md).
+
+---
+
+## CLI contract (concrete)
+
+**Entrypoint:** `scripts/refresh_weekly_inputs.py`
+
+### Commands
+
+```powershell
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py plan --as-of 2026-06-26
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py validate --as-of 2026-06-26
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py split-audit --as-of 2026-06-26
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py surface-audit --as-of 2026-06-26
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py refresh --as-of 2026-06-26 --dry-run
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py refresh --as-of 2026-06-26
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py refresh --mode backfill --as-of 2026-06-26 --start-date 2024-01-01 --end-date 2024-12-31
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py refresh --mode repair --as-of 2026-06-26 --sample-tickers NVDA
+```
+
+Optional: `--strict`, `--mode incremental|backfill|repair` (default **`incremental`** on `refresh`), `--skip-surface`, `--skip-splits`, `--sample-tickers`, `--start-date`, `--end-date`.
+
+| Subcommand | Behavior |
+|------------|----------|
+| **`plan`** | Step order, inputs, outputs, **`--mode`**, skip flags, expected touch surface (append vs recompute vs repair); notes **feature branch → Sprint 005** |
+| **`validate`** | Inventory for splits, spot, A3, **A1/A2**; PASS/WARN/FAIL; no A4 |
+| **`split-audit`** | Split tests + configurable cache scan |
+| **`surface-audit`** | § Option surface precompute spec report |
+| **`refresh --dry-run`** | Planned execution only (includes mode + date window) |
+| **`refresh`** | Runs wired core + surface steps per **`--mode`**; manifest + `build_id` |
+
+---
+
+## Default report and manifest paths
+
+All paths under `C:/MomentumCVG_env/cache/` unless overridden by `--cache-dir`.
+
+| Artifact | Default path | Written by |
+|----------|--------------|------------|
+| Input snapshot manifest | `manifests/input_snapshot_{snapshot_id}.json` | `refresh` (executed runs) |
+| Latest manifest pointer | `manifests/latest_input_snapshot.json` | `refresh` (optional convenience symlink/copy) |
+| Validation report | `manifests/reports/validate_{build_id}.md` | `validate` |
+| Split audit report | `manifests/reports/split_audit_{build_id}.md` | `split-audit` |
+| Surface audit report | `manifests/reports/surface_audit_{build_id}.md` | `surface-audit` |
+| Combined closeout bundle | `manifests/reports/sprint004_closeout_{build_id}.md` | manual or CLI `--bundle-reports` (stretch) |
+
+**Conventions:**
+
+- **`snapshot_id`** — stable across re-runs with same receipt identity (see § Weekly input snapshot receipt).
+- **`build_id`** — unique per CLI execution (`20260621T143022Z_a1b2c3` format); excluded from `snapshot_id`.
+- Caller computes `snapshot_id` via `compute_snapshot_id()` **before** `write_manifest()`; write path does not recompute silently.
+- Reports reference `snapshot_id`, `build_id`, and resolved `--as-of` trading day; git commit may appear in markdown headers (C3+) but **not** in receipt schema.
+- JSON manifest is the canonical **input receipt**; markdown reports are human audit output; C3+ may patch `reports.*`, `overall_status`, `blocking_failures`, `notes` on an existing manifest.
+
+---
+
+## Weekly input snapshot receipt (C1)
+
+**Principle:** The manifest is a **weekly input receipt**, not pipeline telemetry or a data-platform metadata layer.
+
+**Answers one question:**
+
+> What input snapshot did I use, for what as-of date, with which logical artifacts and key params?
+
+**Module:** `src/data/input_snapshot.py` · **Design:** [c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md)
+
+### Canonical schema (`input_snapshot_{snapshot_id}.json`)
+
+```json
+{
+  "schema_version": "1",
+  "snapshot_id": "a1b2c3d4e5f67890",
+  "build_id": "20260621T143022Z_a1b2c3",
+  "created_at_utc": "2026-06-21T14:30:22Z",
+  "as_of_requested": "2026-06-26",
+  "as_of_resolved_trading_day": "2026-06-26",
+  "data_source": "orats_adjusted_cache",
+  "cache_dir": "C:/MomentumCVG_env/cache",
+  "artifacts": {
+    "splits": "splits_hist.parquet",
+    "spot_prices": "spot_prices_adjusted.parquet",
+    "liquidity_panel": "ticker_liquidity_panel.parquet",
+    "option_surface_meta": "option_surface_meta_weekly_2018_2026.parquet",
+    "option_surface_quotes": "option_surface_quotes_weekly_2018_2026.parquet"
+  },
+  "params": {
+    "rolling_months": 3,
+    "universe_rule": "top_20_pct_and_filter",
+    "feature_branch": "deferred_to_sprint005"
+  },
+  "reports": {
+    "validate": null,
+    "split_audit": null,
+    "surface_audit": null
+  },
+  "overall_status": null,
+  "blocking_failures": [],
+  "notes": []
+}
+```
+
+### Field rules
+
+| Field | In `snapshot_id` hash? | Notes |
+|-------|------------------------|-------|
+| `schema_version` | **Yes** | `"1"` for C1 |
+| `as_of_resolved_trading_day` | **Yes** | ISO date; HD-004-2 resolved trading day |
+| `data_source` | **Yes** | Logical source id, e.g. `"orats_adjusted_cache"` |
+| `artifacts` | **Yes** | Fixed keys → cache-relative path strings (forward slashes); keys sorted when hashing |
+| `params` | **Yes** | Keys sorted when hashing; identity-relevant params only |
+| `snapshot_id` | No | Computed output (`sha256` canonical JSON, first **16** hex chars) |
+| `build_id` | No | Per execution |
+| `created_at_utc` | No | ISO-8601 UTC |
+| `as_of_requested` | No | User/CLI input; resolved day is in hash |
+| `cache_dir` | No | Where files live; artifact values are cache-relative |
+| `reports` | No | Filled by C3+; paths to markdown reports |
+| `overall_status` | No | C3+ aggregate (`PASS` / `WARN` / `FAIL`) |
+| `blocking_failures` | No | C3+ |
+| `notes` | No | Free text |
+
+**Artifact keys (all required on complete receipts):** `splits`, `spot_prices`, `liquidity_panel`, `option_surface_meta`, `option_surface_quotes`.
+
+**`params` (C1 minimum):**
+
+| Key | Example | Purpose |
+|-----|---------|---------|
+| `rolling_months` | `3` | Liquidity panel rolling window (HD-004-1) |
+| `universe_rule` | `"top_20_pct_and_filter"` | PIT universe rule reference |
+| `feature_branch` | `"deferred_to_sprint005"` | Documents 004 scope boundary |
+
+Additional `params` keys only if they change input identity (HD approval). Do **not** put `refresh_mode`, `processed_range`, `repair_scope`, watermarks, pipeline steps, or CLI telemetry in the receipt unless explicitly approved.
+
+### `snapshot_id` algorithm
+
+1. Identity dict contains **only** `schema_version`, `as_of_resolved_trading_day` (ISO), `data_source`, `artifacts`, `params`.
+2. Canonical JSON: `json.dumps(..., sort_keys=True, separators=(",", ":"))`.
+3. `snapshot_id = sha256(utf8).hexdigest()[:16]`.
+4. Artifact path backslashes normalize to forward slashes before hash.
+
+**Explicitly excluded from hash:** `snapshot_id`, `build_id`, `created_at_utc`, `as_of_requested`, `cache_dir`, `reports`, `overall_status`, `blocking_failures`, `notes`, row counts, validation statuses, runtime info, pipeline steps, watermarks, lineage, refresh modes, content fingerprints.
+
+### `build_id` algorithm
+
+```
+ts = now.utc().strftime("%Y%m%dT%H%M%SZ")
+suffix = sha256(f"{ts}\0{command}".encode()).hexdigest()[:6]
+build_id = f"{ts}_{suffix}"
+```
+
+### Deferred from receipt schema (not C1)
+
+| Item | Defer to |
+|------|----------|
+| `git_commit`, `prior_build_id`, `prior_snapshot_id` | Optional top-level fields later if HD wants; excluded from hash |
+| `watermarks`, `refresh_mode`, `processed_range`, `repair_scope` | CLI + runbook operator model; Sprint **005** incremental ops |
+| `pipeline_steps`, `args_hash`, per-step telemetry | C8 CLI wiring / logs; optional future manifest v2 |
+| `checks[]` array | Replaced by flat `reports` dict |
+| Artifact per-key `status` | Validation in `overall_status` + markdown reports |
+| `content_fingerprint` | Sprint **007** `run_manifest` |
+
+---
+
+## Blocks Sprint 005 if…
+
+Sprint 005 (feature pipeline) must **not** start until these 004 outcomes are clear. If any row below is true with **FAIL** and no HD waiver, **hold 005** until resolved or explicitly descoped in sprint memo.
+
+| # | Condition | Why it blocks 005 |
+|---|-----------|-------------------|
+| B1 | **Split adjustment** FAIL on golden fixture (scale jump, wrong cumulative factor) | Features and surfaces inherit bad prices/strikes |
+| B2 | **Rolling liquidity panel** rebuild FAIL — insufficient ORATS months for 3-month window and no acceptable fallback documented | S1 universe untrusted; feature ranks run inside bad universe |
+| B3 | **PIT universe** FAIL on sample dates (future `month_date` leak, non-reproducible universe) | Feature audit meaningless without trustworthy universe |
+| B4 | **Option surface A1/A2** FAIL on settlement fields (`exit_spot` null on `surface_valid` rows) or broken meta/quotes join in sample | S3/S7 depend on surface; feature/surface date work in 005 assumes A1/A2 sane |
+| B5 | **`--as-of` / trading-day resolution** inconsistent between liquidity scan, surface meta, and audit harness | 005 schedule alignment builds on 004 date rules |
+| B6 | **No manifest / snapshot_id** — cannot reproduce which input snapshot 004 validated | 005 cannot attach feature builds to a known input baseline |
+| B7 | **pytest regression** in contract or split/surface tests | Baseline trust broken |
+
+**Does not block 005 (WARN or documented gap OK):**
+
+- Surface validity rate low on sample tickers (WARN + coverage note)
+- Split audit WARN on thin date subset
+- Full `refresh` not run on entire history
+- Missing A4 / features entirely (expected — 005 scope)
+- `earnings_date` absent in Stage A
+
+**Sprint 004 may still close** with WARN on non-blocking items if blockers B1–B7 are clear. Sprint **005 start** requires no unresolved B1–B7 FAIL.
+
+---
+
+## Implementation commit plan
+
+Suggested **reviewable commit sequence** (agent commits only when user asks). Each commit should keep `pytest tests/ -q` green unless noted as test-add only.
+
+| Commit | Scope | Files (expected) | Verification |
+|--------|-------|------------------|--------------|
+| **C1** ✓ | Manifest types + `snapshot_id` / `build_id` hashing | `src/data/input_snapshot.py`, `tests/unit/test_input_snapshot.py` | unit tests green |
+| **C2** | CLI skeleton: `plan`, `--as-of` resolution, exit codes | `scripts/refresh_weekly_inputs.py` | manual `plan --as-of …` |
+| **C3** | `validate` + default report paths + inventory stubs | CLI + report writer | `validate --as-of …` writes markdown |
+| **C4** | Rolling 3-month panel in `build_liquidity_panel.py` | script + unit/contract touch if needed | panel rebuild or FAIL report |
+| **C5** | Split golden tests + `split-audit` | `tests/unit/test_split_adjuster.py`, audit module | pytest + `split-audit` sample run |
+| **C6** | Surface tests T1–T6 + `surface-audit` | extend contract/unit, audit module | pytest + `surface-audit` sample run |
+| **C7** | PIT universe harness wired into `validate` | tests + CLI | sample dates in report |
+| **C8** | `refresh --dry-run` + bounded `refresh` subprocess wiring | CLI | dry-run manifest shape |
+| **C9** | Runbook + `v1_universe_protocol` + data-contract drift | docs only | review |
+| **C10** | Sprint memo + progress log (closeout) | `docs/sprint_memos/004_*.md` | — |
+
+**Rules:**
+
+- No S5/S8/ORCH/strategy edits in any commit.
+- No feature-branch wiring (`straddle_history`, `build_features`) in 004 commits.
+- Prefer **C1→C3** before real-cache audits so reports share manifest schema.
+- **C4** may land in parallel with **C5** after C1.
 
 ---
 
 ## Deliverables
 
-| # | Artifact | Path | Status |
-|---|----------|------|--------|
-| 1 | New config fields + validation | `src/backtest/run_config.py` | ✅ |
-| 2 | S5 implementation | `src/backtest/pipeline.py::step5_select_and_size` | ✅ |
-| 3 | S8 cycle metrics | `src/backtest/surface_metrics.py` | ✅ |
-| 4 | ORCH thin loop | `src/backtest/surface_runner.py` | ✅ |
-| 5 | Contract tests | `tests/contract/` | ✅ |
-| 6 | Synthetic smoke | `tests/` | ✅ |
-| 7 | Data contract fill | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | ✅ |
-| 8 | Code cleanup | `src/backtest/pipeline.py` — removed `step6_apply_cost` | ✅ |
-| 9 | Sprint memo | [sprint_memos/003_s5_s8_build.md](../sprint_memos/003_s5_s8_build.md) | ✅ |
+| # | Artifact | Path | Closeout? |
+|---|----------|------|-----------|
+| 1 | Weekly input CLI | `scripts/refresh_weekly_inputs.py` | **Blocker** |
+| 2 | Manifest module | `src/data/input_snapshot.py` (or adjacent) | **Blocker** |
+| 3 | Validation report | CLI `validate` | **Blocker** |
+| 4 | Rolling liquidity panel | `scripts/build_liquidity_panel.py` | **Blocker** (rebuild attempt; FAIL if source insufficient) |
+| 5 | Split tests + audit | tests + `split-audit` | **Blocker** |
+| 6 | Surface precompute audit + tests | tests + `surface-audit`; extend contract | **Blocker** |
+| 7 | PIT universe harness | tests + `validate` | **Blocker** |
+| 8 | Runbook | [v1_weekly_runbook.md](../v1_weekly_runbook.md) | **Blocker** |
+| 9 | Universe protocol update | [v1_universe_protocol.md](../v1_universe_protocol.md) | **Blocker at closeout** |
+| 10 | Drift register | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | **Blocker at closeout** |
+| 11 | Full `refresh` on production cache | CLI | Stretch |
 
 ---
 
 ## Work breakdown (build order)
 
-| Phase | Work | Status |
-|-------|------|--------|
-| 1 | Config — sizing fields + validation | ✅ |
-| 2 | S5 Select — per-side cap/rank in `step5` | ✅ |
-| 3 | S5 Size — Tier A + Tier B (ADR 004) | ✅ |
-| 4 | S5 Simulate — settle + M1–M3 + dollar fields | ✅ |
-| 5 | S8 — cycle return + Sharpe on cycle series | ✅ |
-| 6 | ORCH — runner delegates S5 | ✅ |
-| 7 | Synthetic smoke + full-suite verification | ✅ |
-| 8 | Cleanup + docs + sprint closeout | ✅ |
+| Phase | Work | Closeout exit |
+|-------|------|---------------|
+| **1** | `snapshot_id` / `build_id` + CLI skeleton + `--as-of` + **`--mode`** resolution | Commands run; `plan` shows incremental vs backfill vs repair |
+| **2** | Rolling 3-month panel **rebuild attempt** | Panel on disk with PASS/WARN, or **FAIL** documented (insufficient source months) |
+| **3** | Split unit/golden + `split-audit` | ≥1 substantive run |
+| **4** | Surface tests T1–T6 + `surface-audit` | ≥1 sample run; report archived |
+| **5** | `validate` inventory (A1/A2/A3, splits, spot) | PASS/WARN/FAIL report |
+| **6** | PIT universe harness | § PIT universe criteria |
+| **7** | Bounded `refresh` + `--dry-run` (core + surface) | Wired; no feature steps |
+| **8** | Runbook + universe protocol + drift + pytest | Docs + suite green |
+
+---
+
+## Split golden fixtures (acceptance)
+
+≥1 multi-split fixture ticker:
+
+| Check | Requirement |
+|-------|-------------|
+| Cumulative factor | Correct before / between / after split dates |
+| Spot vs strike | Same scale after adjustment |
+| Premium convention | Matches settlement unit convention |
+| Payoff stability | No artificial 2× / 4× / 10× jump |
+| Classification | PASS / WARN / FAIL in report |
+
+Untrusted remainder documented in sprint memo; scale-jump → FAIL; coverage gap → WARN.
+
+---
+
+## PIT universe sample dates (acceptance)
+
+| Sample | Purpose |
+|--------|---------|
+| Normal trade date | Baseline ranks |
+| Near month boundary | Rolling / `month_date` edge |
+| Missing/new ticker liquidity (if in cache) | Explicit WARN/FAIL |
+
+Invariants: snapshot date ≤ `trade_date`; rolling uses only data ≤ `trade_date`; same inputs → same universe; missing liquidity never silent PASS.
+
+---
+
+## Acceptance criteria
+
+### A. Required for closeout
+
+- [ ] CLI: `plan`, `validate`, `split-audit`, `surface-audit`, `refresh --dry-run`, `--as-of` → last trading day, **`--mode`** on `refresh`
+- [ ] `snapshot_id` + `build_id` in manifest
+- [ ] Validation report for **A1/A2/A3** + splits + spot (**no A4**)
+- [ ] Rolling panel: **rebuild attempted**; PASS/WARN, or **FAIL** with documented insufficient source data (does not fake rolling)
+- [ ] PIT universe samples pass
+- [ ] Split golden tests + split-audit ≥1 run
+- [ ] Surface spec T1–T7 + surface-audit ≥1 sample run
+- [ ] Runbook + **v1_universe_protocol** updated at closeout
+- [ ] pytest green; no S5/S8/ORCH changes
+- [ ] No backtest / S1→S8 smoke
+
+### B. Stretch
+
+- [ ] Full `refresh` on full cache without manual steps
+- [ ] Zero FAIL on full-cache split scan
+- [ ] Full surface universe rebuild via CLI
+- [ ] Per-file `snapshot_id` tags
+
+---
+
+## Out of scope (Sprint 004)
+
+- **All feature work:** `precompute_straddle_history`, `build_features`, mom/CVG, A4 → **005**
+- Backtest / S1→S8 smoke → **006**
+- Tier B / Sharpe / go-no-go → **007**
+- `run_surface_search` sizing → **006**
+- KB-001, strategy logic, paper/live
+
+---
+
+## Forward sprints (004–008)
+
+| Sprint | Theme | Gate |
+|--------|-------|------|
+| **004** | Input snapshot + split + PIT + **surface precompute audit** | Closeout blockers above |
+| **005** | **All feature pipeline** (straddle history, features, mom/CVG, A4 trust, paths, schedule) | Absorbs gaps found in 004 |
+| **006** | Real-data **backtest** smoke + `run_surface_search` wiring | Requires **004 + 005** trustworthy |
+| **007** | Tier B conservative baseline | After L4 |
+| **008** | Decision sprint | After baseline |
+
+Stale docs (e.g. `backtest_evaluation_protocol.md` “Sprint 004–005 baseline”) → update when **007** starts.
+
+---
+
+## Plan conflicts / decisions (resolved)
+
+| Old statement | Resolution | When to edit old doc |
+|---------------|------------|----------------------|
+| 003 memo: real-data validation in 004 | Input/precompute in **004**; backtest in **006** | Memo immutable; this doc governs |
+| `backtest_evaluation_protocol.md`: thresholds Sprint 004–005 | Baseline **007** | Update at **007** start |
+| `v1_universe_protocol.md`: monthly panel | Rolling in **004** | Update at **004** closeout |
+| Prior draft: feature branch in 004 CLI | **Removed** — all features **005** | Done in v4 |
 
 ---
 
 ## Progress log
 
-| Date | Deliverable / phase | Status | Notes |
-|------|---------------------|--------|-------|
-| 2026-06-13 | **D1 / Phase 1 — Config fields + validation** | ✅ Done | 15 tests in `test_run_envelope_contract.py`. |
-| 2026-06-14 | **D2 / Phase 2 — S5 Select extraction** | ✅ Done | Per-side cap/rank in `step5_select_and_size` (SELECT only). |
-| 2026-06-14 | **D2 / Phase 3 — S5 Size (Tier A + Tier B)** | ✅ Done | ADR 004 credit-financed longs; 33+ sizing/select tests. |
-| 2026-06-16 | **D2 / Phase 4 — S5 Simulate** | ✅ Done | S7 settle on included rows; M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label`. |
-| 2026-06-17 | **D3 / Phase 5 — S8 cycle metrics** | ✅ Done | `cycle_return_on_capital_at_risk` + side splits; Sharpe/drawdown on cycle series. |
-| 2026-06-18 | **D4 / Phase 6 — ORCH thin loop** | ✅ Done | `SurfaceRunner` delegates S5; removed `_select_size_and_settle`. |
-| 2026-06-20 | **D6 / Phase 7 — Synthetic smoke + full-suite verification** | ✅ Done | See **Phase 7 verification** below. |
-| 2026-06-20 | **D7–D9 / Phase 8 — Cleanup + closeout** | ✅ Done | Stale doc language cleaned; `step6_apply_cost` removed; sprint memo written. |
+| Date | Notes |
+|------|-------|
+| 2026-06-21 v5 | Commit plan, manifest schema, default paths, Blocks 005, rolling FAIL semantics |
+| 2026-06-21 v6 | Weekly operator model (incremental/backfill/repair); HD-004-4/5; manifest params + watermarks |
+| 2026-06-21 v7 | C1 implemented; sprint doc aligned to [c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md) — minimal weekly input receipt |
 
 ---
 
-## Sprint 003 closeout (2026-06-20)
-
-### What was verified
-
-- **Stage-B synthetic S1→S8 path** — fixtures in `tests/unit/test_surface_runner_data_flow.py`; ORCH contracts in `tests/contract/test_orchestration_contract.py`.
-- **Full test suite green** — see commands below.
-- **S5/S8/ORCH docs match code** — data contract drift register updated; S6 collapsed into S5; no inline runner S5 logic.
-
-### What was not done (explicit)
-
-- **No real-data validation** — no ORATS/cache backtest run this sprint.
-- **No strategy sign-off** — synthetic structural tests only.
-- **No live/paper readiness claim**.
-- **KB-001** remains open — iron condor M3 denominator ([known_bugs.md](../known_bugs.md)).
-
-### Next sprint
-
-**Sprint 004** — data / split-adjusted universe pipeline and real-data structural validation. Update this file when Sprint 004 starts.
-
-**Carry-over:** `scripts/run_surface_search.py` still constructs configs without `sizing_mode` / Tier B budgets — fails fast at construction (intended).
-
-Full closeout detail: [sprint_memos/003_s5_s8_build.md](../sprint_memos/003_s5_s8_build.md).
-
----
-
-## Phase 7 verification (2026-06-20)
-
-**Status: passed** — synthetic S1→S8 path verified on fixtures; no real ORATS/cache data; no strategy or live/paper claims.
-
-### Synthetic smoke tests (existing; no new `tests/smoke/` file)
-
-| Acceptance area | Primary tests |
-|-----------------|---------------|
-| Non-empty `trade_log` / `date_summary` / `run_summary` | `TestSurfaceRunnerDataFlow.test_produces_trade_log_and_summaries` |
-| Included long + short + excluded diagnostic row | `test_long_and_short_routing`, `test_invalid_surface_row_excluded_with_reason`; ORCH `TestDiagnosticsBehavior` |
-| S5 economics columns on trade log | `TestSurfaceRunnerS5Economics`, ORCH `TestS5ColumnsSurviveIntoTradeLog` |
-| Valid S5 economics on included rows | above + positive `capital_at_risk_dollars` assertion |
-| `_assembly` not in trade log | ORCH `test_assembly_not_leaked_into_trade_log` |
-| S8 cycle metrics vs included rows | `test_cycle_metrics_from_s5_economics`; ORCH `test_excluded_rows_do_not_affect_cycle_return` |
-| Diagnostics on/off | ORCH `TestDiagnosticsBehavior` |
-| Empty / no-signal path | ORCH `TestEmptyInputs` |
-
-Fixtures: `tests/unit/test_surface_runner_data_flow.py`; reused by `tests/contract/test_orchestration_contract.py`.
-
-### Closeout test commands and results (Phase 8 — 2026-06-20)
+## Verification commands (closeout)
 
 ```powershell
-& C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/contract/ -q
-# 154 passed in 1.78s
-
-& C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_surface_runner_data_flow.py -q
-# 8 passed in 0.82s
-
 & C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/ -q
-# 488 passed in 5.67s
+
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py plan --as-of 2026-06-26
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py validate --as-of 2026-06-26
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py split-audit --as-of 2026-06-26
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py surface-audit --as-of 2026-06-26
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py refresh --as-of 2026-06-26 --dry-run
 ```
-
-**Failures:** none. No Sprint 003 cleanup regressions observed.
-
----
-
-## Known bugs (deferred fixes)
-
-See **[known_bugs.md](../known_bugs.md)** for the full registry.
-
-| ID | Summary | Where |
-|----|---------|-------|
-| **KB-001** | Iron condor `body_credit_per_share` = condor short legs, **not** ATM straddle → M3 not comparable vs iron fly | `option_surface.py` → `build_ironcondor_from_surface` |
-
-Do **not** treat M3 cross-structure stats as decision-quality until KB-001 is closed.
-
----
-
-## Success criteria
-
-- [x] Sizing config fields added with validation; `short_structure='straddle'` rejected; `tier_b_short_max_loss_budget` required for `integer_lots`
-- [x] Per-side cap honored ([decision 003](../decisions/003_position_cap_per_side.md)); exclusion strings match code vocabulary
-- [x] S5 SELECT + SIZE: both tiers implemented; Tier B per [ADR 004](../decisions/004_tier_b_credit_financed_long.md)
-- [x] S5 SIMULATE: settle + M1–M3, `pnl_total`, `capital_at_risk_dollars`, `fill_label` on included rows
-- [x] S8 produces `cycle_return_on_capital_at_risk` + side splits; Sharpe on cycle series
-- [x] `SurfaceRunner` orchestrates pipeline steps with no duplicated business logic
-- [x] Contract tests for S5, S8, and ORCH green — 154 tests in `tests/contract/`
-- [x] Synthetic end-to-end smoke green (Phase 7)
-- [x] Full suite green (`tests/`) — 488 passed (Phase 7 + Phase 8 closeout re-run)
-- [ ] **Financial checks (carry-forward):** leg type, strike, expiry, quantity sign, premium sign, payoff, max loss — **partial** coverage in `test_step5_select_and_size_contract.py`, `test_settle_contract.py`, `test_step3_structures_contract.py`, `tests/unit/test_builders.py`, `tests/unit/test_models.py`; no dedicated end-to-end financial audit suite. Track in Sprint 004 or post-closeout cleanup.
-- [x] Data contract § S5 / S8 / ORCH filled and aligned with implementation (Phase 8)
-- [x] No real-data backtest treated as go/no-go evidence — sprint scope and closeout explicitly synthetic-only; no real-data run performed
-
----
-
-## Out of scope (Sprint 003)
-
-- Real-data Tier B backtest / go-no-go run (Sprint 004+)
-- Pinning deployable capital ($) or broker thresholds
-- Portfolio optimizer, signal/risk-parity weighting, sector or correlation caps
-- Iron fly vs condor research matrix
-- Precompute (Stage A) code changes — gaps remain logged only
-- KB-001 fix
 
 ---
 
 ## Previous sprint
 
-Sprint 002 closed 2026-06-10 — [sprint_memos/002_data_contracts.md](../sprint_memos/002_data_contracts.md).
+Sprint 003 — [sprint_memos/003_s5_s8_build.md](../sprint_memos/003_s5_s8_build.md).
