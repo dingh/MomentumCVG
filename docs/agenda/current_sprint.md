@@ -1,7 +1,7 @@
 # Current sprint — 004
 
-**Updated:** 2026-06-21 (planning v7 — C1 receipt schema aligned)  
-**Status:** Active — **C1 implemented** (`src/data/input_snapshot.py`); C2+ in progress  
+**Updated:** 2026-06-21 (C2 CLI skeleton implemented)  
+**Status:** Active — **C1** + **C2** implemented; C3+ next  
 **Mode:** Build (HD decisions locked below)
 
 **C1 receipt design (canonical):** [docs/tmp/c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md)
@@ -72,6 +72,7 @@ Build the **trustworthy weekly input layer** for future real-data backtesting an
 | 10 | **[v1_weekly_runbook.md](../v1_weekly_runbook.md)** written |
 | 11 | **Full pytest suite green** |
 | 12 | **No** strategy / S5 / S8 / ORCH logic changed |
+| 13 | **CLI plan cleanup:** remove C2 provisional/deferred copy from `render_plan()` (`deferred to C3–C8`, bracket notes, `Provisional` header, C8 WARN stubs); update `test_refresh_weekly_inputs_cli.py` in same change (**C9**) |
 
 ### Stretch / report-only (not required for closeout)
 
@@ -418,14 +419,14 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 | Commit | Scope | Files (expected) | Verification |
 |--------|-------|------------------|--------------|
 | **C1** ✓ | Manifest types + `snapshot_id` / `build_id` hashing | `src/data/input_snapshot.py`, `tests/unit/test_input_snapshot.py` | unit tests green |
-| **C2** | CLI skeleton: `plan`, `--as-of` resolution, exit codes | `scripts/refresh_weekly_inputs.py` | manual `plan --as-of …` |
+| **C2** ✓ | CLI skeleton: `plan`, `--as-of` resolution, exit codes | `src/data/trading_day.py`, `scripts/refresh_weekly_inputs.py`, unit tests | `plan --as-of …`; pytest |
 | **C3** | `validate` + default report paths + inventory stubs | CLI + report writer | `validate --as-of …` writes markdown |
 | **C4** | Rolling 3-month panel in `build_liquidity_panel.py` | script + unit/contract touch if needed | panel rebuild or FAIL report |
 | **C5** | Split golden tests + `split-audit` | `tests/unit/test_split_adjuster.py`, audit module | pytest + `split-audit` sample run |
 | **C6** | Surface tests T1–T6 + `surface-audit` | extend contract/unit, audit module | pytest + `surface-audit` sample run |
 | **C7** | PIT universe harness wired into `validate` | tests + CLI | sample dates in report |
 | **C8** | `refresh --dry-run` + bounded `refresh` subprocess wiring | CLI | dry-run manifest shape |
-| **C9** | Runbook + `v1_universe_protocol` + data-contract drift | docs only | review |
+| **C9** | Runbook + `v1_universe_protocol` + data-contract drift + **CLI plan output cleanup** (blocker #13) | `docs/` + `scripts/refresh_weekly_inputs.py` + `tests/unit/test_refresh_weekly_inputs_cli.py` | review; plan has no commit-label deferrals |
 | **C10** | Sprint memo + progress log (closeout) | `docs/sprint_memos/004_*.md` | — |
 
 **Rules:**
@@ -510,6 +511,7 @@ Invariants: snapshot date ≤ `trade_date`; rolling uses only data ≤ `trade_da
 - [ ] Split golden tests + split-audit ≥1 run
 - [ ] Surface spec T1–T7 + surface-audit ≥1 sample run
 - [ ] Runbook + **v1_universe_protocol** updated at closeout
+- [ ] CLI `plan` output: no C2-era **provisional/deferred** scaffolding (blocker #13); tests updated
 - [ ] pytest green; no S5/S8/ORCH changes
 - [ ] No backtest / S1→S8 smoke
 
@@ -564,6 +566,7 @@ Stale docs (e.g. `backtest_evaluation_protocol.md` “Sprint 004–005 baseline�
 | 2026-06-21 v5 | Commit plan, manifest schema, default paths, Blocks 005, rolling FAIL semantics |
 | 2026-06-21 v6 | Weekly operator model (incremental/backfill/repair); HD-004-4/5; manifest params + watermarks |
 | 2026-06-21 v7 | C1 implemented; sprint doc aligned to [c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md) — minimal weekly input receipt |
+| 2026-06-21 v8 | C2 implemented: `trading_day.py`, `refresh_weekly_inputs.py` CLI (`plan`, `refresh --dry-run`, stub subcommands), exit-code contract; closeout blocker #13 for provisional plan copy |
 
 ---
 
