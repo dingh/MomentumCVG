@@ -1,7 +1,7 @@
 # Current sprint — 004
 
 **Updated:** 2026-06-21 (C2 CLI skeleton implemented)  
-**Status:** Active — **C1** + **C2** implemented; C3+ next  
+**Status:** Active — **C1** + **C2** implemented; **C4** next (**C3** deferred until C4–C8)  
 **Mode:** Build (HD decisions locked below)
 
 **C1 receipt design (canonical):** [docs/tmp/c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md)
@@ -420,12 +420,12 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 |--------|-------|------------------|--------------|
 | **C1** ✓ | Manifest types + `snapshot_id` / `build_id` hashing | `src/data/input_snapshot.py`, `tests/unit/test_input_snapshot.py` | unit tests green |
 | **C2** ✓ | CLI skeleton: `plan`, `--as-of` resolution, exit codes | `src/data/trading_day.py`, `scripts/refresh_weekly_inputs.py`, unit tests | `plan --as-of …`; pytest |
-| **C3** | `validate` + default report paths + inventory stubs | CLI + report writer | `validate --as-of …` writes markdown |
 | **C4** | Rolling 3-month panel in `build_liquidity_panel.py` | script + unit/contract touch if needed | panel rebuild or FAIL report |
 | **C5** | Split golden tests + `split-audit` | `tests/unit/test_split_adjuster.py`, audit module | pytest + `split-audit` sample run |
 | **C6** | Surface tests T1–T6 + `surface-audit` | extend contract/unit, audit module | pytest + `surface-audit` sample run |
-| **C7** | PIT universe harness wired into `validate` | tests + CLI | sample dates in report |
+| **C7** | PIT universe harness (tests + audit module) | tests + CLI harness | sample dates in PIT report section |
 | **C8** | `refresh --dry-run` + bounded `refresh` subprocess wiring | CLI | dry-run manifest shape |
+| **C3** | `validate` + default report paths + umbrella inventory | CLI + report writer; wires C5/C6/C7 checks | `validate --as-of …` writes markdown |
 | **C9** | Runbook + `v1_universe_protocol` + data-contract drift + **CLI plan output cleanup** (blocker #13) | `docs/` + `scripts/refresh_weekly_inputs.py` + `tests/unit/test_refresh_weekly_inputs_cli.py` | review; plan has no commit-label deferrals |
 | **C10** | Sprint memo + progress log (closeout) | `docs/sprint_memos/004_*.md` | — |
 
@@ -433,8 +433,9 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 
 - No S5/S8/ORCH/strategy edits in any commit.
 - No feature-branch wiring (`straddle_history`, `build_features`) in 004 commits.
-- Prefer **C1→C3** before real-cache audits so reports share manifest schema.
-- **C4** may land in parallel with **C5** after C1.
+- **HD (2026-06-24):** defer **C3** until **C4–C8** — `validate` is post-artifact; build component logic, audits, PIT harness, and `refresh` integration first; C3 then consolidates umbrella inventory + shared report conventions.
+- **C4** may land in parallel with **C5** after C1–C2.
+- **C5/C6/C7** each write their own markdown audit reports; C3 reuses those paths and aggregates into `validate_{build_id}.md`.
 
 ---
 
@@ -448,7 +449,7 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 | 4 | Rolling liquidity panel | `scripts/build_liquidity_panel.py` | **Blocker** (rebuild attempt; FAIL if source insufficient) |
 | 5 | Split tests + audit | tests + `split-audit` | **Blocker** |
 | 6 | Surface precompute audit + tests | tests + `surface-audit`; extend contract | **Blocker** |
-| 7 | PIT universe harness | tests + `validate` | **Blocker** |
+| 7 | PIT universe harness | tests + harness (C7); wired into `validate` in C3 | **Blocker** |
 | 8 | Runbook | [v1_weekly_runbook.md](../v1_weekly_runbook.md) | **Blocker** |
 | 9 | Universe protocol update | [v1_universe_protocol.md](../v1_universe_protocol.md) | **Blocker at closeout** |
 | 10 | Drift register | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | **Blocker at closeout** |
@@ -461,13 +462,13 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 | Phase | Work | Closeout exit |
 |-------|------|---------------|
 | **1** | `snapshot_id` / `build_id` + CLI skeleton + `--as-of` + **`--mode`** resolution | Commands run; `plan` shows incremental vs backfill vs repair |
-| **2** | Rolling 3-month panel **rebuild attempt** | Panel on disk with PASS/WARN, or **FAIL** documented (insufficient source months) |
-| **3** | Split unit/golden + `split-audit` | ≥1 substantive run |
-| **4** | Surface tests T1–T6 + `surface-audit` | ≥1 sample run; report archived |
-| **5** | `validate` inventory (A1/A2/A3, splits, spot) | PASS/WARN/FAIL report |
-| **6** | PIT universe harness | § PIT universe criteria |
-| **7** | Bounded `refresh` + `--dry-run` (core + surface) | Wired; no feature steps |
-| **8** | Runbook + universe protocol + drift + pytest | Docs + suite green |
+| **2** | Rolling 3-month panel **rebuild attempt** (C4) | Panel on disk with PASS/WARN, or **FAIL** documented (insufficient source months) |
+| **3** | Split unit/golden + `split-audit` (C5) | ≥1 substantive run |
+| **4** | Surface tests T1–T6 + `surface-audit` (C6) | ≥1 sample run; report archived |
+| **5** | PIT universe harness (C7) | § PIT universe criteria |
+| **6** | Bounded `refresh` + `--dry-run` (core + surface) (C8) | Wired; no feature steps |
+| **7** | `validate` umbrella inventory (A1/A2/A3, splits, spot) (C3) | PASS/WARN/FAIL report |
+| **8** | Runbook + universe protocol + drift + pytest (C9) | Docs + suite green |
 
 ---
 
@@ -567,6 +568,7 @@ Stale docs (e.g. `backtest_evaluation_protocol.md` “Sprint 004–005 baseline�
 | 2026-06-21 v6 | Weekly operator model (incremental/backfill/repair); HD-004-4/5; manifest params + watermarks |
 | 2026-06-21 v7 | C1 implemented; sprint doc aligned to [c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md) — minimal weekly input receipt |
 | 2026-06-21 v8 | C2 implemented: `trading_day.py`, `refresh_weekly_inputs.py` CLI (`plan`, `refresh --dry-run`, stub subcommands), exit-code contract; closeout blocker #13 for provisional plan copy |
+| 2026-06-24 v9 | HD: **C3 deferred post-C8** — component reimplementation and audits (C4–C8) before umbrella `validate` |
 
 ---
 

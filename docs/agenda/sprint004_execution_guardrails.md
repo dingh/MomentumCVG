@@ -109,14 +109,15 @@ For rolling liquidity, split audit, surface audit, and PIT universe:
 Commit sequence:
 C1 — Manifest types + snapshot_id / build_id hashing
 C2 — CLI skeleton: plan, --as-of resolution, exit codes
-C3 — validate + default report paths + inventory stubs
 C4 — rolling 3-month liquidity panel
 C5 — split golden tests + split-audit
 C6 — surface tests T1–T6 + surface-audit
-C7 — PIT universe harness wired into validate
+C7 — PIT universe harness (tests + audit module)
 C8 — refresh --dry-run + bounded refresh subprocess wiring
+C3 — validate + default report paths + umbrella inventory (after C4–C8; post-artifact trust check)
 C9 — runbook + v1_universe_protocol + data-contract drift
 C10 — closeout docs only after C1–C9 are accepted
 
 Do not merge adjacent commits unless HD explicitly approves.
-Do not begin implementation of a later commit before the earlier commit is accepted, except C4/C5 may be parallel only after C1–C3 establish manifest/report conventions.
+Do not begin implementation of a later commit before the earlier commit is accepted, except C4/C5 may be parallel after C1–C2.
+C5/C6/C7 own their audit markdown reports; C3 consolidates and shares default report-path conventions afterward.
