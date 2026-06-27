@@ -67,8 +67,14 @@ class TestDailyLiquidity:
         trade = date(2024, 1, 5)
         expiry = date(2024, 1, 12)
         rows = [
-            _orats_row("AAA", trade, expiry, strike=100.0, stk_px=100.0, c_bid=2.0, p_bid=2.0, c_vol=5, p_vol=5),
-            _orats_row("AAA", trade, expiry, strike=1000.0, stk_px=100.0, c_bid=20.0, p_bid=20.0, c_vol=5, p_vol=5),
+            _orats_row(
+                "AAA", trade, expiry, strike=100.0, stk_px=100.0,
+                c_bid=2.0, c_ask=2.1, p_bid=2.0, p_ask=2.1, c_vol=5, p_vol=5,
+            ),
+            _orats_row(
+                "AAA", trade, expiry, strike=1000.0, stk_px=100.0,
+                c_bid=20.0, c_ask=20.1, p_bid=20.0, p_ask=20.1, c_vol=5, p_vol=5,
+            ),
         ]
         obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
         row = obs.loc[obs["ticker"] == "AAA"].iloc[0]
@@ -102,8 +108,27 @@ class TestDailyLiquidity:
             {"cBidPx": 2.0, "pBidPx": 1.0, "cAskPx": 1.0, "pAskPx": 1.2, "cVolu": 10, "pVolu": 10}
         )
         vol, spread = blp.compute_expiry_atm_liquidity(atm_bad_call)
-        assert vol > 0
+        assert vol == 0.0
         assert np.isnan(spread)
+
+    def test_crossed_quote_does_not_inflate_daily_vol_with_valid_expiry(self):
+        trade = date(2024, 1, 5)
+        exp_good = date(2024, 1, 12)
+        exp_bad = date(2024, 2, 9)
+        rows = [
+            _orats_row(
+                "AAA", trade, exp_good, 100, 100,
+                c_bid=1.0, c_ask=1.1, p_bid=1.0, p_ask=1.1, c_vol=10, p_vol=10,
+            ),
+            _orats_row(
+                "AAA", trade, exp_bad, 100, 100,
+                c_bid=99.0, c_ask=1.0, p_bid=99.0, p_ask=1.0, c_vol=100, p_vol=100,
+            ),
+        ]
+        obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
+        assert obs.iloc[0]["daily_atm_straddle_dollar_vol"] == pytest.approx(1000.0)
+        assert np.isfinite(obs.iloc[0]["daily_atm_spread_pct"])
+        assert obs.iloc[0]["daily_has_valid_quote"]
 
     def test_daily_sums_multiple_expiries_in_band(self):
         trade = date(2024, 1, 5)
@@ -131,7 +156,7 @@ class TestDailyLiquidity:
         expiry = date(2024, 1, 12)
         rows = [_orats_row("AAA", trade, expiry, 100, 100, c_bid=2.0, c_ask=1.0, p_bid=2.0, p_ask=1.0)]
         obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
-        assert obs.iloc[0]["daily_atm_straddle_dollar_vol"] > 0
+        assert obs.iloc[0]["daily_atm_straddle_dollar_vol"] == 0.0
         assert np.isnan(obs.iloc[0]["daily_atm_spread_pct"])
         assert not obs.iloc[0]["daily_has_valid_quote"]
 
@@ -412,6 +437,67 @@ class TestIncremental:
             blp.validate_incremental_artifacts(tmp_path, **self._validate_kwargs())
 
 
+class TestWriteArtifacts:
+    def test_write_artifacts_commits_all_outputs(self, tmp_path: Path):
+        daily = pd.DataFrame([{"trade_date": date(2024, 1, 3), "ticker": "AAA"}])
+        weekly = pd.DataFrame([{"week_end_date": date(2024, 1, 5), "ticker": "AAA"}])
+        panel = pd.DataFrame([{"month_date": pd.Timestamp("2024-01-05"), "ticker": "AAA"}])
+        result = blp.BuildResult(daily=daily, weekly=weekly, panel=panel, files_read=1)
+        liquid = pd.DataFrame(
+            [{"Ticker": "AAA", "snapshots_qualified": 1, "months_qualified": 1}]
+        )
+
+        blp.write_artifacts(tmp_path, result, liquid_tickers=liquid)
+
+        assert (tmp_path / blp.DAILY_FILENAME).is_file()
+        assert (tmp_path / blp.WEEKLY_FILENAME).is_file()
+        assert (tmp_path / blp.PANEL_FILENAME).is_file()
+        assert (tmp_path / blp.LIQUID_TICKERS_FILENAME).is_file()
+        assert not (tmp_path / blp.STAGING_DIRNAME).exists()
+
+
+class TestLiquidityPanelReport:
+    def test_report_inputs_include_build_params(self, tmp_path: Path):
+        daily = pd.DataFrame(
+            [
+                {
+                    "trade_date": date(2024, 1, 3),
+                    "ticker": "AAA",
+                    "no_expiry_in_band": False,
+                }
+            ]
+        )
+        result = blp.BuildResult(
+            daily=daily,
+            weekly=pd.DataFrame(),
+            panel=pd.DataFrame(),
+            files_read=0,
+        )
+        report_path = tmp_path / "report.md"
+        blp.write_liquidity_panel_report(
+            report_path,
+            build_id="test-build",
+            mode="backfill",
+            data_root=Path("C:/ORATS/data/ORATS_Data"),
+            cache_dir=tmp_path,
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 31),
+            lookback_weeks=12,
+            min_valid_quote_weeks=3,
+            dte_min=5,
+            dte_max=60,
+            dvol_top_pct=0.20,
+            spread_bot_pct=0.20,
+            result=result,
+        )
+        text = report_path.read_text(encoding="utf-8")
+        assert "dte_min: 5" in text
+        assert "dte_max: 60" in text
+        assert "dvol_top_pct: 0.2" in text
+        assert "spread_bot_pct: 0.2" in text
+        assert f"liquidity_source: `{blp.LIQUIDITY_SOURCE}`" in text
+
+
 class TestBuildLiquidTickers:
     def test_build_liquid_tickers_runs(self):
         panel = pd.DataFrame(
@@ -433,7 +519,8 @@ class TestBuildLiquidTickers:
             ]
         )
         out = blp.build_liquid_tickers(panel, 0.5, 0.5)
-        assert "Ticker" in out.columns
+        assert list(out.columns) == list(blp.LIQUID_TICKERS_COLUMNS)
+        assert (out["months_qualified"] == out["snapshots_qualified"]).all()
 
 
 class TestRawZipIO:

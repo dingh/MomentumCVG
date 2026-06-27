@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import shutil
 import sys
 import zipfile
 from dataclasses import dataclass, field
@@ -45,6 +47,8 @@ DEFAULT_SPREAD_BOT_PCT = 0.20
 DAILY_FILENAME = "ticker_liquidity_daily_observations.parquet"
 WEEKLY_FILENAME = "ticker_liquidity_weekly_observations.parquet"
 PANEL_FILENAME = "ticker_liquidity_panel.parquet"
+LIQUID_TICKERS_FILENAME = "liquid_tickers.csv"
+STAGING_DIRNAME = ".liquidity_panel_staging"
 LIQUIDITY_SOURCE = "raw_option_bid_x_volume_sum_dte_5_60"
 
 RAW_REQUIRED_COLS = (
@@ -240,14 +244,12 @@ def compute_dates_needed(
 # ── Stage 1: daily ────────────────────────────────────────────────────────────
 
 
-def _valid_bid(bid: float) -> bool:
-    return bool(np.isfinite(bid) and bid > 0)
+def _valid_leg_quote(bid: float, ask: float) -> bool:
+    return bool(np.isfinite(bid) and np.isfinite(ask) and bid > 0 and ask > 0 and ask >= bid)
 
 
 def _leg_spread_pct(bid: float, ask: float) -> float:
-    if not (np.isfinite(bid) and np.isfinite(ask)):
-        return float("nan")
-    if bid <= 0 or ask <= 0 or ask < bid:
+    if not _valid_leg_quote(bid, ask):
         return float("nan")
     mid = (bid + ask) / 2.0
     return (ask - bid) / mid
@@ -285,7 +287,7 @@ def select_atm_row(g_exp: pd.DataFrame) -> pd.Series:
 def compute_expiry_atm_liquidity(atm: pd.Series) -> tuple[float, float]:
     """
     Returns (expiry_atm_straddle_dollar_vol, expiry_atm_spread_pct).
-    Uses raw bid × volume; spread is max(call, put) leg spread when both legs valid.
+    Uses raw bid × volume when both call and put quotes are valid (bid/ask > 0, ask >= bid).
     """
     c_bid = float(atm["cBidPx"])
     p_bid = float(atm["pBidPx"])
@@ -294,16 +296,16 @@ def compute_expiry_atm_liquidity(atm: pd.Series) -> tuple[float, float]:
     c_vol = 0.0 if pd.isna(atm["cVolu"]) else float(atm["cVolu"])
     p_vol = 0.0 if pd.isna(atm["pVolu"]) else float(atm["pVolu"])
 
-    call_bid_dollar = 100.0 * c_bid * c_vol if _valid_bid(c_bid) else 0.0
-    put_bid_dollar = 100.0 * p_bid * p_vol if _valid_bid(p_bid) else 0.0
+    if not (_valid_leg_quote(c_bid, c_ask) and _valid_leg_quote(p_bid, p_ask)):
+        return 0.0, float("nan")
+
+    call_bid_dollar = 100.0 * c_bid * c_vol
+    put_bid_dollar = 100.0 * p_bid * p_vol
     expiry_vol = min(call_bid_dollar, put_bid_dollar)
 
     call_sp = _leg_spread_pct(c_bid, c_ask)
     put_sp = _leg_spread_pct(p_bid, p_ask)
-    if np.isfinite(call_sp) and np.isfinite(put_sp):
-        expiry_spread = float(max(call_sp, put_sp))
-    else:
-        expiry_spread = float("nan")
+    expiry_spread = float(max(call_sp, put_sp))
 
     return expiry_vol, expiry_spread
 
@@ -823,6 +825,9 @@ def run_backfill(
 # ── liquid tickers + report ───────────────────────────────────────────────────
 
 
+LIQUID_TICKERS_COLUMNS = ("Ticker", "snapshots_qualified", "months_qualified")
+
+
 def build_liquid_tickers(
     panel: pd.DataFrame,
     dvol_top_pct: float,
@@ -848,7 +853,7 @@ def build_liquid_tickers(
             qual_counts[t] = qual_counts.get(t, 0) + 1
 
     if not qual_counts:
-        return pd.DataFrame(columns=["Ticker", "snapshots_qualified"])
+        return pd.DataFrame(columns=list(LIQUID_TICKERS_COLUMNS))
 
     qual_df = (
         pd.Series(qual_counts, name="snapshots_qualified")
@@ -856,11 +861,13 @@ def build_liquid_tickers(
         .rename_axis("ticker")
         .reset_index()
     )
-    return (
+    out = (
         qual_df.rename(columns={"ticker": "Ticker"})[["Ticker", "snapshots_qualified"]]
         .sort_values("Ticker")
         .reset_index(drop=True)
     )
+    out["months_qualified"] = out["snapshots_qualified"]
+    return out[list(LIQUID_TICKERS_COLUMNS)]
 
 
 def write_liquidity_panel_report(
@@ -874,7 +881,12 @@ def write_liquidity_panel_report(
     end_date: date,
     lookback_weeks: int,
     min_valid_quote_weeks: int,
+    dte_min: int,
+    dte_max: int,
+    dvol_top_pct: float,
+    spread_bot_pct: float,
     result: BuildResult,
+    liquidity_source: str = LIQUIDITY_SOURCE,
     watermarks_before: dict[str, str] | None = None,
     watermarks_after: dict[str, str] | None = None,
 ) -> Path:
@@ -906,6 +918,11 @@ def write_liquidity_panel_report(
         f"- cache_dir: `{cache_dir}`",
         f"- lookback_weeks: {lookback_weeks}",
         f"- min_valid_quote_weeks: {min_valid_quote_weeks}",
+        f"- dte_min: {dte_min}",
+        f"- dte_max: {dte_max}",
+        f"- dvol_top_pct: {dvol_top_pct}",
+        f"- spread_bot_pct: {spread_bot_pct}",
+        f"- liquidity_source: `{liquidity_source}`",
         "",
         "## Execution",
         f"- ORATS raw ZIP files read: {result.files_read}",
@@ -943,11 +960,29 @@ def write_liquidity_panel_report(
     return path
 
 
-def write_artifacts(cache_dir: Path, result: BuildResult) -> None:
+def write_artifacts(
+    cache_dir: Path,
+    result: BuildResult,
+    *,
+    liquid_tickers: pd.DataFrame,
+) -> None:
+    """Write panel artifacts atomically via staging dir (all files, then replace)."""
     cache_dir.mkdir(parents=True, exist_ok=True)
-    result.daily.to_parquet(cache_dir / DAILY_FILENAME, index=False)
-    result.weekly.to_parquet(cache_dir / WEEKLY_FILENAME, index=False)
-    result.panel.to_parquet(cache_dir / PANEL_FILENAME, index=False)
+    staging = cache_dir / STAGING_DIRNAME
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+
+    try:
+        result.daily.to_parquet(staging / DAILY_FILENAME, index=False)
+        result.weekly.to_parquet(staging / WEEKLY_FILENAME, index=False)
+        result.panel.to_parquet(staging / PANEL_FILENAME, index=False)
+        liquid_tickers.to_csv(staging / LIQUID_TICKERS_FILENAME, index=False)
+
+        for name in (DAILY_FILENAME, WEEKLY_FILENAME, PANEL_FILENAME, LIQUID_TICKERS_FILENAME):
+            os.replace(staging / name, cache_dir / name)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def stamp_panel_universe_params(
@@ -1083,7 +1118,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         dvol_top_pct=args.dvol_top_pct,
         spread_bot_pct=args.spread_bot_pct,
     )
-    write_artifacts(args.cache_dir, result)
+    universe_df = build_liquid_tickers(
+        result.panel,
+        dvol_top_pct=args.dvol_top_pct,
+        spread_bot_pct=args.spread_bot_pct,
+    )
+    write_artifacts(args.cache_dir, result, liquid_tickers=universe_df)
 
     report_path = args.cache_dir / "manifests" / "reports" / f"liquidity_panel_{build_id}.md"
     write_liquidity_panel_report(
@@ -1096,16 +1136,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         end_date=end_date,
         lookback_weeks=args.lookback_weeks,
         min_valid_quote_weeks=args.min_valid_quote_weeks,
+        dte_min=args.dte_min,
+        dte_max=args.dte_max,
+        dvol_top_pct=args.dvol_top_pct,
+        spread_bot_pct=args.spread_bot_pct,
         result=result,
     )
 
-    universe_df = build_liquid_tickers(
-        result.panel,
-        dvol_top_pct=args.dvol_top_pct,
-        spread_bot_pct=args.spread_bot_pct,
-    )
-    universe_path = args.cache_dir / "liquid_tickers.csv"
-    universe_df.to_csv(universe_path, index=False)
+    universe_path = args.cache_dir / LIQUID_TICKERS_FILENAME
 
     logger.info(
         "Saved panel → %s (%d rows); report → %s",
