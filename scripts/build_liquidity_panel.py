@@ -1,41 +1,14 @@
 """
-Build the ticker liquidity panel used by step1_get_universe() in the backtest pipeline.
+Build weekly point-in-time ticker liquidity panel for step1_get_universe().
 
-For each calendar month in the scan range, this script:
-  1. Finds the first available trading day in the ORATS adjusted parquet store.
-  2. Looks up the liquid monthly expiry for that month from liquid_expiry_dates.csv
-     (the third-Friday expiry dates with 3 000+ tickers present).
-  3. For every ticker on that trade date, computes ATM straddle liquidity metrics
-     measured on the monthly expiry:
-       - atm_straddle_dollar_vol  = min(call_vol, put_vol) × straddle_mid
-       - atm_spread_pct           = max(call_spread_pct, put_spread_pct)
-       - n_expiries_5_60dte       = structural depth (# weekly expiry dates in range)
-  4. Writes one row per (month_date, ticker) to ticker_liquidity_panel.parquet.
-  5. Derives a one-time liquid_tickers.csv snapshot: tickers that meet the
-     top-dvol / bottom-spread thresholds in >= MIN_MONTHS_QUALIFIED months.
-     (Used by precompute scripts that need a static ticker list.)
+Three-stage pipeline (Sprint 004 C4):
+  daily raw observations → weekly liquidity observations → rolling N-week panel
 
-Pipeline contract (src/backtest/pipeline.py step1_get_universe):
-    The panel is loaded once at engine init.  At each trade_date, step1 performs
-    a point-in-time lookup (most recent month_date <= trade_date) and ranks
-    tickers cross-sectionally on dollar_vol and effective_spread.
-    Required columns consumed by step1:
-        month_date, ticker, atm_straddle_dollar_vol, atm_spread_pct
+Reads ORATS **raw** daily ZIPs from ORATS_Data (no split-adjusted cache required).
+Liquidity uses raw bid/ask/volume columns only; downstream surface/backtest still
+uses ORATS_Adjusted after scoped split adjustment on liquid names.
 
-Usage
------
-    # Default paths
-    python scripts/build_liquidity_panel.py
-
-    # Custom paths / date range
-    python scripts/build_liquidity_panel.py \\
-        --data-root  C:/ORATS/data/ORATS_Adjusted \\
-        --cache-dir  C:/MomentumCVG_env/cache \\
-        --start-year 2017 \\
-        --end-year   2026 \\
-        --dvol-top-pct    0.20 \\
-        --spread-bot-pct  0.20 \\
-        --min-months      10
+See docs/tmp/c4_liquidity_panel_design_plan.md.
 """
 
 from __future__ import annotations
@@ -43,28 +16,77 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import date, datetime
+import zipfile
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Callable, Literal, Sequence
 
 import numpy as np
 import pandas as pd
 
-# ── resolve project root so src/ imports work regardless of cwd ──────────────
-_SCRIPT_DIR   = Path(__file__).resolve().parent   # scripts/
-_PROJECT_ROOT = _SCRIPT_DIR.parent                # MomentumCVG/
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SCRIPT_DIR.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.data.orats_provider import ORATSDataProvider  # noqa: E402
+from src.data.input_snapshot import generate_build_id  # noqa: E402
 
-# ── defaults ──────────────────────────────────────────────────────────────────
-DEFAULT_DATA_ROOT      = Path("C:/ORATS/data/ORATS_Adjusted")
-DEFAULT_CACHE_DIR      = Path("C:/MomentumCVG_env/cache")
-DEFAULT_START_YEAR     = 2017
-DEFAULT_END_YEAR       = 2026
-DEFAULT_DVOL_TOP_PCT   = 0.20   # keep top 20% by ATM dollar volume
-DEFAULT_SPREAD_BOT_PCT = 0.20   # keep bottom 20% by ATM spread pct
+DEFAULT_DATA_ROOT = Path("C:/ORATS/data/ORATS_Data")
+DEFAULT_CACHE_DIR = Path("C:/MomentumCVG_env/cache")
+DEFAULT_START_YEAR = 2017
+DEFAULT_END_YEAR = 2026
+DEFAULT_LOOKBACK_WEEKS = 12
+DEFAULT_MIN_VALID_QUOTE_WEEKS = 3
+DEFAULT_DTE_MIN = 5
+DEFAULT_DTE_MAX = 60
+DEFAULT_DVOL_TOP_PCT = 0.20
+DEFAULT_SPREAD_BOT_PCT = 0.20
 
-# ── logging ───────────────────────────────────────────────────────────────────
+DAILY_FILENAME = "ticker_liquidity_daily_observations.parquet"
+WEEKLY_FILENAME = "ticker_liquidity_weekly_observations.parquet"
+PANEL_FILENAME = "ticker_liquidity_panel.parquet"
+LIQUIDITY_SOURCE = "raw_option_bid_x_volume_sum_dte_5_60"
+
+RAW_REQUIRED_COLS = (
+    "ticker",
+    "expirDate",
+    "stkPx",
+    "strike",
+    "cBidPx",
+    "cAskPx",
+    "pBidPx",
+    "pAskPx",
+    "cVolu",
+    "pVolu",
+)
+
+DAILY_REQUIRED_COLS = (
+    "trade_date",
+    "ticker",
+    "daily_atm_straddle_dollar_vol",
+    "daily_atm_spread_pct",
+    "daily_has_valid_quote",
+    "n_candidate_expiries",
+    "n_expiries_total",
+    "no_expiry_in_band",
+    "liquidity_source",
+)
+WEEKLY_REQUIRED_COLS = (
+    "week_end_date",
+    "ticker",
+    "weekly_atm_straddle_dollar_vol",
+    "weekly_atm_spread_pct",
+    "weekly_valid_quote_days",
+    "weekly_has_valid_quote",
+)
+PANEL_STEP1_COLS = (
+    "month_date",
+    "ticker",
+    "atm_straddle_dollar_vol",
+    "atm_spread_pct",
+    "has_valid_atm_pair",
+)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -73,281 +95,655 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────────────────────────
-
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Build ticker_liquidity_panel.parquet for the backtest pipeline.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    p.add_argument("--data-root",      type=Path,  default=DEFAULT_DATA_ROOT)
-    p.add_argument("--cache-dir",      type=Path,  default=DEFAULT_CACHE_DIR)
-    p.add_argument("--start-year",     type=int,   default=DEFAULT_START_YEAR)
-    p.add_argument("--end-year",       type=int,   default=DEFAULT_END_YEAR)
-    p.add_argument(
-        "--dvol-top-pct",
-        type=float,
-        default=DEFAULT_DVOL_TOP_PCT,
-        help="Fraction used to compute the dvol threshold for liquid_tickers.csv (e.g. 0.20 = top 20%%).",
-    )
-    p.add_argument(
-        "--spread-bot-pct",
-        type=float,
-        default=DEFAULT_SPREAD_BOT_PCT,
-        help="Fraction used to compute the spread threshold for liquid_tickers.csv (e.g. 0.20 = bottom 20%%).",
-    )
-    return p.parse_args()
+class LiquidityPanelError(Exception):
+    """Blocking failure building or extending the liquidity panel."""
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Metric helpers
-# ─────────────────────────────────────────────────────────────────────────────
+@dataclass
+class BuildResult:
+    daily: pd.DataFrame
+    weekly: pd.DataFrame
+    panel: pd.DataFrame
+    files_read: int
+    warnings: list[str] = field(default_factory=list)
+    mode: str = "backfill"
+
+
+@dataclass
+class IncrementalState:
+    daily_watermark: date
+    weekly_watermark: date
+    panel_watermark: date
+    daily: pd.DataFrame
+    weekly: pd.DataFrame
+    panel: pd.DataFrame
+    lookback_weeks: int
+    min_valid_quote_weeks: int
+
+
+# ── ORATS raw ZIP I/O ─────────────────────────────────────────────────────────
+
+
+def orats_raw_zip_path(data_root: Path | str, day: date) -> Path:
+    """Path to one ORATS raw daily SMV ZIP (same layout as apply_split_adjustment raw_root)."""
+    if isinstance(day, datetime) or not isinstance(day, date):
+        raise ValueError(f"Expected date, got {day!r}")
+    root = Path(data_root)
+    return root / f"{day.year:04d}" / f"ORATS_SMV_Strikes_{day.strftime('%Y%m%d')}.zip"
+
+
+def load_raw_day_from_zip(data_root: Path | str, trade_date: date) -> pd.DataFrame:
+    """Load one day's wide-format ORATS chain from raw ZIP; no split adjustment."""
+    zip_path = orats_raw_zip_path(data_root, trade_date)
+    if not zip_path.is_file():
+        return pd.DataFrame()
+
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            csv_names = [n for n in zf.namelist() if n.endswith((".csv", ".txt"))]
+            if not csv_names:
+                raise LiquidityPanelError(f"No CSV/TXT inside {zip_path.name}")
+            with zf.open(csv_names[0]) as f:
+                return pd.read_csv(f, dtype={"ticker": str})
+    except LiquidityPanelError:
+        raise
+    except Exception as exc:
+        raise LiquidityPanelError(f"Failed to read {zip_path}: {exc}") from exc
+
+
+def make_raw_zip_loader(data_root: Path) -> Callable[[date], pd.DataFrame]:
+    """Return a load_day_fn that reads ORATS_Data ZIPs (one read per trade_date)."""
+
+    def _load(trade_date: date) -> pd.DataFrame:
+        return load_raw_day_from_zip(data_root, trade_date)
+
+    return _load
+
+
+# ── date discovery ────────────────────────────────────────────────────────────
+
+
+def discover_orats_trading_dates(
+    data_root: Path,
+    start_date: date,
+    end_date: date,
+) -> list[date]:
+    """List ORATS raw ZIP trade dates in [start_date, end_date], sorted."""
+    dates: list[date] = []
+    for fp in sorted(data_root.glob("*/ORATS_SMV_Strikes_*.zip")):
+        try:
+            d = datetime.strptime(fp.stem.split("_")[-1], "%Y%m%d").date()
+        except ValueError:
+            continue
+        if start_date <= d <= end_date:
+            dates.append(d)
+    dates.sort()
+    return dates
+
+
+def build_week_calendar(trading_dates: Sequence[date]) -> list[tuple[date, list[date]]]:
+    """Map each ISO week to (week_end_date, ORATS trading days in that week)."""
+    sorted_dates = sorted(set(trading_dates))
+    week_days: dict[date, set[date]] = {}
+    for d in sorted_dates:
+        monday = d - timedelta(days=d.weekday())
+        sunday = monday + timedelta(days=6)
+        days_in_week = [x for x in sorted_dates if monday <= x <= sunday]
+        if not days_in_week:
+            continue
+        week_end = max(days_in_week)
+        week_days.setdefault(week_end, set()).update(days_in_week)
+    return sorted((we, sorted(days)) for we, days in week_days.items())
+
+
+def resolve_weekly_snapshot_dates(
+    trading_dates: Sequence[date],
+    start_date: date,
+    end_date: date,
+) -> list[date]:
+    """Completed-week snapshot dates (week_end_date) within the output range."""
+    return [
+        week_end
+        for week_end, _ in build_week_calendar(trading_dates)
+        if start_date <= week_end <= end_date
+    ]
+
+
+def compute_dates_needed(
+    trading_dates: Sequence[date],
+    snapshot_dates: Sequence[date],
+    lookback_weeks: int,
+) -> list[date]:
+    """ORATS days required to build panel snapshots (union of rolling windows)."""
+    calendar = build_week_calendar(trading_dates)
+    week_end_to_days = dict(calendar)
+    all_week_ends = sorted(week_end_to_days.keys())
+    needed: set[date] = set()
+    for snap in snapshot_dates:
+        weeks_le = [w for w in all_week_ends if w <= snap]
+        window = weeks_le[-lookback_weeks:] if weeks_le else []
+        for w in window:
+            needed.update(week_end_to_days[w])
+    return sorted(needed)
+
+
+# ── Stage 1: daily ────────────────────────────────────────────────────────────
+
+
+def _valid_bid(bid: float) -> bool:
+    return bool(np.isfinite(bid) and bid > 0)
+
 
 def _safe_mid(bid: float, ask: float) -> float:
-    """Return mid price, or NaN if either input is invalid."""
     if not (np.isfinite(bid) and np.isfinite(ask)):
         return float("nan")
     return (bid + ask) / 2.0
 
 
-def _safe_spread_pct(bid: float, ask: float) -> float:
-    """Return (ask - bid) / mid, or NaN if mid is non-positive."""
+def _leg_spread_pct(bid: float, ask: float) -> float:
     mid = _safe_mid(bid, ask)
     if not (np.isfinite(mid) and mid > 0):
         return float("nan")
     return (ask - bid) / mid
 
 
-def _compute_ticker_metrics(
-    g_all: pd.DataFrame,
-    target_expiry: date,
+def validate_raw_columns(day_df: pd.DataFrame) -> None:
+    missing = [c for c in RAW_REQUIRED_COLS if c not in day_df.columns]
+    if missing:
+        raise LiquidityPanelError(
+            f"ORATS raw ZIP missing columns required for liquidity: {missing}. "
+            "Expected native ORATS wide-format columns (stkPx, cBidPx, …); "
+            "do not use adj_* or ORATS_Adjusted as input."
+        )
+
+
+def candidate_expiries(
+    expiries: Sequence[date],
     trade_date: date,
+    *,
+    dte_min: int = DEFAULT_DTE_MIN,
+    dte_max: int = DEFAULT_DTE_MAX,
+) -> list[date]:
+    return sorted(
+        e for e in expiries if dte_min <= (e - trade_date).days <= dte_max
+    )
+
+
+def select_atm_row(g_exp: pd.DataFrame) -> pd.Series:
+    """ATM row using raw stkPx and raw strike."""
+    g = g_exp.copy()
+    g["_dist"] = (g["strike"] - g["stkPx"]).abs()
+    return g.sort_values(["_dist", "strike"], kind="mergesort").iloc[0]
+
+
+def compute_expiry_atm_liquidity(atm: pd.Series) -> tuple[float, float]:
+    """
+    Returns (expiry_atm_straddle_dollar_vol, expiry_atm_spread_pct).
+    Uses raw bid × volume; spread uses mid denominator.
+    """
+    c_bid = float(atm["cBidPx"])
+    p_bid = float(atm["pBidPx"])
+    c_ask = float(atm["cAskPx"])
+    p_ask = float(atm["pAskPx"])
+    c_vol = 0.0 if pd.isna(atm["cVolu"]) else float(atm["cVolu"])
+    p_vol = 0.0 if pd.isna(atm["pVolu"]) else float(atm["pVolu"])
+
+    call_bid_dollar = 100.0 * c_bid * c_vol if _valid_bid(c_bid) else 0.0
+    put_bid_dollar = 100.0 * p_bid * p_vol if _valid_bid(p_bid) else 0.0
+    expiry_vol = min(call_bid_dollar, put_bid_dollar)
+
+    call_sp = _leg_spread_pct(c_bid, c_ask)
+    put_sp = _leg_spread_pct(p_bid, p_ask)
+    spreads = [x for x in (call_sp, put_sp) if np.isfinite(x)]
+    expiry_spread = float(max(spreads)) if spreads else float("nan")
+
+    return expiry_vol, expiry_spread
+
+
+def compute_ticker_daily_observation(
+    g_all: pd.DataFrame,
+    trade_date: date,
+    *,
+    dte_min: int = DEFAULT_DTE_MIN,
+    dte_max: int = DEFAULT_DTE_MAX,
 ) -> dict:
-    """
-    Compute ATM straddle liquidity metrics for one ticker on one trade_date.
+    expiries = sorted(g_all["expirDate"].dropna().unique())
+    n_total = len(expiries)
+    candidates = candidate_expiries(expiries, trade_date, dte_min=dte_min, dte_max=dte_max)
 
-    Parameters
-    ----------
-    g_all        : All rows for this ticker on trade_date (all expiries).
-    target_expiry: The liquid monthly expiry to measure ATM liquidity on.
-    trade_date   : The observation date (used for DTE and depth window).
-
-    Returns
-    -------
-    Flat dict matching the panel schema.  All numeric values are Python floats
-    (NaN where unavailable) so pd.DataFrame(records) produces the right dtypes.
-    """
-    # structural depth: count unique expiry dates within 5–60 DTE window
-    n_expiries_5_60 = int(sum(
-        5 <= (e - trade_date).days <= 60
-        for e in g_all["expirDate"].dropna().unique()
-    ))
-
-    # slice to target expiry only
-    g_exp = g_all[g_all["expirDate"] == target_expiry]
-    if g_exp.empty:
+    if not candidates:
         return {
-            "has_valid_atm_pair":      False,
-            "atm_strike":              np.nan,
-            "underlying_spot":         float(g_all["adj_stkPx"].iloc[0]) if not g_all.empty else np.nan,
-            "target_dte":              (target_expiry - trade_date).days,
-            "n_expiries_5_60dte":      n_expiries_5_60,
-            "atm_straddle_dollar_vol": np.nan,
-            "atm_spread_pct":          np.nan,
-            "call_spread_pct":         np.nan,
-            "put_spread_pct":          np.nan,
-            "straddle_mid":            np.nan,
-            "pair_oi_min":             np.nan,
+            "daily_atm_straddle_dollar_vol": 0.0,
+            "daily_atm_spread_pct": np.nan,
+            "daily_has_valid_quote": False,
+            "n_candidate_expiries": 0,
+            "n_expiries_total": n_total,
+            "no_expiry_in_band": True,
+            "liquidity_source": LIQUIDITY_SOURCE,
         }
 
-    # find ATM strike: closest to spot; break ties by strike value
-    g_exp = g_exp.copy()
-    g_exp["_spot_dist"] = (g_exp["adj_strike"] - g_exp["adj_stkPx"]).abs()
-    atm = g_exp.sort_values(["_spot_dist", "adj_strike"]).iloc[0]
+    total_vol = 0.0
+    spread_num = 0.0
+    spread_den = 0.0
+    for expiry in candidates:
+        g_exp = g_all[g_all["expirDate"] == expiry]
+        if g_exp.empty:
+            continue
+        atm = select_atm_row(g_exp)
+        exp_vol, exp_spread = compute_expiry_atm_liquidity(atm)
+        total_vol += exp_vol
+        if exp_vol > 0 and np.isfinite(exp_spread):
+            spread_num += exp_spread * exp_vol
+            spread_den += exp_vol
 
-    c_bid = float(atm.get("adj_cBidPx", np.nan))
-    c_ask = float(atm.get("adj_cAskPx", np.nan))
-    p_bid = float(atm.get("adj_pBidPx", np.nan))
-    p_ask = float(atm.get("adj_pAskPx", np.nan))
-    c_mid = _safe_mid(c_bid, c_ask)
-    p_mid = _safe_mid(p_bid, p_ask)
-
-    straddle_mid = (
-        (c_mid if np.isfinite(c_mid) else 0.0)
-        + (p_mid if np.isfinite(p_mid) else 0.0)
-    )
-    if straddle_mid <= 0:
-        straddle_mid = np.nan
-
-    call_sp = _safe_spread_pct(c_bid, c_ask)
-    put_sp  = _safe_spread_pct(p_bid, p_ask)
-    atm_sp  = (
-        float(np.nanmax([call_sp, put_sp]))
-        if any(np.isfinite(x) for x in [call_sp, put_sp])
-        else np.nan
-    )
-
-    c_vol = float(atm.get("cVolu", np.nan))
-    p_vol = float(atm.get("pVolu", np.nan))
-    c_oi  = float(atm.get("cOi",   np.nan))
-    p_oi  = float(atm.get("pOi",   np.nan))
-
-    # conservative dollar volume: min(call_vol, put_vol) × straddle_mid
-    min_vol = (
-        float(np.nanmin([c_vol, p_vol]))
-        if any(np.isfinite(x) for x in [c_vol, p_vol])
-        else 0.0
-    )
-    atm_dollar_vol = (
-        min_vol * straddle_mid
-        if (np.isfinite(straddle_mid) and np.isfinite(min_vol))
-        else np.nan
-    )
-
-    has_valid = bool(
-        np.isfinite(c_bid) and c_bid > 0
-        and np.isfinite(c_ask) and c_ask >= c_bid
-        and np.isfinite(p_bid) and p_bid > 0
-        and np.isfinite(p_ask) and p_ask >= p_bid
-    )
+    daily_spread = spread_num / spread_den if spread_den > 0 else float("nan")
+    has_valid = total_vol > 0 and np.isfinite(daily_spread)
 
     return {
-        "has_valid_atm_pair":      has_valid,
-        "atm_strike":              float(atm.get("adj_strike", np.nan)),
-        "underlying_spot":         float(atm.get("adj_stkPx",  np.nan)),
-        "target_dte":              (target_expiry - trade_date).days,
-        "n_expiries_5_60dte":      n_expiries_5_60,
-        "atm_straddle_dollar_vol": atm_dollar_vol,
-        "atm_spread_pct":          atm_sp,
-        "call_spread_pct":         call_sp,
-        "put_spread_pct":          put_sp,
-        "straddle_mid":            straddle_mid if np.isfinite(straddle_mid) else np.nan,
-        "pair_oi_min":             (
-            float(np.nanmin([c_oi, p_oi]))
-            if any(np.isfinite(x) for x in [c_oi, p_oi])
-            else np.nan
-        ),
+        "daily_atm_straddle_dollar_vol": total_vol,
+        "daily_atm_spread_pct": daily_spread,
+        "daily_has_valid_quote": has_valid,
+        "n_candidate_expiries": len(candidates),
+        "n_expiries_total": n_total,
+        "no_expiry_in_band": False,
+        "liquidity_source": LIQUIDITY_SOURCE,
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main scan
-# ─────────────────────────────────────────────────────────────────────────────
-
-def build_panel(
-    data_root: Path,
-    cache_dir: Path,
-    start_date: date,
-    end_date: date,
+def compute_daily_liquidity_observations(
+    day_df: pd.DataFrame,
+    trade_date: date,
+    *,
+    dte_min: int = DEFAULT_DTE_MIN,
+    dte_max: int = DEFAULT_DTE_MAX,
 ) -> pd.DataFrame:
-    """
-    Scan ORATS adjusted parquet files and build the liquidity panel DataFrame.
+    validate_raw_columns(day_df)
+    df = day_df.copy()
+    df["expirDate"] = pd.to_datetime(df["expirDate"]).dt.date
 
-    Returns the full panel (all months × all tickers) before any filtering.
-    Columns: month_date, ticker, expiry_date, target_dte, underlying_spot,
-             atm_strike, atm_straddle_dollar_vol, atm_spread_pct,
-             call_spread_pct, put_spread_pct, straddle_mid, pair_oi_min,
-             n_expiries_5_60dte, has_valid_atm_pair
-    """
-    provider = ORATSDataProvider(data_root=str(data_root))
-
-    # ── load liquid expiry dates ──────────────────────────────────────────────
-    expiry_csv = cache_dir / "liquid_expiry_dates.csv"
-    if not expiry_csv.exists():
-        raise FileNotFoundError(
-            f"liquid_expiry_dates.csv not found at {expiry_csv}.\n"
-            "Run the expiry_coverage notebook first to generate it."
-        )
-    liquid_expiries = pd.read_csv(expiry_csv, parse_dates=["expirDate"])
-    liquid_expiries["expirDate"] = liquid_expiries["expirDate"].dt.date
-    month_to_expiry: dict[tuple[int, int], date] = {
-        (row.expirDate.year, row.expirDate.month): row.expirDate
-        for row in liquid_expiries.itertuples()
-    }
-    logger.info(
-        "Loaded %d liquid expiry dates  (%s → %s)",
-        len(liquid_expiries),
-        liquid_expiries["expirDate"].min(),
-        liquid_expiries["expirDate"].max(),
-    )
-
-    # ── discover all trading dates; keep first of each month ─────────────────
-    all_dates: list[date] = []
-    for fp in sorted(data_root.glob("*/ORATS_SMV_Strikes_*.parquet")):
-        try:
-            d = datetime.strptime(fp.stem.split("_")[-1], "%Y%m%d").date()
-            if start_date <= d <= end_date:
-                all_dates.append(d)
-        except Exception:
-            continue
-
-    dates_df = pd.DataFrame({"trade_date": all_dates})
-    dates_df["year_month"] = dates_df["trade_date"].apply(
-        lambda d: (d.year, d.month)
-    )
-    first_of_month: list[date] = (
-        dates_df.groupby("year_month")["trade_date"]
-        .min()
-        .reset_index(drop=True)
-        .tolist()
-    )
-
-    # pair each first-of-month with its liquid expiry (drop months with no expiry)
-    scannable: list[tuple[date, date]] = [
-        (d, month_to_expiry[(d.year, d.month)])
-        for d in first_of_month
-        if (d.year, d.month) in month_to_expiry
-    ]
-    logger.info("Months to scan: %d", len(scannable))
-
-    # ── main scan loop ────────────────────────────────────────────────────────
     records: list[dict] = []
-    total = len(scannable)
+    for ticker, g_all in df.groupby("ticker", sort=False):
+        obs = compute_ticker_daily_observation(
+            g_all, trade_date, dte_min=dte_min, dte_max=dte_max
+        )
+        records.append({"trade_date": trade_date, "ticker": ticker, **obs})
 
-    for i, (trade_date, expiry_date) in enumerate(scannable, start=1):
-        try:
-            df = provider._load_day_data(trade_date)
-        except Exception as exc:
-            logger.warning("[%d/%d] %s — LOAD ERROR: %s", i, total, trade_date, exc)
+    if not records:
+        return pd.DataFrame(columns=list(DAILY_REQUIRED_COLS))
+    return pd.DataFrame(records)
+
+
+def extract_daily_observations(
+    dates: Sequence[date],
+    load_day_fn: Callable[[date], pd.DataFrame],
+    *,
+    dte_min: int = DEFAULT_DTE_MIN,
+    dte_max: int = DEFAULT_DTE_MAX,
+) -> tuple[pd.DataFrame, int]:
+    """Read each trade_date once via load_day_fn; return slim daily observations."""
+    frames: list[pd.DataFrame] = []
+    for trade_date in sorted(dates):
+        day_df = load_day_fn(trade_date)
+        if day_df is None or day_df.empty:
             continue
+        frames.append(
+            compute_daily_liquidity_observations(
+                day_df, trade_date, dte_min=dte_min, dte_max=dte_max
+            )
+        )
+    if not frames:
+        return pd.DataFrame(columns=list(DAILY_REQUIRED_COLS)), len(dates)
+    return pd.concat(frames, ignore_index=True), len(dates)
 
-        if df is None or df.empty:
-            logger.warning("[%d/%d] %s — empty file, skipping", i, total, trade_date)
+
+# ── Stage 2: weekly ───────────────────────────────────────────────────────────
+
+
+def aggregate_weekly_liquidity_observations(
+    daily_obs: pd.DataFrame,
+    week_calendar: Sequence[tuple[date, list[date]]],
+) -> pd.DataFrame:
+    if daily_obs.empty:
+        return pd.DataFrame(columns=list(WEEKLY_REQUIRED_COLS))
+
+    daily = daily_obs.copy()
+    daily["trade_date"] = pd.to_datetime(daily["trade_date"]).dt.date
+    lookup: dict[tuple[date, str], pd.Series] = {
+        (row.trade_date, row.ticker): row
+        for row in daily.itertuples(index=False)
+    }
+
+    records: list[dict] = []
+    for week_end, orats_days in week_calendar:
+        if not orats_days:
             continue
-
-        # normalize expirDate to Python date (parquet stores as datetime64)
-        df = df.assign(expirDate=pd.to_datetime(df["expirDate"]).dt.date)
-
-        for ticker, g_all in df.groupby("ticker", sort=False):
-            m = _compute_ticker_metrics(g_all, expiry_date, trade_date)
-            records.append({
-                "month_date":              trade_date,
-                "ticker":                  ticker,
-                "expiry_date":             expiry_date,
-                "target_dte":              m["target_dte"],
-                "underlying_spot":         m["underlying_spot"],
-                "atm_strike":              m["atm_strike"],
-                "atm_straddle_dollar_vol": m["atm_straddle_dollar_vol"],
-                "atm_spread_pct":          m["atm_spread_pct"],
-                "call_spread_pct":         m["call_spread_pct"],
-                "put_spread_pct":          m["put_spread_pct"],
-                "straddle_mid":            m["straddle_mid"],
-                "pair_oi_min":             m["pair_oi_min"],
-                "n_expiries_5_60dte":      m["n_expiries_5_60dte"],
-                "has_valid_atm_pair":      m["has_valid_atm_pair"],
-            })
-
-        if i % 12 == 0 or i == total:
-            logger.info(
-                "[%3d/%d] %s → expiry %s | rows: %d",
-                i, total, trade_date, expiry_date, len(records),
+        tickers = daily.loc[daily["trade_date"].isin(orats_days), "ticker"].unique()
+        for ticker in tickers:
+            vols: list[float] = []
+            spreads: list[float] = []
+            valid_days = 0
+            for d in orats_days:
+                row = lookup.get((d, ticker))
+                if row is None:
+                    vols.append(0.0)
+                else:
+                    v = float(row.daily_atm_straddle_dollar_vol)
+                    vols.append(v if np.isfinite(v) else 0.0)
+                    if bool(row.daily_has_valid_quote) and np.isfinite(row.daily_atm_spread_pct):
+                        spreads.append(float(row.daily_atm_spread_pct))
+                        valid_days += 1
+            weekly_vol = sum(vols) / len(orats_days)
+            weekly_spread = float(np.mean(spreads)) if spreads else float("nan")
+            records.append(
+                {
+                    "week_end_date": week_end,
+                    "ticker": ticker,
+                    "weekly_atm_straddle_dollar_vol": weekly_vol,
+                    "weekly_atm_spread_pct": weekly_spread,
+                    "weekly_valid_quote_days": valid_days,
+                    "weekly_has_valid_quote": valid_days >= 1,
+                }
             )
 
-    panel = pd.DataFrame(records)
-    logger.info("Scan complete. Panel shape: %s", panel.shape)
-    return panel
+    if not records:
+        return pd.DataFrame(columns=list(WEEKLY_REQUIRED_COLS))
+    return pd.DataFrame(records)
+
+
+# ── Stage 3: rolling panel ───────────────────────────────────────────────────
+
+
+def _window_week_ends(all_week_ends: Sequence[date], snapshot: date, lookback_weeks: int) -> list[date]:
+    eligible = [w for w in all_week_ends if w <= snapshot]
+    return eligible[-lookback_weeks:] if eligible else []
+
+
+def aggregate_rolling_weekly_panel(
+    weekly_obs: pd.DataFrame,
+    snapshot_dates: Sequence[date],
+    all_week_ends: Sequence[date],
+    *,
+    lookback_weeks: int = DEFAULT_LOOKBACK_WEEKS,
+    min_valid_quote_weeks: int = DEFAULT_MIN_VALID_QUOTE_WEEKS,
+) -> pd.DataFrame:
+    if not snapshot_dates:
+        return pd.DataFrame(columns=list(PANEL_STEP1_COLS))
+
+    weekly = weekly_obs.copy()
+    weekly["week_end_date"] = pd.to_datetime(weekly["week_end_date"]).dt.date
+    week_lookup: dict[tuple[date, str], pd.Series] = {
+        (row.week_end_date, row.ticker): row
+        for row in weekly.itertuples(index=False)
+    }
+    sorted_week_ends = sorted(set(all_week_ends))
+
+    records: list[dict] = []
+    for snap in sorted(snapshot_dates):
+        window = _window_week_ends(sorted_week_ends, snap, lookback_weeks)
+        window_shortfall = max(0, lookback_weeks - len(window))
+        window_start = window[0] if window else snap
+
+        tickers: set[str] = set()
+        for w in window:
+            tickers.update(weekly.loc[weekly["week_end_date"] == w, "ticker"].tolist())
+
+        for ticker in sorted(tickers):
+            vol_sum = 0.0
+            spreads: list[float] = []
+            valid_weeks = 0
+            zero_vol_weeks = 0
+            for w in window:
+                row = week_lookup.get((w, ticker))
+                if row is None:
+                    continue
+                wvol = float(row.weekly_atm_straddle_dollar_vol)
+                vol_sum += wvol if np.isfinite(wvol) else 0.0
+                if wvol == 0 or not np.isfinite(wvol):
+                    zero_vol_weeks += 1
+                if bool(row.weekly_has_valid_quote) and np.isfinite(row.weekly_atm_spread_pct):
+                    spreads.append(float(row.weekly_atm_spread_pct))
+                    valid_weeks += 1
+
+            atm_dvol = vol_sum / lookback_weeks
+            atm_spread = float(np.mean(spreads)) if spreads else float("nan")
+            has_valid = valid_weeks >= min_valid_quote_weeks
+
+            records.append(
+                {
+                    "month_date": pd.Timestamp(snap),
+                    "snapshot_date": pd.Timestamp(snap),
+                    "ticker": ticker,
+                    "atm_straddle_dollar_vol": atm_dvol,
+                    "atm_spread_pct": atm_spread,
+                    "has_valid_atm_pair": has_valid,
+                    "lookback_weeks": lookback_weeks,
+                    "min_valid_quote_weeks": min_valid_quote_weeks,
+                    "valid_quote_weeks": valid_weeks,
+                    "zero_volume_weeks": zero_vol_weeks,
+                    "window_start_date": pd.Timestamp(window_start),
+                    "window_end_date": pd.Timestamp(snap),
+                    "window_shortfall": window_shortfall,
+                    "liquidity_source": LIQUIDITY_SOURCE,
+                }
+            )
+
+    return pd.DataFrame(records)
+
+
+# ── incremental ───────────────────────────────────────────────────────────────
+
+
+def _read_parquet(path: Path) -> pd.DataFrame:
+    if not path.is_file():
+        raise LiquidityPanelError(
+            f"Missing required artifact: {path}. Run with --mode backfill first."
+        )
+    return pd.read_parquet(path)
+
+
+def _assert_columns(df: pd.DataFrame, required: Sequence[str], artifact: str) -> None:
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise LiquidityPanelError(
+            f"{artifact} schema mismatch — missing columns {missing}. Run --mode backfill."
+        )
+
+def _max_date(series: pd.Series, col: str) -> date:
+    return pd.to_datetime(series).max().date()
+
+
+def validate_incremental_artifacts(
+    cache_dir: Path,
+    *,
+    lookback_weeks: int,
+    min_valid_quote_weeks: int,
+) -> IncrementalState:
+    daily_path = cache_dir / DAILY_FILENAME
+    weekly_path = cache_dir / WEEKLY_FILENAME
+    panel_path = cache_dir / PANEL_FILENAME
+
+    daily = _read_parquet(daily_path)
+    weekly = _read_parquet(weekly_path)
+    panel = _read_parquet(panel_path)
+
+    _assert_columns(daily, DAILY_REQUIRED_COLS, DAILY_FILENAME)
+    _assert_columns(weekly, WEEKLY_REQUIRED_COLS, WEEKLY_FILENAME)
+    _assert_columns(panel, PANEL_STEP1_COLS, PANEL_FILENAME)
+
+    if panel.empty:
+        raise LiquidityPanelError("Panel artifact is empty; run --mode backfill.")
+
+    stored_lbw = int(panel["lookback_weeks"].iloc[0])
+    stored_min = int(panel["min_valid_quote_weeks"].iloc[0])
+    if stored_lbw != lookback_weeks or stored_min != min_valid_quote_weeks:
+        raise LiquidityPanelError(
+            f"Panel params ({stored_lbw}/{stored_min}) != CLI ({lookback_weeks}/{min_valid_quote_weeks}). "
+            "Run --mode backfill."
+        )
+
+    return IncrementalState(
+        daily_watermark=_max_date(daily["trade_date"], "trade_date"),
+        weekly_watermark=_max_date(weekly["week_end_date"], "week_end_date"),
+        panel_watermark=_max_date(panel["month_date"], "month_date"),
+        daily=daily,
+        weekly=weekly,
+        panel=panel,
+        lookback_weeks=lookback_weeks,
+        min_valid_quote_weeks=min_valid_quote_weeks,
+    )
+
+
+def run_incremental(
+    data_root: Path,
+    cache_dir: Path,
+    state: IncrementalState,
+    load_day_fn: Callable[[date], pd.DataFrame],
+    all_trading_dates: Sequence[date],
+    *,
+    dte_min: int = DEFAULT_DTE_MIN,
+    dte_max: int = DEFAULT_DTE_MAX,
+) -> BuildResult:
+    calendar = build_week_calendar(all_trading_dates)
+    new_weeks = [(we, days) for we, days in calendar if we > state.panel_watermark]
+    if not new_weeks:
+        raise LiquidityPanelError(
+            "Nothing to append: no completed week with week_end_date > panel watermark. "
+            "Wait for EOD or run backfill."
+        )
+    if len(new_weeks) > 1:
+        raise LiquidityPanelError(
+            f"Incremental expects one new week; found {len(new_weeks)} "
+            f"({new_weeks[0][0]} … {new_weeks[-1][0]}). Run --mode backfill."
+        )
+
+    week_end, week_days = new_weeks[0]
+    if week_end <= state.weekly_watermark:
+        raise LiquidityPanelError("New week_end_date must be > weekly watermark.")
+
+    new_daily_dates = [d for d in week_days if d > state.daily_watermark]
+    if not new_daily_dates:
+        raise LiquidityPanelError(
+            "No ORATS days > daily watermark in new week; nothing to append."
+        )
+
+    for d in week_days:
+        if d <= state.daily_watermark and d not in set(
+            pd.to_datetime(state.daily["trade_date"]).dt.date
+        ):
+            raise LiquidityPanelError(
+                f"Gap detected: ORATS day {d} <= daily watermark but missing from daily parquet. "
+                "Run --mode backfill."
+            )
+
+    new_daily, files_read = extract_daily_observations(
+        new_daily_dates, load_day_fn, dte_min=dte_min, dte_max=dte_max
+    )
+    if new_daily.empty:
+        raise LiquidityPanelError("No daily observations extracted for incremental week.")
+
+    if new_daily["trade_date"].min() <= pd.Timestamp(state.daily_watermark):
+        raise LiquidityPanelError(
+            "Incremental daily rows must be strictly after daily watermark; run backfill."
+        )
+
+    merged_daily = pd.concat([state.daily, new_daily], ignore_index=True)
+
+    new_weekly = aggregate_weekly_liquidity_observations(new_daily, [(week_end, week_days)])
+    if new_weekly.empty:
+        raise LiquidityPanelError("No weekly observations for incremental week.")
+
+    merged_weekly = pd.concat([state.weekly, new_weekly], ignore_index=True)
+    all_week_ends = sorted(
+        set(pd.to_datetime(merged_weekly["week_end_date"]).dt.date)
+    )
+
+    new_panel = aggregate_rolling_weekly_panel(
+        merged_weekly,
+        [week_end],
+        all_week_ends,
+        lookback_weeks=state.lookback_weeks,
+        min_valid_quote_weeks=state.min_valid_quote_weeks,
+    )
+    merged_panel = pd.concat([state.panel, new_panel], ignore_index=True)
+
+    warnings: list[str] = []
+    if int(new_panel["window_shortfall"].max()) > 0:
+        warnings.append(f"Incremental snapshot {week_end} has window_shortfall > 0")
+
+    return BuildResult(
+        daily=merged_daily,
+        weekly=merged_weekly,
+        panel=merged_panel,
+        files_read=files_read,
+        warnings=warnings,
+        mode="incremental",
+    )
+
+
+# ── backfill ──────────────────────────────────────────────────────────────────
+
+
+def run_backfill(
+    data_root: Path,
+    start_date: date,
+    end_date: date,
+    load_day_fn: Callable[[date], pd.DataFrame],
+    all_trading_dates: Sequence[date],
+    *,
+    lookback_weeks: int = DEFAULT_LOOKBACK_WEEKS,
+    min_valid_quote_weeks: int = DEFAULT_MIN_VALID_QUOTE_WEEKS,
+    dte_min: int = DEFAULT_DTE_MIN,
+    dte_max: int = DEFAULT_DTE_MAX,
+) -> BuildResult:
+    if not all_trading_dates:
+        raise LiquidityPanelError(
+            f"No ORATS raw ZIP files found under {data_root} for {start_date} → {end_date}."
+        )
+
+    snapshot_dates = resolve_weekly_snapshot_dates(all_trading_dates, start_date, end_date)
+    if not snapshot_dates:
+        raise LiquidityPanelError(
+            f"No weekly snapshot dates in range {start_date} → {end_date}."
+        )
+
+    earliest_snap = min(snapshot_dates)
+    hist_start = earliest_snap - timedelta(weeks=lookback_weeks + 1)
+    hist_dates = [d for d in all_trading_dates if hist_start <= d <= end_date]
+    dates_needed = compute_dates_needed(hist_dates, snapshot_dates, lookback_weeks)
+
+    daily, files_read = extract_daily_observations(
+        dates_needed, load_day_fn, dte_min=dte_min, dte_max=dte_max
+    )
+    if daily.empty:
+        raise LiquidityPanelError("Daily observation stage produced no rows.")
+
+    week_calendar = build_week_calendar(dates_needed)
+    weekly = aggregate_weekly_liquidity_observations(daily, week_calendar)
+    all_week_ends = sorted({we for we, _ in week_calendar})
+    panel = aggregate_rolling_weekly_panel(
+        weekly,
+        snapshot_dates,
+        all_week_ends,
+        lookback_weeks=lookback_weeks,
+        min_valid_quote_weeks=min_valid_quote_weeks,
+    )
+
+    warnings: list[str] = []
+    if not panel.empty and (panel["window_shortfall"] > 0).any():
+        n = int((panel["window_shortfall"] > 0).sum())
+        warnings.append(f"{n} panel snapshot(s) with window_shortfall > 0")
+
+    return BuildResult(
+        daily=daily,
+        weekly=weekly,
+        panel=panel,
+        files_read=files_read,
+        warnings=warnings,
+        mode="backfill",
+    )
+
+
+# ── liquid tickers + report ───────────────────────────────────────────────────
 
 
 def build_liquid_tickers(
@@ -355,41 +751,17 @@ def build_liquid_tickers(
     dvol_top_pct: float,
     spread_bot_pct: float,
 ) -> pd.DataFrame:
-    """
-    Derive the static liquid ticker list from the panel.
-
-    A ticker qualifies in a given month if it simultaneously ranks in:
-      - top    dvol_top_pct   by atm_straddle_dollar_vol
-      - bottom spread_bot_pct by atm_spread_pct
-
-    All tickers that qualified in at least one month are included.
-    months_qualified is recorded for reference but no minimum threshold is applied.
-
-    Returns a DataFrame [Ticker, months_qualified] sorted by Ticker.
-
-    This is the input used by precompute scripts that need a static ticker
-    universe (e.g. precompute_straddle_history.py, precompute_ironfly_history.py).
-    The backtest pipeline does NOT use this file — it uses the full panel for
-    point-in-time cross-sectional ranking at each trade date.
-    """
     valid = panel[panel["has_valid_atm_pair"]].copy()
     qual_counts: dict[str, int] = {}
 
     for _, grp in valid.groupby("month_date"):
-        # Require both metrics to be present — same population used for both thresholds,
-        # consistent with step1_get_universe which ranks on tickers with BOTH values non-NaN.
         both_valid = grp[
-            grp["atm_straddle_dollar_vol"].notna()
-            & grp["atm_spread_pct"].notna()
+            grp["atm_straddle_dollar_vol"].notna() & grp["atm_spread_pct"].notna()
         ]
-
-        # skip months with too few tickers to rank meaningfully
         if len(both_valid) < 5:
             continue
-
         dvol_thresh = both_valid["atm_straddle_dollar_vol"].quantile(1.0 - dvol_top_pct)
-        sp_thresh   = both_valid["atm_spread_pct"].quantile(spread_bot_pct)
-
+        sp_thresh = both_valid["atm_spread_pct"].quantile(spread_bot_pct)
         qualifiers = both_valid.loc[
             (both_valid["atm_straddle_dollar_vol"] >= dvol_thresh)
             & (both_valid["atm_spread_pct"] <= sp_thresh),
@@ -398,76 +770,248 @@ def build_liquid_tickers(
         for t in qualifiers:
             qual_counts[t] = qual_counts.get(t, 0) + 1
 
+    if not qual_counts:
+        return pd.DataFrame(columns=["Ticker", "snapshots_qualified"])
+
     qual_df = (
-        pd.Series(qual_counts, name="months_qualified")
+        pd.Series(qual_counts, name="snapshots_qualified")
         .sort_values(ascending=False)
         .rename_axis("ticker")
         .reset_index()
     )
-
-    universe_df = (
-        qual_df
-        .rename(columns={"ticker": "Ticker"})
-        [["Ticker", "months_qualified"]]
+    return (
+        qual_df.rename(columns={"ticker": "Ticker"})[["Ticker", "snapshots_qualified"]]
         .sort_values("Ticker")
         .reset_index(drop=True)
     )
-    return universe_df
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Entry point
-# ─────────────────────────────────────────────────────────────────────────────
+def write_liquidity_panel_report(
+    path: Path,
+    *,
+    build_id: str,
+    mode: str,
+    data_root: Path,
+    cache_dir: Path,
+    start_date: date,
+    end_date: date,
+    lookback_weeks: int,
+    min_valid_quote_weeks: int,
+    result: BuildResult,
+    watermarks_before: dict[str, str] | None = None,
+    watermarks_after: dict[str, str] | None = None,
+) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    panel = result.panel
+    daily = result.daily
 
-def main() -> None:
-    args = parse_args()
+    status = "PASS"
+    if result.warnings:
+        status = "WARN"
+    if panel.empty:
+        status = "FAIL"
 
-    args.cache_dir.mkdir(parents=True, exist_ok=True)
-
-    start_date = date(args.start_year, 1, 1)
-    end_date   = date(args.end_year, 12, 31)
-
-    logger.info(
-        "Building liquidity panel: %s → %s  |  data_root=%s",
-        start_date, end_date, args.data_root,
+    no_expiry = daily[daily.get("no_expiry_in_band", False) == True]  # noqa: E712
+    valid_pct = (
+        float(panel["has_valid_atm_pair"].mean()) if not panel.empty else 0.0
     )
 
-    # ── build and save the panel ──────────────────────────────────────────────
-    panel = build_panel(args.data_root, args.cache_dir, start_date, end_date)
+    lines = [
+        "# Liquidity panel report",
+        "",
+        f"- build_id: `{build_id}`",
+        f"- mode: `{mode}`",
+        f"- date range: {start_date} → {end_date}",
+        f"- status: **{status}**",
+        "",
+        "## Inputs",
+        f"- data_root: `{data_root}`",
+        f"- cache_dir: `{cache_dir}`",
+        f"- lookback_weeks: {lookback_weeks}",
+        f"- min_valid_quote_weeks: {min_valid_quote_weeks}",
+        "",
+        "## Execution",
+        f"- ORATS raw ZIP files read: {result.files_read}",
+        f"- daily rows: {len(daily)}",
+        f"- weekly rows: {len(result.weekly)}",
+        f"- panel rows: {len(panel)}",
+    ]
+    if watermarks_before and watermarks_after:
+        lines.extend(
+            [
+                f"- watermarks before: {watermarks_before}",
+                f"- watermarks after: {watermarks_after}",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Coverage",
+            f"- snapshots: {panel['month_date'].nunique() if not panel.empty else 0}",
+            f"- tickers: {panel['ticker'].nunique() if not panel.empty else 0}",
+            f"- has_valid_atm_pair rate: {valid_pct:.1%}",
+            "",
+            "## Debug",
+            f"- no_expiry_in_band daily rows: {len(no_expiry)}",
+        ]
+    )
+    if not no_expiry.empty:
+        sample = no_expiry.head(5)[["trade_date", "ticker"]].to_string(index=False)
+        lines.append(f"- sample:\n```\n{sample}\n```")
+    if result.warnings:
+        lines.extend(["", "## Warnings", *[f"- {w}" for w in result.warnings]])
+    lines.extend(["", "## Summary", f"Liquidity panel build {status.lower()}."])
 
-    panel_path = args.cache_dir / "ticker_liquidity_panel.parquet"
-    panel.to_parquet(panel_path, index=False)
-    logger.info("Saved panel → %s  (%d rows, %d tickers, %d months)",
-                panel_path,
-                len(panel),
-                panel["ticker"].nunique(),
-                panel["month_date"].nunique())
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
 
-    # ── build and save the static liquid ticker list ──────────────────────────
+
+def write_artifacts(cache_dir: Path, result: BuildResult) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    result.daily.to_parquet(cache_dir / DAILY_FILENAME, index=False)
+    result.weekly.to_parquet(cache_dir / WEEKLY_FILENAME, index=False)
+    result.panel.to_parquet(cache_dir / PANEL_FILENAME, index=False)
+
+
+def build_panel(
+    data_root: Path,
+    cache_dir: Path,
+    start_date: date,
+    end_date: date,
+    *,
+    mode: Literal["backfill", "incremental"] = "backfill",
+    lookback_weeks: int = DEFAULT_LOOKBACK_WEEKS,
+    min_valid_quote_weeks: int = DEFAULT_MIN_VALID_QUOTE_WEEKS,
+    dte_min: int = DEFAULT_DTE_MIN,
+    dte_max: int = DEFAULT_DTE_MAX,
+    load_day_fn: Callable[[date], pd.DataFrame] | None = None,
+) -> BuildResult:
+    if load_day_fn is None:
+        load_day_fn = make_raw_zip_loader(data_root)
+
+    hist_start = start_date - timedelta(weeks=lookback_weeks + 2)
+    all_trading = discover_orats_trading_dates(data_root, hist_start, end_date)
+
+    if mode == "backfill":
+        return run_backfill(
+            data_root,
+            start_date,
+            end_date,
+            load_day_fn,
+            all_trading,
+            lookback_weeks=lookback_weeks,
+            min_valid_quote_weeks=min_valid_quote_weeks,
+            dte_min=dte_min,
+            dte_max=dte_max,
+        )
+
+    state = validate_incremental_artifacts(
+        cache_dir,
+        lookback_weeks=lookback_weeks,
+        min_valid_quote_weeks=min_valid_quote_weeks,
+    )
+    return run_incremental(
+        data_root,
+        cache_dir,
+        state,
+        load_day_fn,
+        all_trading,
+        dte_min=dte_min,
+        dte_max=dte_max,
+    )
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Build weekly PIT ticker liquidity panel (Sprint 004 C4).",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument(
+        "--data-root",
+        type=Path,
+        default=DEFAULT_DATA_ROOT,
+        help="ORATS raw ZIP root (ORATS_Data)",
+    )
+    p.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
+    p.add_argument("--mode", choices=("backfill", "incremental"), default="backfill")
+    p.add_argument("--start-year", type=int, default=DEFAULT_START_YEAR)
+    p.add_argument("--end-year", type=int, default=DEFAULT_END_YEAR)
+    p.add_argument("--start-date", type=str, default=None)
+    p.add_argument("--end-date", type=str, default=None)
+    p.add_argument("--lookback-weeks", type=int, default=DEFAULT_LOOKBACK_WEEKS)
+    p.add_argument("--min-valid-quote-weeks", type=int, default=DEFAULT_MIN_VALID_QUOTE_WEEKS)
+    p.add_argument("--dte-min", type=int, default=DEFAULT_DTE_MIN)
+    p.add_argument("--dte-max", type=int, default=DEFAULT_DTE_MAX)
+    p.add_argument("--dvol-top-pct", type=float, default=DEFAULT_DVOL_TOP_PCT)
+    p.add_argument("--spread-bot-pct", type=float, default=DEFAULT_SPREAD_BOT_PCT)
+    p.add_argument("--build-id", type=str, default=None)
+    return p.parse_args(argv)
+
+
+def _resolve_date_range(args: argparse.Namespace) -> tuple[date, date]:
+    if args.start_date and args.end_date:
+        return date.fromisoformat(args.start_date), date.fromisoformat(args.end_date)
+    return date(args.start_year, 1, 1), date(args.end_year, 12, 31)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    start_date, end_date = _resolve_date_range(args)
+    build_id = args.build_id or generate_build_id(
+        now=datetime.utcnow(), command="build_liquidity_panel"
+    )
+
+    try:
+        result = build_panel(
+            args.data_root,
+            args.cache_dir,
+            start_date,
+            end_date,
+            mode=args.mode,
+            lookback_weeks=args.lookback_weeks,
+            min_valid_quote_weeks=args.min_valid_quote_weeks,
+            dte_min=args.dte_min,
+            dte_max=args.dte_max,
+        )
+    except LiquidityPanelError as exc:
+        logger.error("%s", exc)
+        return 1
+
+    write_artifacts(args.cache_dir, result)
+
+    report_path = args.cache_dir / "manifests" / "reports" / f"liquidity_panel_{build_id}.md"
+    write_liquidity_panel_report(
+        report_path,
+        build_id=build_id,
+        mode=result.mode,
+        data_root=args.data_root,
+        cache_dir=args.cache_dir,
+        start_date=start_date,
+        end_date=end_date,
+        lookback_weeks=args.lookback_weeks,
+        min_valid_quote_weeks=args.min_valid_quote_weeks,
+        result=result,
+    )
+
     universe_df = build_liquid_tickers(
-        panel,
+        result.panel,
         dvol_top_pct=args.dvol_top_pct,
         spread_bot_pct=args.spread_bot_pct,
     )
-
     universe_path = args.cache_dir / "liquid_tickers.csv"
     universe_df.to_csv(universe_path, index=False)
-    logger.info(
-        "Saved liquid tickers → %s  (%d tickers)",
-        universe_path, len(universe_df),
-    )
 
-    # ── summary stats ─────────────────────────────────────────────────────────
-    valid_pct = panel["has_valid_atm_pair"].mean()
     logger.info(
-        "Panel summary: date range %s → %s  |  valid ATM pairs: %.1f%%",
-        panel["month_date"].min(),
-        panel["month_date"].max(),
-        valid_pct * 100,
+        "Saved panel → %s (%d rows); report → %s",
+        args.cache_dir / PANEL_FILENAME,
+        len(result.panel),
+        report_path,
     )
-    logger.info("Top 10 tickers by months qualified:\n%s",
-                universe_df.head(10).to_string(index=False))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -1,10 +1,12 @@
 # Current sprint — 004
 
-**Updated:** 2026-06-21 (C2 CLI skeleton implemented)  
-**Status:** Active — **C1** + **C2** implemented; **C4** next (**C3** deferred until C4–C8)  
+**Updated:** 2026-06-24 (C4 liquidity panel implemented)  
+**Status:** Active — **C1** + **C2** + **C4** implemented; **C3** deferred until C4–C8  
 **Mode:** Build (HD decisions locked below)
 
 **C1 receipt design (canonical):** [docs/tmp/c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md)
+
+**C4 liquidity panel design (canonical):** [docs/tmp/c4_liquidity_panel_design_plan.md](../tmp/c4_liquidity_panel_design_plan.md)
 
 **Execution guardrails (read with this doc):** [sprint004_execution_guardrails.md](sprint004_execution_guardrails.md)
 
@@ -420,7 +422,7 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 |--------|-------|------------------|--------------|
 | **C1** ✓ | Manifest types + `snapshot_id` / `build_id` hashing | `src/data/input_snapshot.py`, `tests/unit/test_input_snapshot.py` | unit tests green |
 | **C2** ✓ | CLI skeleton: `plan`, `--as-of` resolution, exit codes | `src/data/trading_day.py`, `scripts/refresh_weekly_inputs.py`, unit tests | `plan --as-of …`; pytest |
-| **C4** | Rolling 3-month panel in `build_liquidity_panel.py` | script + unit/contract touch if needed | panel rebuild or FAIL report |
+| **C4** ✓ | Rolling weekly PIT panel in `build_liquidity_panel.py` | script + `tests/unit/test_build_liquidity_panel.py` | panel rebuild or FAIL report |
 | **C5** | Split golden tests + `split-audit` | `tests/unit/test_split_adjuster.py`, audit module | pytest + `split-audit` sample run |
 | **C6** | Surface tests T1–T6 + `surface-audit` | extend contract/unit, audit module | pytest + `surface-audit` sample run |
 | **C7** | PIT universe harness (tests + audit module) | tests + CLI harness | sample dates in PIT report section |
@@ -568,7 +570,7 @@ Stale docs (e.g. `backtest_evaluation_protocol.md` “Sprint 004–005 baseline�
 | 2026-06-21 v6 | Weekly operator model (incremental/backfill/repair); HD-004-4/5; manifest params + watermarks |
 | 2026-06-21 v7 | C1 implemented; sprint doc aligned to [c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md) — minimal weekly input receipt |
 | 2026-06-21 v8 | C2 implemented: `trading_day.py`, `refresh_weekly_inputs.py` CLI (`plan`, `refresh --dry-run`, stub subcommands), exit-code contract; closeout blocker #13 for provisional plan copy |
-| 2026-06-24 v9 | HD: **C3 deferred post-C8** — component reimplementation and audits (C4–C8) before umbrella `validate` |
+| 2026-06-24 v11 | C4 input path: ORATS_Data raw ZIPs (default `--data-root`); liquidity before scoped split adjust |
 
 ---
 

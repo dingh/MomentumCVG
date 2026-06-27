@@ -1,0 +1,384 @@
+"""Unit tests for scripts/build_liquidity_panel.py (Sprint 004 C4)."""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+import zipfile
+from datetime import date
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CLI_PATH = PROJECT_ROOT / "scripts" / "build_liquidity_panel.py"
+
+
+def _load_module():
+    spec = importlib.util.spec_from_file_location("build_liquidity_panel", CLI_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["build_liquidity_panel"] = mod
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+blp = _load_module()
+
+
+def _orats_row(
+    ticker: str,
+    trade_date: date,
+    expiry: date,
+    strike: float,
+    stk_px: float,
+    *,
+    c_bid: float = 1.0,
+    c_ask: float = 1.1,
+    p_bid: float = 1.0,
+    p_ask: float = 1.1,
+    c_vol: float = 10.0,
+    p_vol: float = 10.0,
+) -> dict:
+    return {
+        "ticker": ticker,
+        "expirDate": expiry,
+        "strike": strike,
+        "stkPx": stk_px,
+        "cBidPx": c_bid,
+        "cAskPx": c_ask,
+        "pBidPx": p_bid,
+        "pAskPx": p_ask,
+        "cVolu": c_vol,
+        "pVolu": p_vol,
+        "adj_strike": strike * 10,
+        "adj_stkPx": stk_px * 10,
+        "adj_cBidPx": c_bid * 10,
+        "adj_cAskPx": c_ask * 10,
+        "adj_pBidPx": p_bid * 10,
+        "adj_pAskPx": p_ask * 10,
+    }
+
+
+class TestDailyLiquidity:
+    def test_uses_raw_not_adjusted_for_atm_and_bid_dollar(self):
+        trade = date(2024, 1, 5)
+        expiry = date(2024, 1, 12)
+        rows = [
+            _orats_row("AAA", trade, expiry, strike=100.0, stk_px=100.0, c_bid=2.0, p_bid=2.0, c_vol=5, p_vol=5),
+            _orats_row("AAA", trade, expiry, strike=1000.0, stk_px=100.0, c_bid=20.0, p_bid=20.0, c_vol=5, p_vol=5),
+        ]
+        obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
+        row = obs.loc[obs["ticker"] == "AAA"].iloc[0]
+        assert row["daily_atm_straddle_dollar_vol"] == pytest.approx(1000.0)
+
+    def test_atm_one_row_per_expiry_not_all_strikes(self):
+        trade = date(2024, 1, 5)
+        expiry = date(2024, 1, 12)
+        rows = [
+            _orats_row("AAA", trade, expiry, strike=100.0, stk_px=100.0, c_bid=1.0, p_bid=1.0, c_vol=10, p_vol=10),
+            _orats_row("AAA", trade, expiry, strike=110.0, stk_px=100.0, c_bid=99.0, p_bid=99.0, c_vol=1, p_vol=1),
+        ]
+        obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
+        assert obs.iloc[0]["daily_atm_straddle_dollar_vol"] == pytest.approx(1000.0)
+
+    def test_per_expiry_bid_dollar_min_legs(self):
+        atm = pd.Series(
+            {"cBidPx": 2.0, "pBidPx": 1.0, "cAskPx": 2.2, "pAskPx": 1.2, "cVolu": 10, "pVolu": 20}
+        )
+        vol, _ = blp.compute_expiry_atm_liquidity(atm)
+        assert vol == pytest.approx(min(100 * 2 * 10, 100 * 1 * 20))
+
+    def test_daily_sums_multiple_expiries_in_band(self):
+        trade = date(2024, 1, 5)
+        exp1 = date(2024, 1, 12)
+        exp2 = date(2024, 2, 9)
+        exp_far = date(2024, 4, 5)
+        rows = [
+            _orats_row("AAA", trade, exp1, 100, 100, c_bid=1, p_bid=1, c_vol=10, p_vol=10),
+            _orats_row("AAA", trade, exp2, 100, 100, c_bid=1, p_bid=1, c_vol=10, p_vol=10),
+            _orats_row("AAA", trade, exp_far, 100, 100, c_bid=99, p_bid=99, c_vol=99, p_vol=99),
+        ]
+        obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
+        assert obs.iloc[0]["daily_atm_straddle_dollar_vol"] == pytest.approx(2000.0)
+
+    def test_zero_bid_dollar_gives_nan_spread(self):
+        trade = date(2024, 1, 5)
+        expiry = date(2024, 6, 1)
+        rows = [_orats_row("AAA", trade, expiry, 100, 100)]
+        obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
+        assert obs.iloc[0]["daily_atm_straddle_dollar_vol"] == 0.0
+        assert np.isnan(obs.iloc[0]["daily_atm_spread_pct"])
+
+    def test_no_expiry_in_band_emits_debug_row(self):
+        trade = date(2024, 1, 5)
+        expiry = date(2024, 6, 1)
+        rows = [_orats_row("AAA", trade, expiry, 100, 100)]
+        obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
+        assert bool(obs.iloc[0]["no_expiry_in_band"]) is True
+
+
+class TestWeeklyAndPanel:
+    def test_weekly_mean_of_daily_with_missing_day_zero(self):
+        daily = pd.DataFrame(
+            [
+                {
+                    "trade_date": date(2024, 1, 3),
+                    "ticker": "AAA",
+                    "daily_atm_straddle_dollar_vol": 1000.0,
+                    "daily_atm_spread_pct": 0.05,
+                    "daily_has_valid_quote": True,
+                    "n_candidate_expiries": 1,
+                    "n_expiries_total": 1,
+                    "no_expiry_in_band": False,
+                    "liquidity_source": blp.LIQUIDITY_SOURCE,
+                },
+                {
+                    "trade_date": date(2024, 1, 4),
+                    "ticker": "AAA",
+                    "daily_atm_straddle_dollar_vol": 3000.0,
+                    "daily_atm_spread_pct": 0.07,
+                    "daily_has_valid_quote": True,
+                    "n_candidate_expiries": 1,
+                    "n_expiries_total": 1,
+                    "no_expiry_in_band": False,
+                    "liquidity_source": blp.LIQUIDITY_SOURCE,
+                },
+            ]
+        )
+        week_cal = [(date(2024, 1, 5), [date(2024, 1, 3), date(2024, 1, 4), date(2024, 1, 5)])]
+        weekly = blp.aggregate_weekly_liquidity_observations(daily, week_cal)
+        assert weekly.iloc[0]["weekly_atm_straddle_dollar_vol"] == pytest.approx(4000 / 3)
+
+    def test_rolling_panel_fixed_denominator(self):
+        weekly = pd.DataFrame(
+            [
+                {
+                    "week_end_date": date(2024, 1, 5),
+                    "ticker": "AAA",
+                    "weekly_atm_straddle_dollar_vol": 100.0,
+                    "weekly_atm_spread_pct": 0.1,
+                    "weekly_valid_quote_days": 1,
+                    "weekly_has_valid_quote": True,
+                },
+                {
+                    "week_end_date": date(2024, 1, 12),
+                    "ticker": "AAA",
+                    "weekly_atm_straddle_dollar_vol": 200.0,
+                    "weekly_atm_spread_pct": 0.2,
+                    "weekly_valid_quote_days": 1,
+                    "weekly_has_valid_quote": True,
+                },
+            ]
+        )
+        all_weeks = [date(2024, 1, 5), date(2024, 1, 12)]
+        panel = blp.aggregate_rolling_weekly_panel(
+            weekly, [date(2024, 1, 12)], all_weeks, lookback_weeks=12, min_valid_quote_weeks=1
+        )
+        assert panel.iloc[0]["atm_straddle_dollar_vol"] == pytest.approx(300 / 12)
+
+    def test_valid_quote_weeks_gates_has_valid_atm_pair(self):
+        weekly = pd.DataFrame(
+            [
+                {
+                    "week_end_date": date(2024, 1, 5),
+                    "ticker": "AAA",
+                    "weekly_atm_straddle_dollar_vol": 1.0,
+                    "weekly_atm_spread_pct": 0.1,
+                    "weekly_valid_quote_days": 1,
+                    "weekly_has_valid_quote": True,
+                },
+            ]
+        )
+        panel = blp.aggregate_rolling_weekly_panel(
+            weekly,
+            [date(2024, 1, 5)],
+            [date(2024, 1, 5)],
+            lookback_weeks=12,
+            min_valid_quote_weeks=3,
+        )
+        assert bool(panel.iloc[0]["has_valid_atm_pair"]) is False
+
+    def test_panel_preserves_step1_columns(self):
+        weekly = pd.DataFrame(
+            [
+                {
+                    "week_end_date": date(2024, 1, 5),
+                    "ticker": "AAA",
+                    "weekly_atm_straddle_dollar_vol": 1.0,
+                    "weekly_atm_spread_pct": 0.1,
+                    "weekly_valid_quote_days": 1,
+                    "weekly_has_valid_quote": True,
+                },
+            ]
+        )
+        panel = blp.aggregate_rolling_weekly_panel(
+            weekly,
+            [date(2024, 1, 5)],
+            [date(2024, 1, 5)],
+            lookback_weeks=12,
+            min_valid_quote_weeks=1,
+        )
+        for col in blp.PANEL_STEP1_COLS:
+            assert col in panel.columns
+
+
+class TestBackfillPipeline:
+    def test_backfill_end_to_end_synthetic(self, tmp_path: Path):
+        trade1 = date(2024, 1, 3)
+        trade2 = date(2024, 1, 4)
+        trade3 = date(2024, 1, 5)
+        expiry = date(2024, 1, 12)
+        store = {
+            td: pd.DataFrame([
+                _orats_row("AAA", td, expiry, 100, 100, c_bid=1, p_bid=1, c_vol=10, p_vol=10),
+            ])
+            for td in (trade1, trade2, trade3)
+        }
+        load_calls: list[date] = []
+
+        def load_fn(d: date) -> pd.DataFrame:
+            load_calls.append(d)
+            return store[d]
+
+        result = blp.run_backfill(
+            tmp_path,
+            date(2024, 1, 5),
+            date(2024, 1, 5),
+            load_fn,
+            sorted(store.keys()),
+            lookback_weeks=12,
+            min_valid_quote_weeks=1,
+        )
+        assert not result.panel.empty
+        assert len(set(load_calls)) == len(load_calls)
+
+    def test_empty_source_fails(self, tmp_path: Path):
+        with pytest.raises(blp.LiquidityPanelError, match="No ORATS raw ZIP files"):
+            blp.run_backfill(
+                tmp_path,
+                date(2024, 1, 1),
+                date(2024, 1, 31),
+                lambda d: pd.DataFrame(),
+                [],
+            )
+
+
+class TestIncremental:
+    def _make_prior_artifacts(self, cache: Path) -> None:
+        daily = pd.DataFrame(
+            [
+                {
+                    "trade_date": date(2024, 1, 3),
+                    "ticker": "AAA",
+                    "daily_atm_straddle_dollar_vol": 1000.0,
+                    "daily_atm_spread_pct": 0.05,
+                    "daily_has_valid_quote": True,
+                    "n_candidate_expiries": 1,
+                    "n_expiries_total": 1,
+                    "no_expiry_in_band": False,
+                    "liquidity_source": blp.LIQUIDITY_SOURCE,
+                },
+            ]
+        )
+        weekly = pd.DataFrame(
+            [
+                {
+                    "week_end_date": date(2024, 1, 5),
+                    "ticker": "AAA",
+                    "weekly_atm_straddle_dollar_vol": 1000.0,
+                    "weekly_atm_spread_pct": 0.05,
+                    "weekly_valid_quote_days": 1,
+                    "weekly_has_valid_quote": True,
+                },
+            ]
+        )
+        panel = blp.aggregate_rolling_weekly_panel(
+            weekly,
+            [date(2024, 1, 5)],
+            [date(2024, 1, 5)],
+            lookback_weeks=12,
+            min_valid_quote_weeks=1,
+        )
+        daily.to_parquet(cache / blp.DAILY_FILENAME, index=False)
+        weekly.to_parquet(cache / blp.WEEKLY_FILENAME, index=False)
+        panel.to_parquet(cache / blp.PANEL_FILENAME, index=False)
+
+    def test_missing_artifacts_fail(self, tmp_path: Path):
+        with pytest.raises(blp.LiquidityPanelError, match="Missing required artifact"):
+            blp.validate_incremental_artifacts(
+                tmp_path, lookback_weeks=12, min_valid_quote_weeks=1
+            )
+
+    def test_schema_mismatch_fail(self, tmp_path: Path):
+        pd.DataFrame({"x": [1]}).to_parquet(tmp_path / blp.DAILY_FILENAME, index=False)
+        pd.DataFrame({"x": [1]}).to_parquet(tmp_path / blp.WEEKLY_FILENAME, index=False)
+        pd.DataFrame({"x": [1]}).to_parquet(tmp_path / blp.PANEL_FILENAME, index=False)
+        with pytest.raises(blp.LiquidityPanelError, match="schema mismatch"):
+            blp.validate_incremental_artifacts(
+                tmp_path, lookback_weeks=12, min_valid_quote_weeks=1
+            )
+
+
+class TestBuildLiquidTickers:
+    def test_build_liquid_tickers_runs(self):
+        panel = pd.DataFrame(
+            [
+                {
+                    "month_date": pd.Timestamp("2024-01-05"),
+                    "ticker": "AAA",
+                    "atm_straddle_dollar_vol": 1e6,
+                    "atm_spread_pct": 0.01,
+                    "has_valid_atm_pair": True,
+                },
+                {
+                    "month_date": pd.Timestamp("2024-01-05"),
+                    "ticker": "BBB",
+                    "atm_straddle_dollar_vol": 1e3,
+                    "atm_spread_pct": 0.5,
+                    "has_valid_atm_pair": True,
+                },
+            ]
+        )
+        out = blp.build_liquid_tickers(panel, 0.5, 0.5)
+        assert "Ticker" in out.columns
+
+
+class TestRawZipIO:
+    def test_orats_raw_zip_path(self):
+        d = date(2024, 3, 15)
+        p = blp.orats_raw_zip_path(Path("C:/ORATS/data/ORATS_Data"), d)
+        assert p == Path("C:/ORATS/data/ORATS_Data/2024/ORATS_SMV_Strikes_20240315.zip")
+
+    def test_discover_orats_trading_dates_from_zips(self, tmp_path: Path):
+        for d in (date(2024, 1, 3), date(2024, 1, 5)):
+            zdir = tmp_path / f"{d.year:04d}"
+            zdir.mkdir(parents=True, exist_ok=True)
+            (zdir / f"ORATS_SMV_Strikes_{d.strftime('%Y%m%d')}.zip").touch()
+        (tmp_path / "2024" / "ORATS_SMV_Strikes_20240104.parquet").touch()
+
+        found = blp.discover_orats_trading_dates(
+            tmp_path, date(2024, 1, 1), date(2024, 1, 31)
+        )
+        assert found == [date(2024, 1, 3), date(2024, 1, 5)]
+
+    def test_load_raw_day_from_zip(self, tmp_path: Path):
+        trade = date(2024, 1, 5)
+        csv = (
+            "ticker,expirDate,strike,stkPx,cBidPx,cAskPx,pBidPx,pAskPx,cVolu,pVolu\n"
+            "AAA,2024-01-12,100,100,1,1.1,1,1.1,10,10\n"
+        )
+        zpath = tmp_path / "2024" / f"ORATS_SMV_Strikes_{trade.strftime('%Y%m%d')}.zip"
+        zpath.parent.mkdir(parents=True)
+        with zipfile.ZipFile(zpath, "w") as zf:
+            zf.writestr("strikes.csv", csv)
+
+        df = blp.load_raw_day_from_zip(tmp_path, trade)
+        assert len(df) == 1
+        assert df.iloc[0]["ticker"] == "AAA"
+
+    def test_load_raw_day_missing_zip_returns_empty(self, tmp_path: Path):
+        df = blp.load_raw_day_from_zip(tmp_path, date(2024, 1, 5))
+        assert df.empty
