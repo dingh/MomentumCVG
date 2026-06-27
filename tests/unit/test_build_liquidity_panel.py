@@ -91,6 +91,20 @@ class TestDailyLiquidity:
         vol, _ = blp.compute_expiry_atm_liquidity(atm)
         assert vol == pytest.approx(min(100 * 2 * 10, 100 * 1 * 20))
 
+    def test_expiry_spread_nan_unless_both_legs_valid(self):
+        atm_ok = pd.Series(
+            {"cBidPx": 2.0, "pBidPx": 1.0, "cAskPx": 2.2, "pAskPx": 1.2, "cVolu": 10, "pVolu": 10}
+        )
+        _, spread_ok = blp.compute_expiry_atm_liquidity(atm_ok)
+        assert np.isfinite(spread_ok)
+
+        atm_bad_call = pd.Series(
+            {"cBidPx": 2.0, "pBidPx": 1.0, "cAskPx": 1.0, "pAskPx": 1.2, "cVolu": 10, "pVolu": 10}
+        )
+        vol, spread = blp.compute_expiry_atm_liquidity(atm_bad_call)
+        assert vol > 0
+        assert np.isnan(spread)
+
     def test_daily_sums_multiple_expiries_in_band(self):
         trade = date(2024, 1, 5)
         exp1 = date(2024, 1, 12)
@@ -111,6 +125,15 @@ class TestDailyLiquidity:
         obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
         assert obs.iloc[0]["daily_atm_straddle_dollar_vol"] == 0.0
         assert np.isnan(obs.iloc[0]["daily_atm_spread_pct"])
+
+    def test_inverted_ask_bid_gives_nan_spread(self):
+        trade = date(2024, 1, 5)
+        expiry = date(2024, 1, 12)
+        rows = [_orats_row("AAA", trade, expiry, 100, 100, c_bid=2.0, c_ask=1.0, p_bid=2.0, p_ask=1.0)]
+        obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
+        assert obs.iloc[0]["daily_atm_straddle_dollar_vol"] > 0
+        assert np.isnan(obs.iloc[0]["daily_atm_spread_pct"])
+        assert not obs.iloc[0]["daily_has_valid_quote"]
 
     def test_no_expiry_in_band_emits_debug_row(self):
         trade = date(2024, 1, 5)
@@ -178,6 +201,31 @@ class TestWeeklyAndPanel:
             weekly, [date(2024, 1, 12)], all_weeks, lookback_weeks=12, min_valid_quote_weeks=1
         )
         assert panel.iloc[0]["atm_straddle_dollar_vol"] == pytest.approx(300 / 12)
+
+    def test_zero_volume_weeks_counts_missing_ticker_week_rows(self):
+        weeks = [date(2024, 1, 5), date(2024, 1, 12), date(2024, 1, 19), date(2024, 1, 26)]
+        weekly = pd.DataFrame(
+            [
+                {
+                    "week_end_date": weeks[-1],
+                    "ticker": "AAA",
+                    "weekly_atm_straddle_dollar_vol": 400.0,
+                    "weekly_atm_spread_pct": 0.1,
+                    "weekly_valid_quote_days": 1,
+                    "weekly_has_valid_quote": True,
+                },
+            ]
+        )
+        panel = blp.aggregate_rolling_weekly_panel(
+            weekly,
+            [weeks[-1]],
+            weeks,
+            lookback_weeks=4,
+            min_valid_quote_weeks=1,
+        )
+        row = panel.iloc[0]
+        assert row["atm_straddle_dollar_vol"] == pytest.approx(100.0)
+        assert row["zero_volume_weeks"] == 3
 
     def test_valid_quote_weeks_gates_has_valid_atm_pair(self):
         weekly = pd.DataFrame(
@@ -267,6 +315,21 @@ class TestBackfillPipeline:
 
 
 class TestIncremental:
+    _DVOL_TOP = 0.20
+    _SPREAD_BOT = 0.20
+
+    def _validate_kwargs(self, **overrides):
+        base = {
+            "lookback_weeks": 12,
+            "min_valid_quote_weeks": 1,
+            "dte_min": 5,
+            "dte_max": 60,
+            "dvol_top_pct": self._DVOL_TOP,
+            "spread_bot_pct": self._SPREAD_BOT,
+        }
+        base.update(overrides)
+        return base
+
     def _make_prior_artifacts(self, cache: Path) -> None:
         daily = pd.DataFrame(
             [
@@ -301,25 +364,52 @@ class TestIncremental:
             [date(2024, 1, 5)],
             lookback_weeks=12,
             min_valid_quote_weeks=1,
+            dte_min=5,
+            dte_max=60,
+        )
+        panel = blp.stamp_panel_universe_params(
+            panel,
+            dvol_top_pct=self._DVOL_TOP,
+            spread_bot_pct=self._SPREAD_BOT,
         )
         daily.to_parquet(cache / blp.DAILY_FILENAME, index=False)
         weekly.to_parquet(cache / blp.WEEKLY_FILENAME, index=False)
         panel.to_parquet(cache / blp.PANEL_FILENAME, index=False)
 
+    def test_validate_passes_when_build_params_match(self, tmp_path: Path):
+        self._make_prior_artifacts(tmp_path)
+        state = blp.validate_incremental_artifacts(tmp_path, **self._validate_kwargs())
+        assert state.dte_min == 5
+        assert state.dte_max == 60
+
     def test_missing_artifacts_fail(self, tmp_path: Path):
         with pytest.raises(blp.LiquidityPanelError, match="Missing required artifact"):
-            blp.validate_incremental_artifacts(
-                tmp_path, lookback_weeks=12, min_valid_quote_weeks=1
-            )
+            blp.validate_incremental_artifacts(tmp_path, **self._validate_kwargs())
 
     def test_schema_mismatch_fail(self, tmp_path: Path):
         pd.DataFrame({"x": [1]}).to_parquet(tmp_path / blp.DAILY_FILENAME, index=False)
         pd.DataFrame({"x": [1]}).to_parquet(tmp_path / blp.WEEKLY_FILENAME, index=False)
         pd.DataFrame({"x": [1]}).to_parquet(tmp_path / blp.PANEL_FILENAME, index=False)
         with pytest.raises(blp.LiquidityPanelError, match="schema mismatch"):
-            blp.validate_incremental_artifacts(
-                tmp_path, lookback_weeks=12, min_valid_quote_weeks=1
-            )
+            blp.validate_incremental_artifacts(tmp_path, **self._validate_kwargs())
+
+    def test_build_params_mismatch_fail(self, tmp_path: Path):
+        self._make_prior_artifacts(tmp_path)
+        with pytest.raises(blp.LiquidityPanelError, match="Build params mismatch"):
+            blp.validate_incremental_artifacts(tmp_path, **self._validate_kwargs(dte_min=10))
+
+    def test_universe_params_mismatch_fail(self, tmp_path: Path):
+        self._make_prior_artifacts(tmp_path)
+        with pytest.raises(blp.LiquidityPanelError, match="dvol_top_pct"):
+            blp.validate_incremental_artifacts(tmp_path, **self._validate_kwargs(dvol_top_pct=0.50))
+
+    def test_missing_build_param_columns_fail(self, tmp_path: Path):
+        self._make_prior_artifacts(tmp_path)
+        panel = pd.read_parquet(tmp_path / blp.PANEL_FILENAME)
+        panel = panel.drop(columns=["dte_min", "dte_max"])
+        panel.to_parquet(tmp_path / blp.PANEL_FILENAME, index=False)
+        with pytest.raises(blp.LiquidityPanelError, match="missing build-param columns"):
+            blp.validate_incremental_artifacts(tmp_path, **self._validate_kwargs())
 
 
 class TestBuildLiquidTickers:

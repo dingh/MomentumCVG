@@ -86,6 +86,14 @@ PANEL_STEP1_COLS = (
     "atm_spread_pct",
     "has_valid_atm_pair",
 )
+PANEL_BUILD_PARAM_COLS = (
+    "lookback_weeks",
+    "min_valid_quote_weeks",
+    "dte_min",
+    "dte_max",
+    "dvol_top_pct",
+    "spread_bot_pct",
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -119,6 +127,8 @@ class IncrementalState:
     panel: pd.DataFrame
     lookback_weeks: int
     min_valid_quote_weeks: int
+    dte_min: int
+    dte_max: int
 
 
 # ── ORATS raw ZIP I/O ─────────────────────────────────────────────────────────
@@ -234,16 +244,12 @@ def _valid_bid(bid: float) -> bool:
     return bool(np.isfinite(bid) and bid > 0)
 
 
-def _safe_mid(bid: float, ask: float) -> float:
+def _leg_spread_pct(bid: float, ask: float) -> float:
     if not (np.isfinite(bid) and np.isfinite(ask)):
         return float("nan")
-    return (bid + ask) / 2.0
-
-
-def _leg_spread_pct(bid: float, ask: float) -> float:
-    mid = _safe_mid(bid, ask)
-    if not (np.isfinite(mid) and mid > 0):
+    if bid <= 0 or ask <= 0 or ask < bid:
         return float("nan")
+    mid = (bid + ask) / 2.0
     return (ask - bid) / mid
 
 
@@ -279,7 +285,7 @@ def select_atm_row(g_exp: pd.DataFrame) -> pd.Series:
 def compute_expiry_atm_liquidity(atm: pd.Series) -> tuple[float, float]:
     """
     Returns (expiry_atm_straddle_dollar_vol, expiry_atm_spread_pct).
-    Uses raw bid × volume; spread uses mid denominator.
+    Uses raw bid × volume; spread is max(call, put) leg spread when both legs valid.
     """
     c_bid = float(atm["cBidPx"])
     p_bid = float(atm["pBidPx"])
@@ -294,8 +300,10 @@ def compute_expiry_atm_liquidity(atm: pd.Series) -> tuple[float, float]:
 
     call_sp = _leg_spread_pct(c_bid, c_ask)
     put_sp = _leg_spread_pct(p_bid, p_ask)
-    spreads = [x for x in (call_sp, put_sp) if np.isfinite(x)]
-    expiry_spread = float(max(spreads)) if spreads else float("nan")
+    if np.isfinite(call_sp) and np.isfinite(put_sp):
+        expiry_spread = float(max(call_sp, put_sp))
+    else:
+        expiry_spread = float("nan")
 
     return expiry_vol, expiry_spread
 
@@ -465,6 +473,8 @@ def aggregate_rolling_weekly_panel(
     *,
     lookback_weeks: int = DEFAULT_LOOKBACK_WEEKS,
     min_valid_quote_weeks: int = DEFAULT_MIN_VALID_QUOTE_WEEKS,
+    dte_min: int = DEFAULT_DTE_MIN,
+    dte_max: int = DEFAULT_DTE_MAX,
 ) -> pd.DataFrame:
     if not snapshot_dates:
         return pd.DataFrame(columns=list(PANEL_STEP1_COLS))
@@ -495,6 +505,7 @@ def aggregate_rolling_weekly_panel(
             for w in window:
                 row = week_lookup.get((w, ticker))
                 if row is None:
+                    zero_vol_weeks += 1
                     continue
                 wvol = float(row.weekly_atm_straddle_dollar_vol)
                 vol_sum += wvol if np.isfinite(wvol) else 0.0
@@ -518,6 +529,8 @@ def aggregate_rolling_weekly_panel(
                     "has_valid_atm_pair": has_valid,
                     "lookback_weeks": lookback_weeks,
                     "min_valid_quote_weeks": min_valid_quote_weeks,
+                    "dte_min": dte_min,
+                    "dte_max": dte_max,
                     "valid_quote_weeks": valid_weeks,
                     "zero_volume_weeks": zero_vol_weeks,
                     "window_start_date": pd.Timestamp(window_start),
@@ -552,11 +565,66 @@ def _max_date(series: pd.Series, col: str) -> date:
     return pd.to_datetime(series).max().date()
 
 
+def _assert_build_params_match(
+    panel: pd.DataFrame,
+    *,
+    lookback_weeks: int,
+    min_valid_quote_weeks: int,
+    dte_min: int,
+    dte_max: int,
+    dvol_top_pct: float,
+    spread_bot_pct: float,
+) -> None:
+    """Fail incremental if CLI build/universe params differ from values stored at backfill."""
+    int_expected = {
+        "lookback_weeks": lookback_weeks,
+        "min_valid_quote_weeks": min_valid_quote_weeks,
+        "dte_min": dte_min,
+        "dte_max": dte_max,
+    }
+    float_expected = {
+        "dvol_top_pct": float(dvol_top_pct),
+        "spread_bot_pct": float(spread_bot_pct),
+    }
+    missing = [c for c in PANEL_BUILD_PARAM_COLS if c not in panel.columns]
+    if missing:
+        raise LiquidityPanelError(
+            f"{PANEL_FILENAME} missing build-param columns {missing}. Run --mode backfill."
+        )
+    mismatches: list[str] = [
+        f"{col}: artifact={int(panel[col].iloc[0])} CLI={val}"
+        for col, val in int_expected.items()
+        if int(panel[col].iloc[0]) != val
+    ]
+    mismatches.extend(
+        f"{col}: artifact={float(panel[col].iloc[0])} CLI={val}"
+        for col, val in float_expected.items()
+        if float(panel[col].iloc[0]) != val
+    )
+    if mismatches:
+        raise LiquidityPanelError(
+            f"Build params mismatch ({'; '.join(mismatches)}). Run --mode backfill."
+        )
+
+
+def _assert_daily_liquidity_source(daily: pd.DataFrame) -> None:
+    sources = daily["liquidity_source"].dropna().unique()
+    if len(sources) != 1 or str(sources[0]) != LIQUIDITY_SOURCE:
+        raise LiquidityPanelError(
+            f"Daily liquidity_source {list(sources)} != expected {LIQUIDITY_SOURCE!r}. "
+            "Run --mode backfill."
+        )
+
+
 def validate_incremental_artifacts(
     cache_dir: Path,
     *,
     lookback_weeks: int,
     min_valid_quote_weeks: int,
+    dte_min: int,
+    dte_max: int,
+    dvol_top_pct: float,
+    spread_bot_pct: float,
 ) -> IncrementalState:
     daily_path = cache_dir / DAILY_FILENAME
     weekly_path = cache_dir / WEEKLY_FILENAME
@@ -573,13 +641,16 @@ def validate_incremental_artifacts(
     if panel.empty:
         raise LiquidityPanelError("Panel artifact is empty; run --mode backfill.")
 
-    stored_lbw = int(panel["lookback_weeks"].iloc[0])
-    stored_min = int(panel["min_valid_quote_weeks"].iloc[0])
-    if stored_lbw != lookback_weeks or stored_min != min_valid_quote_weeks:
-        raise LiquidityPanelError(
-            f"Panel params ({stored_lbw}/{stored_min}) != CLI ({lookback_weeks}/{min_valid_quote_weeks}). "
-            "Run --mode backfill."
-        )
+    _assert_daily_liquidity_source(daily)
+    _assert_build_params_match(
+        panel,
+        lookback_weeks=lookback_weeks,
+        min_valid_quote_weeks=min_valid_quote_weeks,
+        dte_min=dte_min,
+        dte_max=dte_max,
+        dvol_top_pct=dvol_top_pct,
+        spread_bot_pct=spread_bot_pct,
+    )
 
     return IncrementalState(
         daily_watermark=_max_date(daily["trade_date"], "trade_date"),
@@ -590,6 +661,8 @@ def validate_incremental_artifacts(
         panel=panel,
         lookback_weeks=lookback_weeks,
         min_valid_quote_weeks=min_valid_quote_weeks,
+        dte_min=dte_min,
+        dte_max=dte_max,
     )
 
 
@@ -663,6 +736,8 @@ def run_incremental(
         all_week_ends,
         lookback_weeks=state.lookback_weeks,
         min_valid_quote_weeks=state.min_valid_quote_weeks,
+        dte_min=state.dte_min,
+        dte_max=state.dte_max,
     )
     merged_panel = pd.concat([state.panel, new_panel], ignore_index=True)
 
@@ -726,6 +801,8 @@ def run_backfill(
         all_week_ends,
         lookback_weeks=lookback_weeks,
         min_valid_quote_weeks=min_valid_quote_weeks,
+        dte_min=dte_min,
+        dte_max=dte_max,
     )
 
     warnings: list[str] = []
@@ -873,6 +950,19 @@ def write_artifacts(cache_dir: Path, result: BuildResult) -> None:
     result.panel.to_parquet(cache_dir / PANEL_FILENAME, index=False)
 
 
+def stamp_panel_universe_params(
+    panel: pd.DataFrame,
+    *,
+    dvol_top_pct: float,
+    spread_bot_pct: float,
+) -> pd.DataFrame:
+    """Persist liquid_tickers thresholds on panel rows for incremental param checks."""
+    out = panel.copy()
+    out["dvol_top_pct"] = float(dvol_top_pct)
+    out["spread_bot_pct"] = float(spread_bot_pct)
+    return out
+
+
 def build_panel(
     data_root: Path,
     cache_dir: Path,
@@ -884,6 +974,8 @@ def build_panel(
     min_valid_quote_weeks: int = DEFAULT_MIN_VALID_QUOTE_WEEKS,
     dte_min: int = DEFAULT_DTE_MIN,
     dte_max: int = DEFAULT_DTE_MAX,
+    dvol_top_pct: float = DEFAULT_DVOL_TOP_PCT,
+    spread_bot_pct: float = DEFAULT_SPREAD_BOT_PCT,
     load_day_fn: Callable[[date], pd.DataFrame] | None = None,
 ) -> BuildResult:
     if load_day_fn is None:
@@ -909,6 +1001,10 @@ def build_panel(
         cache_dir,
         lookback_weeks=lookback_weeks,
         min_valid_quote_weeks=min_valid_quote_weeks,
+        dte_min=dte_min,
+        dte_max=dte_max,
+        dvol_top_pct=dvol_top_pct,
+        spread_bot_pct=spread_bot_pct,
     )
     return run_incremental(
         data_root,
@@ -975,11 +1071,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             min_valid_quote_weeks=args.min_valid_quote_weeks,
             dte_min=args.dte_min,
             dte_max=args.dte_max,
+            dvol_top_pct=args.dvol_top_pct,
+            spread_bot_pct=args.spread_bot_pct,
         )
     except LiquidityPanelError as exc:
         logger.error("%s", exc)
         return 1
 
+    result.panel = stamp_panel_universe_params(
+        result.panel,
+        dvol_top_pct=args.dvol_top_pct,
+        spread_bot_pct=args.spread_bot_pct,
+    )
     write_artifacts(args.cache_dir, result)
 
     report_path = args.cache_dir / "manifests" / "reports" / f"liquidity_panel_{build_id}.md"
