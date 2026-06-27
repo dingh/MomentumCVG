@@ -145,11 +145,20 @@ class TestDailyLiquidity:
 
     def test_zero_bid_dollar_gives_nan_spread(self):
         trade = date(2024, 1, 5)
-        expiry = date(2024, 6, 1)
-        rows = [_orats_row("AAA", trade, expiry, 100, 100)]
+        expiry = date(2024, 1, 12)  # 7 DTE — inside [5, 60]
+        rows = [
+            _orats_row(
+                "AAA", trade, expiry, 100, 100,
+                c_bid=0.0, c_ask=0.1, p_bid=0.0, p_ask=0.1, c_vol=10, p_vol=10,
+            ),
+        ]
         obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
-        assert obs.iloc[0]["daily_atm_straddle_dollar_vol"] == 0.0
-        assert np.isnan(obs.iloc[0]["daily_atm_spread_pct"])
+        row = obs.iloc[0]
+        assert row["n_candidate_expiries"] == 1
+        assert not row["no_expiry_in_band"]
+        assert row["daily_atm_straddle_dollar_vol"] == 0.0
+        assert np.isnan(row["daily_atm_spread_pct"])
+        assert not row["daily_has_valid_quote"]
 
     def test_inverted_ask_bid_gives_nan_spread(self):
         trade = date(2024, 1, 5)

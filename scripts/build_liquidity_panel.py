@@ -1146,9 +1146,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     universe_path = args.cache_dir / LIQUID_TICKERS_FILENAME
 
     logger.info(
-        "Saved panel → %s (%d rows); report → %s",
+        "Saved panel → %s (%d rows); liquid_tickers → %s (%d tickers); report → %s",
         args.cache_dir / PANEL_FILENAME,
         len(result.panel),
+        universe_path,
+        len(universe_df),
         report_path,
     )
     return 0
