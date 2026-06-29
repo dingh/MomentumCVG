@@ -27,6 +27,12 @@ from typing import Callable, Literal, Sequence
 import numpy as np
 import pandas as pd
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterable, **kwargs):  # type: ignore[misc]
+        return iterable
+
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
@@ -42,7 +48,7 @@ DEFAULT_MIN_VALID_QUOTE_WEEKS = 3
 DEFAULT_DTE_MIN = 5
 DEFAULT_DTE_MAX = 60
 DEFAULT_DVOL_TOP_PCT = 0.20
-DEFAULT_SPREAD_BOT_PCT = 0.20
+DEFAULT_SPREAD_BOT_PCT = 1.0
 
 DAILY_FILENAME = "ticker_liquidity_daily_observations.parquet"
 WEEKLY_FILENAME = "ticker_liquidity_weekly_observations.parquet"
@@ -389,10 +395,19 @@ def extract_daily_observations(
     *,
     dte_min: int = DEFAULT_DTE_MIN,
     dte_max: int = DEFAULT_DTE_MAX,
+    show_progress: bool = True,
 ) -> tuple[pd.DataFrame, int]:
     """Read each trade_date once via load_day_fn; return slim daily observations."""
     frames: list[pd.DataFrame] = []
-    for trade_date in sorted(dates):
+    sorted_dates = sorted(dates)
+    day_iter = tqdm(
+        sorted_dates,
+        desc="Daily liquidity ZIPs",
+        unit="day",
+        disable=not show_progress or not sys.stderr.isatty(),
+    )
+    for trade_date in day_iter:
+        day_iter.set_postfix_str(trade_date.isoformat(), refresh=False)
         day_df = load_day_fn(trade_date)
         if day_df is None or day_df.empty:
             continue
@@ -677,6 +692,7 @@ def run_incremental(
     *,
     dte_min: int = DEFAULT_DTE_MIN,
     dte_max: int = DEFAULT_DTE_MAX,
+    show_progress: bool = True,
 ) -> BuildResult:
     calendar = build_week_calendar(all_trading_dates)
     new_weeks = [(we, days) for we, days in calendar if we > state.panel_watermark]
@@ -711,12 +727,13 @@ def run_incremental(
             )
 
     new_daily, files_read = extract_daily_observations(
-        new_daily_dates, load_day_fn, dte_min=dte_min, dte_max=dte_max
+        new_daily_dates, load_day_fn, dte_min=dte_min, dte_max=dte_max, show_progress=show_progress
     )
     if new_daily.empty:
         raise LiquidityPanelError("No daily observations extracted for incremental week.")
 
-    if new_daily["trade_date"].min() <= pd.Timestamp(state.daily_watermark):
+    new_daily_min = pd.to_datetime(new_daily["trade_date"]).min().date()
+    if new_daily_min <= state.daily_watermark:
         raise LiquidityPanelError(
             "Incremental daily rows must be strictly after daily watermark; run backfill."
         )
@@ -771,6 +788,7 @@ def run_backfill(
     min_valid_quote_weeks: int = DEFAULT_MIN_VALID_QUOTE_WEEKS,
     dte_min: int = DEFAULT_DTE_MIN,
     dte_max: int = DEFAULT_DTE_MAX,
+    show_progress: bool = True,
 ) -> BuildResult:
     if not all_trading_dates:
         raise LiquidityPanelError(
@@ -789,7 +807,11 @@ def run_backfill(
     dates_needed = compute_dates_needed(hist_dates, snapshot_dates, lookback_weeks)
 
     daily, files_read = extract_daily_observations(
-        dates_needed, load_day_fn, dte_min=dte_min, dte_max=dte_max
+        dates_needed,
+        load_day_fn,
+        dte_min=dte_min,
+        dte_max=dte_max,
+        show_progress=show_progress,
     )
     if daily.empty:
         raise LiquidityPanelError("Daily observation stage produced no rows.")
@@ -1012,6 +1034,7 @@ def build_panel(
     dvol_top_pct: float = DEFAULT_DVOL_TOP_PCT,
     spread_bot_pct: float = DEFAULT_SPREAD_BOT_PCT,
     load_day_fn: Callable[[date], pd.DataFrame] | None = None,
+    show_progress: bool = True,
 ) -> BuildResult:
     if load_day_fn is None:
         load_day_fn = make_raw_zip_loader(data_root)
@@ -1030,6 +1053,7 @@ def build_panel(
             min_valid_quote_weeks=min_valid_quote_weeks,
             dte_min=dte_min,
             dte_max=dte_max,
+            show_progress=show_progress,
         )
 
     state = validate_incremental_artifacts(
@@ -1049,6 +1073,7 @@ def build_panel(
         all_trading,
         dte_min=dte_min,
         dte_max=dte_max,
+        show_progress=show_progress,
     )
 
 
@@ -1079,6 +1104,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--dvol-top-pct", type=float, default=DEFAULT_DVOL_TOP_PCT)
     p.add_argument("--spread-bot-pct", type=float, default=DEFAULT_SPREAD_BOT_PCT)
     p.add_argument("--build-id", type=str, default=None)
+    p.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable tqdm progress bar on daily ZIP processing",
+    )
     return p.parse_args(argv)
 
 
@@ -1108,6 +1138,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             dte_max=args.dte_max,
             dvol_top_pct=args.dvol_top_pct,
             spread_bot_pct=args.spread_bot_pct,
+            show_progress=not args.no_progress,
         )
     except LiquidityPanelError as exc:
         logger.error("%s", exc)

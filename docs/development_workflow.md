@@ -1,7 +1,7 @@
 # Development workflow
 
 **Status:** Active  
-**Last updated:** 2026-05-23 (Week 0 review revision)
+**Last updated:** 2026-06-29 (C4 liquidity panel closed)
 
 ---
 
@@ -90,13 +90,43 @@ python scripts/run_surface_search.py --mode full_sample --start-date 2020-01-01 
 
 ---
 
+## Sprint roadmap (004–008)
+
+Aligned with [agenda/current_sprint.md](agenda/current_sprint.md). Sprints 000–003 closed; see [sprint_memos/](sprint_memos/).
+
+| Sprint | Status | Theme | Delivers | Explicitly not |
+|--------|--------|-------|----------|----------------|
+| **004** | **Active** | Input snapshot + split/PIT + **liquidity panel (C4 ✓)** + surface precompute audit | CLI, rolling panel on disk, split + **A1/A2** tests/audit, PIT harness, runbook | Mom/CVG, straddle history, backtest smoke |
+| **005** | Planned | **All feature pipeline** (straddle history, features, mom/CVG, A4, paths, trade-date calendar) | May absorb earnings/pipeline gaps from 004 | L4 backtest smoke |
+| **006** | Planned | Real-data **backtest** smoke + `run_surface_search` wiring | L4 S1→S8 | Start only after **004 input + 005 features** trustworthy |
+| **007** | Planned | Tier B conservative baseline | 2020→latest canonical run; conservative fills; metrics table in [backtest_evaluation_protocol.md](backtest_evaluation_protocol.md); SurfaceRunner `run_manifest` | Sensitivity matrix, paper trading |
+| **008** | Planned | Decision sprint (conditional on 007) | Go/no-go memo; pass/fail thresholds or documented waiver; triage KB-001 and remaining precompute gaps | Live execution |
+
+**Real-data split:** Sprint 004 validates **input/precompute** on real cache (splits, liquidity, option surface A1/A2). Sprint 006 runs **backtest** smoke (SurfaceRunner). Stale wording in older docs → update when that sprint starts.
+
+**006 gate:** Do not start Sprint 006 until Sprint 004 input snapshot and Sprint 005 feature pipeline are trustworthy.
+
+**004 vs 005:** 004 = splits, spot, rolling liquidity, **option surface precompute audit**. 005 = **entire feature branch** (straddle history, features, mom/CVG).
+
+**Evaluation levels** ([surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md)):
+
+| Level | Sprint |
+|-------|--------|
+| L1–L3 Synthetic | ✅ 002–003 |
+| L4 Real-cache smoke | 006 |
+| L5 Tier B go/no-go | 007–008 |
+
+---
+
 ## 12-week outline (high level)
 
 | Weeks | Focus |
 |-------|--------|
-| 0–1 | Workflow, repo audit, first verification test |
-| 2–4 | Correctness audits; pin portfolio caps |
-| 5–8 | Weekly backtest; iron fly vs iron condor comparison; conservative fills; Tier B evaluation |
+| 0–1 | Workflow, repo audit, first verification test ✅ |
+| 2–4 | Data contracts; S5/S8 build; portfolio caps ✅ |
+| 5–6 | **Sprint 004–005:** build input pipeline + feature/mom/CVG audit |
+| 7 | **Sprint 006:** real-data structural smoke (L4) |
+| 8–9 | **Sprint 007:** conservative baseline; iron fly vs condor comparison deferred to post-baseline sensitivity |
 | 9–10 | Shadow runner; ops model from measured trade counts |
 | 11–12 | Paper trading; capital ramp memo |
 

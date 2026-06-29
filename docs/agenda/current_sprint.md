@@ -1,8 +1,10 @@
 # Current sprint — 004
 
 **Updated:** 2026-06-24 (C4 liquidity panel implemented)  
-**Status:** Active — **C1** + **C2** + **C4** implemented; **C3** deferred until C4–C8  
+**Status:** Active — **C1** + **C2** + **C4 closed**; **C3** deferred until C4–C8  
 **Mode:** Build (HD decisions locked below)
+
+**C4 closeout memo:** [sprint_memos/004_c4_liquidity_panel.md](../sprint_memos/004_c4_liquidity_panel.md)
 
 **C1 receipt design (canonical):** [docs/tmp/c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md)
 
@@ -571,6 +573,7 @@ Stale docs (e.g. `backtest_evaluation_protocol.md` “Sprint 004–005 baseline�
 | 2026-06-21 v7 | C1 implemented; sprint doc aligned to [c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md) — minimal weekly input receipt |
 | 2026-06-21 v8 | C2 implemented: `trading_day.py`, `refresh_weekly_inputs.py` CLI (`plan`, `refresh --dry-run`, stub subcommands), exit-code contract; closeout blocker #13 for provisional plan copy |
 | 2026-06-24 v11 | C4 input path: ORATS_Data raw ZIPs (default `--data-root`); liquidity before scoped split adjust |
+| 2026-06-29 v12 | **C4 closed:** smoke tests PASS; full backfill 2017→2026-02-20 on `input/liquidity`; incremental fix + progress bar; memo [004_c4_liquidity_panel.md](../sprint_memos/004_c4_liquidity_panel.md) |
 
 ---
 

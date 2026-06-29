@@ -445,6 +445,80 @@ class TestIncremental:
         with pytest.raises(blp.LiquidityPanelError, match="missing build-param columns"):
             blp.validate_incremental_artifacts(tmp_path, **self._validate_kwargs())
 
+    def test_run_incremental_appends_week_with_date_trade_dates(self, tmp_path: Path):
+        """Regression: compute_daily_liquidity_observations stores datetime.date trade_date."""
+        wm = date(2024, 3, 28)
+        prior_days = [date(2024, 3, 25), date(2024, 3, 26), date(2024, 3, 27), wm]
+        new_days = [date(2024, 4, d) for d in range(1, 6)]
+        expiry = date(2024, 4, 12)
+
+        daily = pd.DataFrame(
+            [
+                {
+                    "trade_date": d,
+                    "ticker": "AAA",
+                    "daily_atm_straddle_dollar_vol": 1000.0,
+                    "daily_atm_spread_pct": 0.05,
+                    "daily_has_valid_quote": True,
+                    "n_candidate_expiries": 1,
+                    "n_expiries_total": 1,
+                    "no_expiry_in_band": False,
+                    "liquidity_source": blp.LIQUIDITY_SOURCE,
+                }
+                for d in prior_days
+            ]
+        )
+        weekly = pd.DataFrame(
+            [
+                {
+                    "week_end_date": wm,
+                    "ticker": "AAA",
+                    "weekly_atm_straddle_dollar_vol": 4000.0,
+                    "weekly_atm_spread_pct": 0.05,
+                    "weekly_valid_quote_days": 4,
+                    "weekly_has_valid_quote": True,
+                }
+            ]
+        )
+        panel = blp.aggregate_rolling_weekly_panel(
+            weekly,
+            [wm],
+            [wm],
+            lookback_weeks=12,
+            min_valid_quote_weeks=1,
+            dte_min=5,
+            dte_max=60,
+        )
+        panel = blp.stamp_panel_universe_params(
+            panel,
+            dvol_top_pct=self._DVOL_TOP,
+            spread_bot_pct=self._SPREAD_BOT,
+        )
+        daily.to_parquet(tmp_path / blp.DAILY_FILENAME, index=False)
+        weekly.to_parquet(tmp_path / blp.WEEKLY_FILENAME, index=False)
+        panel.to_parquet(tmp_path / blp.PANEL_FILENAME, index=False)
+
+        def load_day(trade_date: date) -> pd.DataFrame:
+            if trade_date not in new_days:
+                return pd.DataFrame()
+            return pd.DataFrame(
+                [_orats_row("AAA", trade_date, expiry, strike=100.0, stk_px=100.0)]
+            )
+
+        all_trading_dates = prior_days + new_days
+        state = blp.validate_incremental_artifacts(tmp_path, **self._validate_kwargs())
+        result = blp.run_incremental(
+            tmp_path,
+            tmp_path,
+            state,
+            load_day,
+            all_trading_dates,
+        )
+
+        assert pd.to_datetime(result.daily["trade_date"]).max().date() == date(2024, 4, 5)
+        assert pd.to_datetime(result.panel["month_date"]).max().date() == date(2024, 4, 5)
+        assert len(result.daily) == len(prior_days) + len(new_days)
+
 
 class TestWriteArtifacts:
     def test_write_artifacts_commits_all_outputs(self, tmp_path: Path):

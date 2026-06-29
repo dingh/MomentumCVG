@@ -1,7 +1,7 @@
 # V1 universe protocol
 
-**Status:** Active (spec only — not yet fully wired in all backtest paths)  
-**Last updated:** 2026-06-11 (rolling-window liquidity tentative direction)
+**Status:** Active  
+**Last updated:** 2026-06-29 (C4 rolling 12-week panel implemented)
 
 ---
 
@@ -16,9 +16,9 @@ Build a **point-in-time tradable universe** each rebalance week from a broad ORA
 At each **weekly rebalance date** `t`:
 
 1. **Load liquidity panel** (`ticker_liquidity_panel.parquet`) built by `scripts/build_liquidity_panel.py`.
-2. **Point-in-time lookup:** use the most recent `month_date <= t` for each ticker (same contract as `step1_get_universe()` in `src/backtest/pipeline.py`).
-3. **Eligible pool:** all tickers with valid liquidity fields on that lookup date.
-4. **Rank** tickers cross-sectionally on liquidity (see scoring below).
+2. **Point-in-time lookup:** use the most recent `month_date <= t` for each ticker (`month_date` is the **week-end snapshot date**; legacy column name retained for step1 compatibility).
+3. **Eligible pool:** tickers with `has_valid_atm_pair == True` on that snapshot (≥3 of last 12 weeks with at least one valid daily ATM quote week).
+4. **Rank** eligible tickers on `atm_straddle_dollar_vol` (12-week rolling average straddle bid×volume).
 5. **Select top 20%** of eligible tickers → **tradable universe for week t**.
 6. **Signals and ranking** for momentum/CVG run **only within** this tradable universe.
 
@@ -26,40 +26,24 @@ At each **weekly rebalance date** `t`:
 
 ## Liquidity scoring (v1)
 
-Use fields already consumed by pipeline step1:
+Panel fields (built by C4 rolling window):
 
 | Field | Role |
 |-------|------|
-| `atm_straddle_dollar_vol` | Primary rank key (higher = more liquid) |
-| `atm_spread_pct` | Tie-break / filter (lower = tighter) |
+| `atm_straddle_dollar_vol` | Primary rank key — mean weekly straddle $ vol over **12-week lookback** |
+| `atm_spread_pct` | Mean spread over weeks with valid quotes (tie-break / filter when `spread_bot_pct < 1`) |
+| `has_valid_atm_pair` | Eligibility gate — `valid_quote_weeks >= 3` in lookback |
 
-**v1 composite (to align with existing step1):**
+**Panel build (Sprint 004 C4):** reads **ORATS raw** ZIPs (`ORATS_Data`); no split adjustment in liquidity stage. Default `lookback_weeks=12`, `min_valid_quote_weeks=3`, `dte_min=5`, `dte_max=60`, `dvol_top_pct=0.20`, `spread_bot_pct=1.0`.
 
-- Rank primarily by `atm_straddle_dollar_vol` descending.
-- Among ties or borderline names, prefer lower `atm_spread_pct`.
-- Exact tie-break rules should match `step1_get_universe()` implementation during Sprint 002 wiring.
+**Precompute superset vs trading universe:**
 
-The panel is built from **monthly** snapshots; step1 already performs PIT `month_date` lookup. The intent is that eligibility reflects **recent** liquidity history, not a single stale month.
+| Layer | Artifact | Purpose |
+|-------|----------|---------|
+| Precompute superset | `liquid_tickers.csv` | Tickers that ever qualified; `snapshots_qualified` = count of weeks in top-20% bucket |
+| Trading universe | Panel row at PIT snapshot | Top 20% of eligible names at rebalance `t` |
 
-**Tentative direction (not yet wired):** smooth liquidity over a **rolling ~3-month window** — i.e. rank on a rolling-window average of `atm_straddle_dollar_vol` and `atm_spread_pct` (same column names; change is in the panel build script). Window length (`X` months) is configurable and not finalized. This supersedes the earlier trailing-4-week framing and aligns with the HD decision in [surface_engine_data_contract.md](surface_engine_data_contract.md) (fix before the end-to-end correctness check; not blocking earlier contracts). See also [v1_spec_pins.md](v1_spec_pins.md).
-
-Implementation options considered:
-
-- **Option A (minimal, current code):** use step1 as-is with `--dvol-top-pct 0.20` at each rebalance (monthly panel, PIT lookup). Still the baseline until the rolling window lands.
-- **Option B (rolling window, tentative target):** rank on a rolling `X`-month average (≈3 months) of the liquidity metrics ≤ t, then take top 20%. Smooths month-boundary churn.
-
-Until the rolling-window build ships, runs use **Option A**; treat Option B as the intended direction, not a locked pin.
-
----
-
-## Precompute vs trading universe
-
-| Layer | Purpose |
-|-------|---------|
-| **Precompute superset** | All tickers in ORATS cache used for feature/surface precompute (engineering) |
-| **Trading universe** | Top 20% liquid names at rebalance `t` only |
-
-Never treat the precompute superset as the trading universe in backtest or live.
+Never use `liquid_tickers.csv` alone as the trading universe.
 
 ---
 
@@ -75,7 +59,7 @@ Never treat the precompute superset as the trading universe in backtest or live.
 
 This document covers **who is eligible** each rebalance, not the full weekly sequence (universe → signal → structure → size → log).
 
-After the **liquidity panel review** (Sprint 002), add [v1_weekly_runbook.md](v1_weekly_runbook.md) with the step-by-step weekly flow. Until then, see [development_workflow.md](development_workflow.md) and [repo_map.md](repo_map.md).
+After the **liquidity panel review** (Sprint 002), add [v1_weekly_runbook.md](v1_weekly_runbook.md) with the step-by-step weekly flow. C4 rolling panel builder shipped Sprint 004 — see runbook § Liquidity panel.
 
 ---
 
@@ -83,8 +67,8 @@ After the **liquidity panel review** (Sprint 002), add [v1_weekly_runbook.md](v1
 
 | Artifact | Path (default) | Script |
 |----------|----------------|--------|
-| Liquidity panel | `C:/MomentumCVG_env/cache/ticker_liquidity_panel.parquet` | `scripts/build_liquidity_panel.py` |
-| ORATS adjusted chains | `C:/ORATS/data/ORATS_Adjusted` | — |
+| Liquidity panel | `C:/MomentumCVG_env/cache/ticker_liquidity_panel.parquet` (or `input/liquidity/`) | `scripts/build_liquidity_panel.py` |
+| ORATS raw chains | `C:/ORATS/data/ORATS_Data` | `build_liquidity_panel.py` input |
 | Features (momentum/CVG) | `C:/MomentumCVG_env/cache/features_*.parquet` | `scripts/build_features.py` |
 | Option surface | `C:/MomentumCVG_env/cache/option_surface/` | `scripts/precompute_option_surface.py` |
 

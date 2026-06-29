@@ -21,7 +21,7 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | Document | Purpose | Last updated |
 |----------|---------|--------------|
 | [v1_spec_pins.md](v1_spec_pins.md) | Frozen v1 parameters and deferred decisions | 2026-05-23 |
-| [v1_universe_protocol.md](v1_universe_protocol.md) | Point-in-time liquidity universe rule | 2026-05-23 |
+| [v1_universe_protocol.md](v1_universe_protocol.md) | Point-in-time liquidity universe rule (12-week rolling panel) | 2026-06-29 |
 | [v1_ops_model.md](v1_ops_model.md) | Trade volume and broker/manual threshold | 2026-05-23 |
 | [backtest_evaluation_protocol.md](backtest_evaluation_protocol.md) | Go/no-go windows, Sharpe, evaluation tiers | 2026-05-23 |
 | [repo_map.md](repo_map.md) | Repository layout and data flow | 2026-05-23 |
@@ -33,9 +33,10 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [surface_engine_data_flow.md](surface_engine_data_flow.md) | Sprint 002 flow diagram + box status | 2026-06-20 |
 | [surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md) | Sprint 002 component verification plan | 2026-06-20 |
 | [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) | S5/S8 portfolio & metrics design (Accepted; built Sprint 003) | 2026-06-20 |
-| [development_workflow.md](development_workflow.md) | Human + agent sprint workflow | 2026-05-23 |
+| [development_workflow.md](development_workflow.md) | Human + agent sprint workflow; roadmap 004–008 | 2026-06-29 |
 | [baseline_status.md](baseline_status.md) | Test and smoke-command baseline | 2026-05-23 |
-| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 003 closeout (closed 2026-06-20) | 2026-06-20 |
+| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 004 — C4 closed; C5–C9 in progress | 2026-06-29 |
+| [v1_weekly_runbook.md](v1_weekly_runbook.md) | Weekly Stage A refresh procedure | 2026-06-29 |
 | [known_bugs.md](known_bugs.md) | Open bugs and spec drift (fix deferred) | 2026-06-14 |
 
 ## Decisions
@@ -54,13 +55,8 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | 001 | [Repo audit and verification](sprint_memos/001_repo_audit_verification.md) _(closed 2026-05-28)_ |
 | 002 | [Data contracts and S5/S8 design](sprint_memos/002_data_contracts.md) _(closed 2026-06-10)_ |
 | 003 | [S5/S8 build and ORCH](sprint_memos/003_s5_s8_build.md) _(closed 2026-06-20)_ |
+| 004 (C4) | [Liquidity panel closeout](sprint_memos/004_c4_liquidity_panel.md) _(C4 closed 2026-06-29)_ |
 | — | [Week 0 review notes](sprint_memos/week0_review_notes.md) _(archived from agenda)_ |
-
-## Planned (not yet created)
-
-| Document | When |
-|----------|------|
-| `v1_weekly_runbook.md` | After liquidity panel review (Sprint 002) |
 
 ## Related (repo root)
 
