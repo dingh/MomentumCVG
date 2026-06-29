@@ -45,7 +45,7 @@ This runbook covers **data refresh and validation only**. It does not run backte
 Activate venv:
 
 ```powershell
-& C:/MomentumCVG_env/Scripts/Activate.ps1
+& C:/MomentumCVG_env/venv/Scripts/Activate.ps1
 ```
 
 ---

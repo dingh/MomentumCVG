@@ -1,6 +1,6 @@
 # Current sprint — 004
 
-**Updated:** 2026-06-24 (C4 liquidity panel implemented)  
+**Updated:** 2026-06-29 (C4 closed; backfill + docs)  
 **Status:** Active — **C1** + **C2** + **C4 closed**; **C3** deferred until C4–C8  
 **Mode:** Build (HD decisions locked below)
 

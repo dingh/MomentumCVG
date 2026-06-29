@@ -14,6 +14,8 @@ python-dateutil>=2.8.2
 # Parallel computing
 joblib>=1.3.0
 
+# Progress bars (liquidity panel, precompute, corporate actions)
+tqdm>=4.65.0
 
 scipy>=1.10.0
 
