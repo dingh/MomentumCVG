@@ -75,8 +75,8 @@ class TestLoadTickerUniverseCleaning:
         assert load_ticker_universe(path) == ["AAA", "MMM", "ZZZ"]
 
 
-class TestLoadTickerUniverseThreshold:
-    def test_filters_tickers_below_threshold(self, tmp_path: Path):
+class TestLoadTickerUniverseQualificationFilter:
+    def test_filters_tickers_below_min_snapshots_qualified(self, tmp_path: Path):
         path = tmp_path / "liquid.csv"
         _write_csv(
             path,
@@ -88,9 +88,15 @@ class TestLoadTickerUniverseThreshold:
                 }
             ),
         )
-        assert load_ticker_universe(path, threshold=12) == ["AAA", "CCC"]
+        assert load_ticker_universe(path, min_snapshots_qualified=12) == [
+            "AAA",
+            "CCC",
+        ]
 
-    def test_threshold_ignored_when_none(self, tmp_path: Path):
+    def test_default_does_not_filter_when_snapshots_qualified_present(
+        self, tmp_path: Path
+    ):
+        """Default ``None`` loads the full C4-style universe regardless of counts."""
         path = tmp_path / "liquid.csv"
         _write_csv(
             path,
@@ -103,7 +109,9 @@ class TestLoadTickerUniverseThreshold:
         )
         assert load_ticker_universe(path) == ["AAA", "BBB"]
 
-    def test_uses_months_qualified_when_snapshots_column_absent(self, tmp_path: Path):
+    def test_uses_months_qualified_only_when_snapshots_column_absent(
+        self, tmp_path: Path
+    ):
         path = tmp_path / "legacy.csv"
         _write_csv(
             path,
@@ -114,15 +122,36 @@ class TestLoadTickerUniverseThreshold:
                 }
             ),
         )
-        assert load_ticker_universe(path, threshold=12) == ["AAA"]
+        assert load_ticker_universe(path, min_snapshots_qualified=12) == ["AAA"]
 
-    def test_raises_when_threshold_set_without_count_column(self, tmp_path: Path):
+    def test_prefers_snapshots_qualified_over_months_qualified_when_both_present(
+        self, tmp_path: Path
+    ):
+        """``months_qualified`` is ignored when ``snapshots_qualified`` exists."""
+        path = tmp_path / "both_qual.csv"
+        _write_csv(
+            path,
+            pd.DataFrame(
+                {
+                    "Ticker": ["AAA", "BBB"],
+                    "snapshots_qualified": [5, 20],
+                    "months_qualified": [20, 5],
+                }
+            ),
+        )
+        assert load_ticker_universe(path, min_snapshots_qualified=12) == ["BBB"]
+
+    def test_raises_when_min_snapshots_qualified_set_without_qualification_column(
+        self, tmp_path: Path
+    ):
         path = tmp_path / "no_count.csv"
         _write_csv(path, pd.DataFrame({"Ticker": ["AAPL"]}))
-        with pytest.raises(ValueError, match="No qualification count column found"):
-            load_ticker_universe(path, threshold=12)
+        with pytest.raises(ValueError, match="No qualification column found"):
+            load_ticker_universe(path, min_snapshots_qualified=12)
 
-    def test_raises_when_threshold_filters_all_tickers(self, tmp_path: Path):
+    def test_raises_when_qualification_filter_removes_all_tickers(
+        self, tmp_path: Path
+    ):
         path = tmp_path / "all_below.csv"
         _write_csv(
             path,
@@ -134,7 +163,7 @@ class TestLoadTickerUniverseThreshold:
             ),
         )
         with pytest.raises(ValueError, match="No valid tickers remain"):
-            load_ticker_universe(path, threshold=12)
+            load_ticker_universe(path, min_snapshots_qualified=12)
 
 
 class TestLoadTickerUniverseColumnPreference:

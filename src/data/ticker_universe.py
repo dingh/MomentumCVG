@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 _SUPPORTED_EXTENSIONS = frozenset({".csv", ".parquet"})
-_COUNT_COLUMN_NAMES = ("snapshots_qualified", "months_qualified")
+_QUALIFICATION_COLUMN_NAMES = ("snapshots_qualified", "months_qualified")
 
 
 def _resolve_ticker_column(columns: pd.Index) -> str:
@@ -26,34 +26,44 @@ def _resolve_ticker_column(columns: pd.Index) -> str:
     )
 
 
-def _resolve_count_column(columns: pd.Index) -> str:
-    if "snapshots_qualified" in columns:
-        return "snapshots_qualified"
-    if "months_qualified" in columns:
-        return "months_qualified"
+def _resolve_qualification_column(columns: pd.Index) -> str:
+    for name in _QUALIFICATION_COLUMN_NAMES:
+        if name in columns:
+            return name
     raise ValueError(
-        "No qualification count column found; expected 'snapshots_qualified' "
-        f"or 'months_qualified' when threshold is set, got {list(columns)}"
+        "No qualification column found; expected one of "
+        f"{list(_QUALIFICATION_COLUMN_NAMES)} when min_snapshots_qualified "
+        f"is set, got {list(columns)}"
     )
 
 
 def load_ticker_universe(
     path: str | Path,
     *,
-    threshold: int | None = None,
+    min_snapshots_qualified: int | None = None,
 ) -> list[str]:
     """Load a cleaned, deduplicated, alphabetically sorted ticker list.
+
+    By default (``min_snapshots_qualified=None``), no qualification filtering
+    is applied. The full C4 ``liquid_tickers.csv`` historical precompute
+    universe is loaded — every ticker row in the file after standard cleaning.
+
+    ``min_snapshots_qualified`` is an explicit optional narrowing filter. Use
+    it only when HD intentionally wants a smaller precompute universe than the
+    full C4 superset. When set, rows are kept only when the qualification
+    count is greater than or equal to this value. Filtering uses
+    ``snapshots_qualified`` when that column is present; ``months_qualified``
+    is used only as a fallback when ``snapshots_qualified`` is absent (C4
+    legacy alias).
 
     Parameters
     ----------
     path:
         CSV (``.csv``) or parquet (``.parquet``) file containing a ``Ticker`` or
         ``ticker`` column. When both columns exist, ``Ticker`` is preferred.
-    threshold:
-        When set, keep only tickers whose ``snapshots_qualified`` count is
-        greater than or equal to this value. ``months_qualified`` is used as a
-        fallback when ``snapshots_qualified`` is absent (C4 alias). Ignored
-        when ``None``.
+    min_snapshots_qualified:
+        Optional minimum week-qualification count. ``None`` (default) loads the
+        full universe with no count-based filtering.
 
     Returns
     -------
@@ -66,8 +76,8 @@ def load_ticker_universe(
         If ``path`` does not exist.
     ValueError
         Unsupported file extension, missing ticker column, missing qualification
-        count column when ``threshold`` is set, or no valid tickers after
-        cleaning (null, blank, or whitespace-only values are dropped).
+        column when ``min_snapshots_qualified`` is set, or no valid tickers
+        after cleaning (null, blank, or whitespace-only values are dropped).
     """
     file_path = Path(path)
     if not file_path.is_file():
@@ -85,10 +95,10 @@ def load_ticker_universe(
     else:
         df = pd.read_parquet(file_path)
 
-    if threshold is not None:
-        count_col = _resolve_count_column(df.columns)
-        counts = pd.to_numeric(df[count_col], errors="coerce")
-        df = df[counts >= threshold]
+    if min_snapshots_qualified is not None:
+        qual_col = _resolve_qualification_column(df.columns)
+        counts = pd.to_numeric(df[qual_col], errors="coerce")
+        df = df[counts >= min_snapshots_qualified]
 
     col = _resolve_ticker_column(df.columns)
     series = df[col].dropna().astype(str).str.strip()
