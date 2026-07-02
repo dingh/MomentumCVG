@@ -132,7 +132,9 @@ def _process_single_zip(
         return None
 
     if ticker_universe is not None:
-        df = df[df["ticker"].str.upper().isin(ticker_universe)]
+        ticker_series = df["ticker"].astype(str).str.strip().str.upper()
+        df = df[ticker_series.isin(ticker_universe)].copy()
+        df["ticker"] = ticker_series.loc[df.index].values
 
     # ── compute and apply split adjustments ───────────────────────────────────
     try:
@@ -242,11 +244,19 @@ class SplitAdjuster:
         self.splits_path = Path(splits_path)
         self.overwrite = overwrite
         self.min_split_date = min_split_date
-        self._ticker_universe = (
-            None
-            if ticker_universe is None
-            else {str(t).strip().upper() for t in ticker_universe}
-        )
+        if ticker_universe is None:
+            self._ticker_universe = None
+        else:
+            cleaned = {
+                str(t).strip().upper()
+                for t in ticker_universe
+                if t is not None and str(t).strip()
+            }
+            if not cleaned:
+                raise ValueError(
+                    "ticker_universe was provided but no valid tickers remain after cleaning"
+                )
+            self._ticker_universe = cleaned
 
         self._cum_factors = self._load_cum_factors(splits_path, min_split_date)
         logger.info(
