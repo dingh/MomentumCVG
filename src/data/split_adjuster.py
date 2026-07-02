@@ -63,6 +63,7 @@ def _process_year_worker(
     adj_root: Path,
     cum_factors: pd.DataFrame,
     overwrite: bool,
+    ticker_universe: set[str] | None = None,
 ) -> tuple[int, int, int]:
     """
     Process all ZIP files in *year_dir*.
@@ -74,7 +75,9 @@ def _process_year_worker(
     skipped = errors = 0
 
     for zip_path in tqdm(zip_files, desc=f"  {year_dir.name}", unit="file", leave=False):
-        result = _process_single_zip(zip_path, adj_root, cum_factors, overwrite)
+        result = _process_single_zip(
+            zip_path, adj_root, cum_factors, overwrite, ticker_universe
+        )
         if result is None:
             errors += 1
         elif result is False:
@@ -88,6 +91,7 @@ def _process_single_zip(
     adj_root: Path,
     cum_factors: pd.DataFrame,
     overwrite: bool,
+    ticker_universe: set[str] | None = None,
 ) -> Optional[bool]:
     """
     Process one ZIP file.
@@ -126,6 +130,9 @@ def _process_single_zip(
     except Exception as exc:
         logger.error("Failed to read %s: %s", zip_path.name, exc)
         return None
+
+    if ticker_universe is not None:
+        df = df[df["ticker"].str.upper().isin(ticker_universe)]
 
     # ── compute and apply split adjustments ───────────────────────────────────
     try:
@@ -205,6 +212,9 @@ class SplitAdjuster:
         e.g. ``C:/MomentumCVG_env/cache/splits_hist.parquet``
     overwrite : bool
         If False (default), skip files that already exist in *adj_root*.
+    ticker_universe : set[str] or list[str], optional
+        When set, only rows whose ``ticker`` is in this set are written to
+        adjusted parquet.  When ``None`` (default), all rows are processed.
 
     Usage
     -----
@@ -225,12 +235,18 @@ class SplitAdjuster:
         splits_path: str | Path,
         overwrite: bool = False,
         min_split_date: str = "2014-01-01",
+        ticker_universe: set[str] | list[str] | None = None,
     ) -> None:
         self.raw_root = Path(raw_root)
         self.adj_root = Path(adj_root)
         self.splits_path = Path(splits_path)
         self.overwrite = overwrite
         self.min_split_date = min_split_date
+        self._ticker_universe = (
+            None
+            if ticker_universe is None
+            else {str(t).strip().upper() for t in ticker_universe}
+        )
 
         self._cum_factors = self._load_cum_factors(splits_path, min_split_date)
         logger.info(
@@ -249,7 +265,11 @@ class SplitAdjuster:
         Returns the output Path on success, None on skip/error.
         """
         result = _process_single_zip(
-            Path(zip_path), self.adj_root, self._cum_factors, self.overwrite
+            Path(zip_path),
+            self.adj_root,
+            self._cum_factors,
+            self.overwrite,
+            self._ticker_universe,
         )
         if result is True:
             date_str = Path(zip_path).stem.split("_")[-1]
@@ -328,7 +348,13 @@ class SplitAdjuster:
         def _process_year_for_tickers(year_dir: Path) -> tuple[int, int]:
             _updated = _errors = 0
             for zp in sorted(year_dir.glob("*.zip")):
-                res = _process_single_zip(zp, adj_root, cum_factors, overwrite=True)
+                res = _process_single_zip(
+                    zp,
+                    adj_root,
+                    cum_factors,
+                    overwrite=True,
+                    ticker_universe=self._ticker_universe,
+                )
                 if res is True:
                     _updated += 1
                 elif res is None:
@@ -391,6 +417,7 @@ class SplitAdjuster:
 
         workers = max_workers or max(1, multiprocessing.cpu_count() // 2)
         cum_factors = self._cum_factors   # captured for workers
+        ticker_universe = self._ticker_universe
 
         grand_total = grand_skipped = grand_errors = 0
 
@@ -398,7 +425,11 @@ class SplitAdjuster:
             futures = {
                 executor.submit(
                     _process_year_worker,
-                    yd, self.adj_root, cum_factors, self.overwrite,
+                    yd,
+                    self.adj_root,
+                    cum_factors,
+                    self.overwrite,
+                    ticker_universe,
                 ): yd
                 for yd in year_dirs
             }
