@@ -250,6 +250,27 @@ def test_adjusted_structure_fails_trade_date_mismatch(cli_module, tmp_path):
     assert result.metrics["trade_date_mismatch_count"] >= 1
 
 
+def test_adjusted_structure_fails_missing_optional_adjusted_column(cli_module, tmp_path):
+    adj_dir = tmp_path / "adj" / "2020"
+    adj_dir.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame(_valid_adjusted_rows()).drop(columns=["adj_cBidPx"])
+    df.to_parquet(adj_dir / _PARQUET_NAME, index=False)
+    result = cli_module.audit_adjusted_structure(tmp_path / "adj", [2020])
+    assert result.status == "FAIL"
+    assert result.metrics["missing_optional_adjusted_columns"] >= 1
+    assert any("adj_cBidPx" in f for f in result.failures)
+
+
+def test_adjusted_structure_fails_nonfinite_optional_adjusted_price(cli_module, tmp_path):
+    rows = _valid_adjusted_rows()
+    rows[0]["adj_cAskPx"] = float("nan")
+    _write_adjusted_parquet(tmp_path, rows=rows)
+    result = cli_module.audit_adjusted_structure(tmp_path / "adj", [2020])
+    assert result.status == "FAIL"
+    assert result.metrics["bad_optional_adjusted_price_count"] >= 1
+    assert any("adj_cAskPx" in f for f in result.failures)
+
+
 # ── 9. raw math pass ──────────────────────────────────────────────────────────
 
 def test_raw_math_spot_check_passes_valid_fixture(cli_module, tmp_path):
@@ -286,6 +307,44 @@ def test_raw_math_spot_check_fails_bad_adjusted_math(cli_module, tmp_path):
     )
     assert result.status == "FAIL"
     assert result.metrics["math_mismatch_count"] >= 1
+
+
+def test_raw_math_spot_check_fails_bad_optional_bid_ask_math(cli_module, tmp_path):
+    fx = _passing_fixture(tmp_path)
+    rows = _valid_adjusted_rows()
+    rows[0]["adj_cBidPx"] = 999.0
+    _write_adjusted_parquet(tmp_path, rows=rows)
+    result = cli_module.audit_raw_math_sample(
+        fx["raw_root"],
+        fx["adj_root"],
+        [2020],
+        set(_UNIVERSE),
+        sample_files=10,
+        sample_rows=20000,
+        seed=57,
+    )
+    assert result.status == "FAIL"
+    assert result.metrics["math_mismatch_count"] >= 1
+    assert any("adj_cBidPx" in f for f in result.failures)
+
+
+def test_raw_math_spot_check_normalizes_adjusted_ticker_before_merge(cli_module, tmp_path):
+    fx = _passing_fixture(tmp_path)
+    rows = _valid_adjusted_rows()
+    rows[0]["ticker"] = " aaa "
+    _write_adjusted_parquet(tmp_path, rows=rows)
+    result = cli_module.audit_raw_math_sample(
+        fx["raw_root"],
+        fx["adj_root"],
+        [2020],
+        set(_UNIVERSE),
+        sample_files=10,
+        sample_rows=20000,
+        seed=57,
+    )
+    assert result.status == "PASS"
+    assert result.metrics["matched_rows"] >= 1
+    assert result.metrics["unmatched_rows"] == 0
 
 
 # ── 11. main writes report ────────────────────────────────────────────────────

@@ -376,6 +376,8 @@ def audit_adjusted_structure(
     missing_required_columns = 0
     bad_split_factor_count = 0
     bad_adjusted_price_count = 0
+    missing_optional_adjusted_columns = 0
+    bad_optional_adjusted_price_count = 0
     spot_px_mismatch_count = 0
     trade_date_mismatch_count = 0
 
@@ -451,11 +453,31 @@ def audit_adjusted_structure(
                     f"{file_date_str}"
                 )
 
+        for raw_col, adj_col in OPTIONAL_ADJ_PRICE_MAP.items():
+            if raw_col in df.columns:
+                if adj_col not in df.columns:
+                    missing_optional_adjusted_columns += 1
+                    result.status = "FAIL"
+                    result.failures.append(
+                        f"{path.name}: missing {adj_col} while {raw_col} exists"
+                    )
+                else:
+                    vals = pd.to_numeric(df[adj_col], errors="coerce")
+                    n_bad = int((~np.isfinite(vals)).sum())
+                    if n_bad:
+                        bad_optional_adjusted_price_count += n_bad
+                        result.status = "FAIL"
+                        result.failures.append(
+                            f"{path.name}: {n_bad} row(s) with nonfinite {adj_col}"
+                        )
+
     result.metrics = {
         "files_checked": files_checked,
         "missing_required_columns": missing_required_columns,
         "bad_split_factor_count": bad_split_factor_count,
         "bad_adjusted_price_count": bad_adjusted_price_count,
+        "missing_optional_adjusted_columns": missing_optional_adjusted_columns,
+        "bad_optional_adjusted_price_count": bad_optional_adjusted_price_count,
         "spot_px_mismatch_count": spot_px_mismatch_count,
         "trade_date_mismatch_count": trade_date_mismatch_count,
     }
@@ -488,6 +510,14 @@ def _math_mismatch_mask(
     )
     actual = pd.to_numeric(adj_vals, errors="coerce")
     return ~np.isclose(expected, actual, rtol=MATH_RTOL, atol=MATH_ATOL)
+
+
+def _merged_raw_column_name(df: pd.DataFrame, raw_col: str) -> str | None:
+    if f"{raw_col}_raw" in df.columns:
+        return f"{raw_col}_raw"
+    if raw_col in df.columns:
+        return raw_col
+    return None
 
 
 def audit_raw_math_sample(
@@ -533,7 +563,8 @@ def audit_raw_math_sample(
             continue
 
         n_sample = min(sample_rows, len(adj_df))
-        adj_sample = adj_df.sample(n=n_sample, random_state=seed)
+        adj_sample = adj_df.sample(n=n_sample, random_state=seed).copy()
+        adj_sample["ticker"] = adj_sample["ticker"].astype(str).str.strip().str.upper()
         sampled_rows_total += len(adj_sample)
 
         try:
@@ -595,8 +626,8 @@ def audit_raw_math_sample(
         sf = matched["split_factor"]
         checks = [("stkPx", "adj_stkPx"), ("strike", "adj_strike")]
         for raw_col, adj_col in checks:
-            raw_col_name = raw_col if raw_col in matched.columns else f"{raw_col}_raw"
-            if raw_col_name not in matched.columns:
+            raw_col_name = _merged_raw_column_name(matched, raw_col)
+            if raw_col_name is None or adj_col not in matched.columns:
                 continue
             mismatch = _math_mismatch_mask(matched[raw_col_name], matched[adj_col], sf)
             n = int(mismatch.sum())
@@ -609,8 +640,9 @@ def audit_raw_math_sample(
                 )
 
         for raw_col, adj_col in OPTIONAL_ADJ_PRICE_MAP.items():
-            if raw_col in matched.columns and adj_col in matched.columns:
-                mismatch = _math_mismatch_mask(matched[raw_col], matched[adj_col], sf)
+            raw_col_name = _merged_raw_column_name(matched, raw_col)
+            if raw_col_name is not None and adj_col in matched.columns:
+                mismatch = _math_mismatch_mask(matched[raw_col_name], matched[adj_col], sf)
                 n = int(mismatch.sum())
                 if n:
                     math_mismatch_count += n
