@@ -30,9 +30,7 @@ No backfill, audit run, strategy code, or production data changes were performed
 | 2025 | 250 | 20250102 | 20251231 | ok |
 | 2026 | 34 | 20260102 | 20260220 | partial year (YTD) |
 
-**Filename anomalies:** none. All ZIPs match `ORATS_SMV_Strikes_YYYYMMDD.zip`; no duplicate dates or bad names per year.
-
-**Reference:** legacy full-universe mirror `C:/ORATS/data/ORATS_Adjusted` has 13 year folders and 3,046 adjusted parquets (untouched; not the C5 target root).
+**Filename anomalies:** none (all match `ORATS_SMV_Strikes_YYYYMMDD.zip`). Legacy mirror `C:/ORATS/data/ORATS_Adjusted`: 13 year folders, 3,046 full-universe parquets — not the C5 target root.
 
 ---
 
@@ -81,9 +79,7 @@ Raw ORATS ZIPs  (C:/ORATS/data/ORATS_Data/{YYYY}/)
                  -> downstream Stage A (spot / surface) — path wiring deferred to C5.10 ops
 ```
 
-**Out of this pipeline:** `build_liquidity_panel.py` reads **raw** ZIPs (C4 design). Legacy default consumer path remains `C:/ORATS/data/ORATS_Adjusted` until explicitly repointed.
-
-**Prior bounded smokes (not production root):** `C:/MomentumCVG_env/cache_c4_smoke/adjusted_liquid_smoke/` (2020), `.../adjusted_liquid_scoped_split_smoke/` (C5.8B).
+**Notes:** `build_liquidity_panel.py` stays on raw ZIPs. Prior smokes under `cache_c4_smoke/` (2020 + C5.8B) — not production root. Legacy consumer default remains `ORATS_Adjusted` until repointed (C5.9 WARN).
 
 ---
 
@@ -93,8 +89,7 @@ Raw ORATS ZIPs  (C:/ORATS/data/ORATS_Data/{YYYY}/)
 2. **Worker count / runtime:** C5.6B used `--workers 1` for 253 ZIPs (~15 min); confirm parallelism and disk budget for ~3k files.
 3. **First-run flags:** root is empty of chain parquets — default skip-existing is fine; confirm no `--overwrite` unless repair.
 4. **Post-backfill audit scope:** sample years (e.g. 2020 + 2024) vs full inventory pass via `audit_adjusted_liquid.py`?
-5. **Downstream path wiring:** when to repoint `ORATSDataProvider` defaults / Stage A scripts from legacy mirror to `input/adjusted_liquid` (C5.9 WARN)?
-6. **Checkpoint sidecar:** leave `splits_hist_liquid.checkpoint.parquet` in place during chain backfill, or relocate before production run?
+5. **Downstream path wiring** and **checkpoint sidecar** handling before/at backfill start?
 
 ---
 
@@ -102,4 +97,4 @@ Raw ORATS ZIPs  (C:/ORATS/data/ORATS_Data/{YYYY}/)
 
 **READY FOR COMMAND PLANNING**
 
-Inputs exist, raw ORATS coverage is complete through 2025 plus partial 2026, and the production adjusted-liquid root is empty of chain output. Next step is a bounded command plan (year batching, workers, audit window) — not execution in this task.
+Inputs exist, raw ORATS is complete through 2025 plus partial 2026, and the production root has no chain output. Next: bounded command plan (year batching, workers, audit window).
