@@ -6,12 +6,14 @@ Pre-run only — no backfill, audit, or production data touched.
 
 ## 1. Inputs confirmed
 
-| Path | A1/A2 |
-|------|-------|
-| `C:/ORATS/data/ORATS_Data` | yes (~2,299 ZIPs, 2017–2026) |
-| `C:/MomentumCVG_env/input/liquidity/liquid_tickers.csv` | yes (2,783 tickers) |
-| `C:/MomentumCVG_env/input/adjusted_liquid/splits_hist_liquid.parquet` | yes (1,347 rows) |
-| `C:/MomentumCVG_env/input/adjusted_liquid/splits_hist_liquid.checkpoint.parquet` | yes (sidecar) |
+
+| Path                                                                             | A1/A2                        |
+| -------------------------------------------------------------------------------- | ---------------------------- |
+| `C:/ORATS/data/ORATS_Data`                                                       | yes (~2,299 ZIPs, 2017–2026) |
+| `C:/MomentumCVG_env/input/liquidity/liquid_tickers.csv`                          | yes (2,783 tickers)          |
+| `C:/MomentumCVG_env/input/adjusted_liquid/splits_hist_liquid.parquet`            | yes (1,347 rows)             |
+| `C:/MomentumCVG_env/input/adjusted_liquid/splits_hist_liquid.checkpoint.parquet` | yes (sidecar)                |
+
 
 Checkpoint sidecar **preserved, not used** by adjustment (`--splits` → `.parquet` only).
 
@@ -54,6 +56,8 @@ No `--overwrite`. Append: `"exit_code=$LASTEXITCODE" | Add-Content C:/MomentumCV
   --report-path C:/MomentumCVG/docs/tmp/c5_10b_full_backfill_audit_report.md
 ```
 
+
+
 ## 6. Stop conditions
 
 Backfill nonzero exit · log errors · writes outside adj-root · audit nonzero · missing files · outside-universe tickers · structural failures · math mismatches
@@ -67,11 +71,13 @@ Backfill nonzero exit · log errors · writes outside adj-root · audit nonzero 
 
 HD confirmation before running C5.10B:
 
-- [ ] C: drive has enough free space
-- [ ] Multi-hour run window is available
-- [ ] Use default audit depth: sample-files=25, sample-rows=20000
-- [ ] Output root confirmed: `C:/MomentumCVG_env/input/adjusted_liquid`
-- [ ] Proceed with no `--overwrite`
+- [x] C: drive has enough free space
+- [x] Multi-hour run window is available
+- [x] Use default audit depth: sample-files=25, sample-rows=20000
+- [x] Output root confirmed: `C:/MomentumCVG_env/input/adjusted_liquid`
+- [x] Proceed with no `--overwrite`
+
+
 
 ## Final status
 
