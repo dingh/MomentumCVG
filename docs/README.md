@@ -33,10 +33,11 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [surface_engine_data_flow.md](surface_engine_data_flow.md) | Sprint 002 flow diagram + box status | 2026-06-20 |
 | [surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md) | Sprint 002 component verification plan | 2026-06-20 |
 | [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) | S5/S8 portfolio & metrics design (Accepted; built Sprint 003) | 2026-06-20 |
-| [development_workflow.md](development_workflow.md) | Human + agent sprint workflow; roadmap 004–008 | 2026-06-29 |
-| [baseline_status.md](baseline_status.md) | Test and smoke-command baseline | 2026-05-23 |
-| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 004 — C4 closed; C5–C9 in progress | 2026-06-29 |
-| [v1_weekly_runbook.md](v1_weekly_runbook.md) | Weekly Stage A refresh procedure | 2026-06-29 |
+| [development_workflow.md](development_workflow.md) | Human + agent sprint workflow; roadmap 004–008 | 2026-07-04 |
+| [baseline_status.md](baseline_status.md) | Test and smoke-command baseline | 2026-07-04 |
+| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 004 — C4 + C5 closed; C6–C9 in progress | 2026-07-04 |
+| [v1_weekly_runbook.md](v1_weekly_runbook.md) | Weekly Stage A refresh procedure | 2026-07-04 |
+| [repo_map.md](repo_map.md) | Repository layout and data flow | 2026-07-04 |
 | [known_bugs.md](known_bugs.md) | Open bugs and spec drift (fix deferred) | 2026-06-14 |
 
 ## Decisions
@@ -56,6 +57,7 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | 002 | [Data contracts and S5/S8 design](sprint_memos/002_data_contracts.md) _(closed 2026-06-10)_ |
 | 003 | [S5/S8 build and ORCH](sprint_memos/003_s5_s8_build.md) _(closed 2026-06-20)_ |
 | 004 (C4) | [Liquidity panel closeout](sprint_memos/004_c4_liquidity_panel.md) _(C4 closed 2026-06-29)_ |
+| 004 (C5) | [Adjusted-liquid split layer closeout](sprint_memos/004_c5_adjusted_liquid.md) _(C5 closed 2026-07-04)_ |
 | — | [Week 0 review notes](sprint_memos/week0_review_notes.md) _(archived from agenda)_ |
 
 ## Related (repo root)

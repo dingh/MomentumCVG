@@ -110,7 +110,7 @@ Commit sequence:
 C1 — Manifest types + snapshot_id / build_id hashing
 C2 — CLI skeleton: plan, --as-of resolution, exit codes
 C4 — rolling 3-month liquidity panel
-C5 — split golden tests + split-audit
+C5 — split golden tests + adjusted-liquid backfill + audit_adjusted_liquid ✓
 C6 — surface tests T1–T6 + surface-audit
 C7 — PIT universe harness (tests + audit module)
 C8 — refresh --dry-run + bounded refresh subprocess wiring

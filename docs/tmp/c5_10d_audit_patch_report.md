@@ -65,6 +65,6 @@ Inventory: 2,299 raw ZIPs = 2,299 adjusted parquets, 0 missing/extra. Outside-un
 
 **ACCEPT C5.10B AFTER AUDIT PATCH**
 
-Production adjusted-liquid root `C:/MomentumCVG_env/input/adjusted_liquid` (2017–2026) is structurally complete and math-consistent on the patched audit. Ready for post-backfill downstream smoke / path wiring (deferred scope).
+Production adjusted-liquid root `C:/MomentumCVG_env/input/adjusted_liquid` (2017–2026) is structurally complete and math-consistent on the patched audit. Downstream default wiring completed in **C5.11A** (see closeout memo).
 
 No backfill rerun required. Do not patch `split_adjuster`.

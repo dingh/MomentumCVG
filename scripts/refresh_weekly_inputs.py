@@ -18,7 +18,7 @@ What C2 does **not** do (deferred commits)
 ------------------------------------------
 * Subprocess wiring to Stage A scripts (C8).
 * Manifest writes / ``write_manifest`` (C8).
-* Real validation or audit reports (C3/C5/C6).
+* Real validation or audit reports (C3/C6); split audit script exists standalone (C5 ✓); CLI wiring → C8.
 * Reading cache artifacts or rebuilding liquidity (C3–C8).
 
 Exit codes
@@ -327,8 +327,12 @@ def cmd_validate(_ctx: CliContext, _args: argparse.Namespace) -> int:
 
 
 def cmd_split_audit(_ctx: CliContext, _args: argparse.Namespace) -> int:
-    """Stub: exit 2 until C5 split golden tests + audit report exist."""
-    print("split-audit not implemented until C5", file=sys.stderr)
+    """Stub: exit 2 until C8 wires ``scripts/audit_adjusted_liquid.py`` (C5 audit script exists)."""
+    print(
+        "split-audit CLI not wired until C8; run scripts/audit_adjusted_liquid.py "
+        "(see docs/sprint_memos/004_c5_adjusted_liquid.md)",
+        file=sys.stderr,
+    )
     return 2
 
 

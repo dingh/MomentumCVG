@@ -183,7 +183,7 @@ class TestStubCommands:
         assert code == 2
         assert "C3" in err
 
-    def test_split_audit_returns_two_and_mentions_c5(
+    def test_split_audit_returns_two_and_points_to_standalone_audit(
         self, cli_module, orats_root, mock_orats_day, capsys
     ):
         mock_orats_day(date(2026, 6, 26))
@@ -193,7 +193,8 @@ class TestStubCommands:
             capsys=capsys,
         )
         assert code == 2
-        assert "C5" in err
+        assert "C8" in err
+        assert "audit_adjusted_liquid" in err
 
     def test_surface_audit_returns_two_and_mentions_c6(
         self, cli_module, orats_root, mock_orats_day, capsys

@@ -1,7 +1,7 @@
 # Repository map
 
 **Status:** Active  
-**Last updated:** 2026-05-23 (Week 0 review revision)
+**Last updated:** 2026-07-04 (C5 adjusted-liquid closeout)
 
 ---
 
@@ -24,8 +24,11 @@ MomentumCVG/
 
 | Path | Purpose |
 |------|---------|
-| `C:/ORATS/data/ORATS_Adjusted` | ORATS adjusted option chains (parquet) |
-| `C:/MomentumCVG_env/cache/` | Liquidity panel, features, surfaces, results |
+| `C:/ORATS/data/ORATS_Data` | ORATS raw daily ZIPs (C4 liquidity panel input) |
+| `C:/MomentumCVG_env/input/adjusted_liquid` | **Production** split-adjusted chains for C4 liquid universe (C5) |
+| `C:/MomentumCVG_env/input/liquidity` | C4 rolling liquidity panel artifacts |
+| `C:/ORATS/data/ORATS_Adjusted` | Legacy full-universe adjusted mirror (maintenance only; not active default) |
+| `C:/MomentumCVG_env/cache/` | Spot DB, surfaces, features, manifests |
 | `C:/MomentumCVG_env/venv/` | Python virtual environment |
 
 Activate venv:
@@ -41,7 +44,8 @@ Activate venv:
 | Module | Role |
 |--------|------|
 | `core/models.py` | Domain types: legs, strategies, signals, positions |
-| `data/orats_provider.py` | Load ORATS parquet chains |
+| `data/orats_provider.py` | Load split-adjusted ORATS parquet chains |
+| `data/paths.py` | Canonical raw / adjusted-liquid / legacy path constants |
 | `data/spot_price_db.py` | Spot prices |
 | `features/momentum_calculator.py` | Momentum features |
 | `features/cvg_calculator.py` | CVG (vol gap) features |
@@ -76,10 +80,13 @@ See [decisions/001_canonical_backtest_path.md](decisions/001_canonical_backtest_
 ## Data flow (v1 target)
 
 ```
-ORATS parquet
-    → scripts/build_liquidity_panel.py → ticker_liquidity_panel.parquet
-    → scripts/build_features.py        → momentum + CVG features
-    → scripts/precompute_option_surface.py → surface meta + quotes
+ORATS raw ZIPs (ORATS_Data)
+    → build_liquidity_panel.py → ticker_liquidity_panel.parquet (C4)
+    → apply_split_adjustment.py (filtered) → input/adjusted_liquid/*.parquet (C5)
+
+adjusted_liquid parquets
+    → ORATSDataProvider / extract_spot_prices / precompute_option_surface → spot + surface cache
+    → build_features.py        → momentum + CVG features (Sprint 005)
 
 At rebalance date t:
     step1_get_universe (liquidity panel, PIT)
@@ -94,10 +101,12 @@ At rebalance date t:
 ## Scripts (typical order)
 
 | Script | Output |
-|--------|----------|
-| `fetch_splits.py` / `apply_split_adjustment.py` | Adjusted chains |
+|--------|--------|
+| `fetch_splits.py` | Scoped split history (`splits_hist_liquid.parquet`) |
+| `apply_split_adjustment.py` | Filtered adjusted chains → `input/adjusted_liquid` |
+| `audit_adjusted_liquid.py` | PASS/WARN/FAIL audit report |
 | `extract_spot_prices.py` | Spot DB |
-| `build_liquidity_panel.py` | Liquidity panel |
+| `build_liquidity_panel.py` | Liquidity panel (raw ORATS only) |
 | `build_features.py` | Feature parquet |
 | `precompute_option_surface.py` | Surface artifacts |
 | `run_surface_search.py` | Backtest / search results |
@@ -110,7 +119,7 @@ At rebalance date t:
 & C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest c:\MomentumCVG\tests\ -q
 ```
 
-326 unit tests under `tests/unit/` (no integration suite yet).
+326+ unit tests under `tests/unit/` — run `python -m pytest tests/ -q` for current count (see [baseline_status.md](baseline_status.md)).
 
 ---
 

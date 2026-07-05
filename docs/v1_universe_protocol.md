@@ -1,7 +1,7 @@
 # V1 universe protocol
 
 **Status:** Active  
-**Last updated:** 2026-06-29 (C4 rolling 12-week panel implemented)
+**Last updated:** 2026-07-04 (C5 adjusted-liquid root referenced)
 
 ---
 
@@ -35,6 +35,8 @@ Panel fields (built by C4 rolling window):
 | `has_valid_atm_pair` | Eligibility gate — `valid_quote_weeks >= 3` in lookback |
 
 **Panel build (Sprint 004 C4):** reads **ORATS raw** ZIPs (`ORATS_Data`); no split adjustment in liquidity stage. Default `lookback_weeks=12`, `min_valid_quote_weeks=3`, `dte_min=5`, `dte_max=60`, `dvol_top_pct=0.20`, `spread_bot_pct=1.0`.
+
+**Adjusted chains (Sprint 004 C5):** surface/backtest economics read split-adjusted parquets from `C:/MomentumCVG_env/input/adjusted_liquid` (C4 liquid-universe filter). See [sprint_memos/004_c5_adjusted_liquid.md](sprint_memos/004_c5_adjusted_liquid.md).
 
 **Precompute superset vs trading universe:**
 

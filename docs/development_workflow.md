@@ -1,7 +1,7 @@
 # Development workflow
 
 **Status:** Active  
-**Last updated:** 2026-06-29 (C4 liquidity panel closed)
+**Last updated:** 2026-07-04 (C5 adjusted-liquid closed)
 
 ---
 
@@ -96,7 +96,7 @@ Aligned with [agenda/current_sprint.md](agenda/current_sprint.md). Sprints 000�
 
 | Sprint | Status | Theme | Delivers | Explicitly not |
 |--------|--------|-------|----------|----------------|
-| **004** | **Active** | Input snapshot + split/PIT + **liquidity panel (C4 ✓)** + surface precompute audit | CLI, rolling panel on disk, split + **A1/A2** tests/audit, PIT harness, runbook | Mom/CVG, straddle history, backtest smoke |
+| **004** | **Active** | Input snapshot + split/PIT + **liquidity panel (C4 ✓)** + **adjusted-liquid (C5 ✓)** + surface precompute audit | CLI, rolling panel, scoped adjust + audit, **A1/A2** tests/audit, PIT harness, runbook | Mom/CVG, straddle history, backtest smoke |
 | **005** | Planned | **All feature pipeline** (straddle history, features, mom/CVG, A4, paths, trade-date calendar) | May absorb earnings/pipeline gaps from 004 | L4 backtest smoke |
 | **006** | Planned | Real-data **backtest** smoke + `run_surface_search` wiring | L4 S1→S8 | Start only after **004 input + 005 features** trustworthy |
 | **007** | Planned | Tier B conservative baseline | 2020→latest canonical run; conservative fills; metrics table in [backtest_evaluation_protocol.md](backtest_evaluation_protocol.md); SurfaceRunner `run_manifest` | Sensitivity matrix, paper trading |

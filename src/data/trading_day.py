@@ -32,7 +32,7 @@ def orats_daily_parquet_path(orats_adj_root: Path | str, day: date) -> Path:
 
     Example::
 
-        C:/ORATS/data/ORATS_Adjusted/2026/ORATS_SMV_Strikes_20260626.parquet
+        C:/MomentumCVG_env/input/adjusted_liquid/2026/ORATS_SMV_Strikes_20260626.parquet
     """
     # Reject datetime — callers must pass a plain date so path keys stay unambiguous.
     if isinstance(day, datetime) or not isinstance(day, date):

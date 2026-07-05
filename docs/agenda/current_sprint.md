@@ -1,14 +1,18 @@
 # Current sprint — 004
 
-**Updated:** 2026-06-29 (C4 closed; backfill + docs)  
-**Status:** Active — **C1** + **C2** + **C4 closed**; **C3** deferred until C4–C8  
+**Updated:** 2026-07-04 (C5 closed; downstream path wiring)  
+**Status:** Active — **C1** + **C2** + **C4** + **C5 closed**; **C3** deferred until C4–C8  
 **Mode:** Build (HD decisions locked below)
 
 **C4 closeout memo:** [sprint_memos/004_c4_liquidity_panel.md](../sprint_memos/004_c4_liquidity_panel.md)
 
+**C5 closeout memo:** [sprint_memos/004_c5_adjusted_liquid.md](../sprint_memos/004_c5_adjusted_liquid.md)
+
 **C1 receipt design (canonical):** [docs/tmp/c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md)
 
 **C4 liquidity panel design (canonical):** [docs/tmp/c4_liquidity_panel_design_plan.md](../tmp/c4_liquidity_panel_design_plan.md)
+
+**C5 split-adjustment design (canonical):** [docs/tmp/c5_split_adjustment_design_plan.md](../tmp/c5_split_adjustment_design_plan.md)
 
 **Execution guardrails (read with this doc):** [sprint004_execution_guardrails.md](sprint004_execution_guardrails.md)
 
@@ -254,7 +258,7 @@ Optional: `--strict`, `--mode incremental|backfill|repair` (default **`increment
 |------------|----------|
 | **`plan`** | Step order, inputs, outputs, **`--mode`**, skip flags, expected touch surface (append vs recompute vs repair); notes **feature branch → Sprint 005** |
 | **`validate`** | Inventory for splits, spot, A3, **A1/A2**; PASS/WARN/FAIL; no A4 |
-| **`split-audit`** | Split tests + configurable cache scan |
+| **`split-audit`** | Wraps `audit_adjusted_liquid.py` (C8); standalone script **done (C5)** |
 | **`surface-audit`** | § Option surface precompute spec report |
 | **`refresh --dry-run`** | Planned execution only (includes mode + date window) |
 | **`refresh`** | Runs wired core + surface steps per **`--mode`**; manifest + `build_id` |
@@ -425,7 +429,7 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 | **C1** ✓ | Manifest types + `snapshot_id` / `build_id` hashing | `src/data/input_snapshot.py`, `tests/unit/test_input_snapshot.py` | unit tests green |
 | **C2** ✓ | CLI skeleton: `plan`, `--as-of` resolution, exit codes | `src/data/trading_day.py`, `scripts/refresh_weekly_inputs.py`, unit tests | `plan --as-of …`; pytest |
 | **C4** ✓ | Rolling weekly PIT panel in `build_liquidity_panel.py` | script + `tests/unit/test_build_liquidity_panel.py` | panel rebuild or FAIL report |
-| **C5** | Split golden tests + `split-audit` | `tests/unit/test_split_adjuster.py`, audit module | pytest + `split-audit` sample run |
+| **C5** ✓ | Split golden tests + adjusted-liquid backfill + `audit_adjusted_liquid` | `split_adjuster`, `audit_adjusted_liquid.py`, `paths.py`, tests | pytest + full production audit PASS |
 | **C6** | Surface tests T1–T6 + `surface-audit` | extend contract/unit, audit module | pytest + `surface-audit` sample run |
 | **C7** | PIT universe harness (tests + audit module) | tests + CLI harness | sample dates in PIT report section |
 | **C8** | `refresh --dry-run` + bounded `refresh` subprocess wiring | CLI | dry-run manifest shape |
@@ -451,7 +455,7 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 | 2 | Manifest module | `src/data/input_snapshot.py` (or adjacent) | **Blocker** |
 | 3 | Validation report | CLI `validate` | **Blocker** |
 | 4 | Rolling liquidity panel | `scripts/build_liquidity_panel.py` | **Blocker** (rebuild attempt; FAIL if source insufficient) |
-| 5 | Split tests + audit | tests + `split-audit` | **Blocker** |
+| 5 | Split tests + adjusted-liquid audit | tests + `audit_adjusted_liquid.py` (CLI `split-audit` → C8) | **Done (C5)** |
 | 6 | Surface precompute audit + tests | tests + `surface-audit`; extend contract | **Blocker** |
 | 7 | PIT universe harness | tests + harness (C7); wired into `validate` in C3 | **Blocker** |
 | 8 | Runbook | [v1_weekly_runbook.md](../v1_weekly_runbook.md) | **Blocker** |
@@ -467,7 +471,7 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 |-------|------|---------------|
 | **1** | `snapshot_id` / `build_id` + CLI skeleton + `--as-of` + **`--mode`** resolution | Commands run; `plan` shows incremental vs backfill vs repair |
 | **2** | Rolling 3-month panel **rebuild attempt** (C4) | Panel on disk with PASS/WARN, or **FAIL** documented (insufficient source months) |
-| **3** | Split unit/golden + `split-audit` (C5) | ≥1 substantive run |
+| **3** | Split unit/golden + adjusted-liquid audit (C5) ✓ | Production backfill audited; downstream defaults wired |
 | **4** | Surface tests T1–T6 + `surface-audit` (C6) | ≥1 sample run; report archived |
 | **5** | PIT universe harness (C7) | § PIT universe criteria |
 | **6** | Bounded `refresh` + `--dry-run` (core + surface) (C8) | Wired; no feature steps |
@@ -513,7 +517,7 @@ Invariants: snapshot date ≤ `trade_date`; rolling uses only data ≤ `trade_da
 - [ ] Validation report for **A1/A2/A3** + splits + spot (**no A4**)
 - [ ] Rolling panel: **rebuild attempted**; PASS/WARN, or **FAIL** with documented insufficient source data (does not fake rolling)
 - [ ] PIT universe samples pass
-- [ ] Split golden tests + split-audit ≥1 run
+- [x] Split golden tests + adjusted-liquid audit ≥1 substantive run (`audit_adjusted_liquid.py` on production root; CLI `split-audit` wiring → C8)
 - [ ] Surface spec T1–T7 + surface-audit ≥1 sample run
 - [ ] Runbook + **v1_universe_protocol** updated at closeout
 - [ ] CLI `plan` output: no C2-era **provisional/deferred** scaffolding (blocker #13); tests updated
@@ -574,6 +578,7 @@ Stale docs (e.g. `backtest_evaluation_protocol.md` “Sprint 004–005 baseline�
 | 2026-06-21 v8 | C2 implemented: `trading_day.py`, `refresh_weekly_inputs.py` CLI (`plan`, `refresh --dry-run`, stub subcommands), exit-code contract; closeout blocker #13 for provisional plan copy |
 | 2026-06-24 v11 | C4 input path: ORATS_Data raw ZIPs (default `--data-root`); liquidity before scoped split adjust |
 | 2026-06-29 v12 | **C4 closed:** smoke tests PASS; full backfill 2017→2026-02-20 on `input/liquidity`; incremental fix + progress bar; memo [004_c4_liquidity_panel.md](../sprint_memos/004_c4_liquidity_panel.md) |
+| 2026-07-04 v13 | **C5 closed:** scoped splits + filtered adjust → `input/adjusted_liquid` (2299 parquets); C5.10D audit PASS; C5.11A downstream defaults; memo [004_c5_adjusted_liquid.md](../sprint_memos/004_c5_adjusted_liquid.md) |
 
 ---
 
@@ -582,9 +587,17 @@ Stale docs (e.g. `backtest_evaluation_protocol.md` “Sprint 004–005 baseline�
 ```powershell
 & C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/ -q
 
+# C5 adjusted-liquid audit + regression (production root; standalone until C8 CLI wiring)
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/audit_adjusted_liquid.py `
+  --raw-root C:/ORATS/data/ORATS_Data `
+  --adj-root C:/MomentumCVG_env/input/adjusted_liquid `
+  --splits C:/MomentumCVG_env/input/adjusted_liquid/splits_hist_liquid.parquet `
+  --ticker-universe C:/MomentumCVG_env/input/liquidity/liquid_tickers.csv
+& C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_fetch_splits_cli.py tests/unit/test_apply_split_adjustment_cli.py tests/unit/test_split_adjuster.py tests/unit/test_split_adjuster_filtered_zip.py tests/unit/test_ticker_universe.py tests/unit/test_audit_adjusted_liquid.py tests/unit/test_adjusted_liquid_paths.py -q
+
 & C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py plan --as-of 2026-06-26
 & C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py validate --as-of 2026-06-26
-& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py split-audit --as-of 2026-06-26
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py split-audit --as-of 2026-06-26  # stub → C8; use audit_adjusted_liquid.py above
 & C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py surface-audit --as-of 2026-06-26
 & C:/MomentumCVG_env/venv/Scripts/python.exe scripts/refresh_weekly_inputs.py refresh --as-of 2026-06-26 --dry-run
 ```

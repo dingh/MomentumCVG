@@ -1,5 +1,7 @@
 # C5.9 Downstream Adjusted-Liquid Input Contract Smoke Report
 
+> **Historical (pre-C5.10/C5.11A).** Path-default gap noted below was resolved in **C5.11A** (`src/data/paths.py`, closeout [004_c5_adjusted_liquid.md](../sprint_memos/004_c5_adjusted_liquid.md)). Do not treat § path/config gap as current state.
+
 **Date/time:** 2026-07-04  
 **Commit SHA:** `a99468f15443d7a268a34229f1de0f0f0ff5cfd5`  
 **Mode:** Operational smoke only — no code changes

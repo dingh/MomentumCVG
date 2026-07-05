@@ -2,6 +2,7 @@
 
 **Commit:** C4 (implemented)  
 **Status:** Draft v4 — reads **ORATS_Data raw ZIPs** directly (no ORATS_Adjusted dependency)  
+**Post-C5 (2026-07-04):** Downstream surface/backtest reads **`input/adjusted_liquid`**, not legacy `ORATS_Adjusted` — see [sprint_memos/004_c5_adjusted_liquid.md](../sprint_memos/004_c5_adjusted_liquid.md).
 **Prerequisite:** C1 + C2 accepted  
 **Principle:** Replace the monthly adjusted-price panel with a **weekly point-in-time liquidity component** built from **raw** option observations via a three-stage pipeline (daily → weekly → rolling 12-week panel). Preserve Step1 consumer contract; do not touch strategy/S5/S8/ORCH.
 

@@ -47,7 +47,9 @@ Python venv (Windows):
 
 External data (not in repo):
 
-- ORATS: `C:/ORATS/data/ORATS_Adjusted`
+- Raw ORATS: `C:/ORATS/data/ORATS_Data`
+- Production adjusted chains (C5): `C:/MomentumCVG_env/input/adjusted_liquid`
+- Legacy full-universe mirror: `C:/ORATS/data/ORATS_Adjusted` (maintenance only)
 - Cache: `C:/MomentumCVG_env/cache/`
 
 ## Definition of done
@@ -65,6 +67,7 @@ A task is done when:
 |-----|---------|
 | [docs/README.md](docs/README.md) | Active doc index |
 | [docs/repo_map.md](docs/repo_map.md) | Repository layout and data flow |
+| [docs/sprint_memos/004_c5_adjusted_liquid.md](docs/sprint_memos/004_c5_adjusted_liquid.md) | C5 adjusted-liquid closeout |
 | [docs/backtest_evaluation_protocol.md](docs/backtest_evaluation_protocol.md) | Go/no-go windows and fills |
 | [docs/v1_universe_protocol.md](docs/v1_universe_protocol.md) | PIT liquidity universe |
 | [docs/v1_ops_model.md](docs/v1_ops_model.md) | Trade volume / broker thresholds |

@@ -2,7 +2,7 @@
 
 ## Current repo SHA
 
-`c122963c0b5e71f01c8ad86e1e271a1a4842ae0a`
+`0d2357381e373f217e21ef2213749a5880f195a9` (C5.11A path wiring commit)
 
 ## Accepted adjusted-liquid root
 

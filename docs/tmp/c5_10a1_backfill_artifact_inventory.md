@@ -77,7 +77,7 @@ Initial inventory was read-only. Follow-up worker smoke (2020, `--workers 8`) ra
 | Workers | **`--workers 10`**, all target years in one invocation (16-core host) |
 | Overwrite | **No** — skip-existing on clean production root |
 | Post-backfill audit | **Full inventory pass** via `audit_adjusted_liquid.py` |
-| Downstream path wiring | **Deferred** — backfill first; repoint `ORATSDataProvider` / Stage A scripts when consuming new root (C5.9 WARN) |
+| Downstream path wiring | **Done (C5.11A)** — see [c5_11a_downstream_path_wiring_report.md](c5_11a_downstream_path_wiring_report.md) |
 | Checkpoint sidecar | **Leave in place** — not read by adjustment |
 
 ---

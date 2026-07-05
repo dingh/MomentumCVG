@@ -1,7 +1,7 @@
 # Baseline status
 
 **Status:** Active  
-**Last recorded:** 2026-05-23
+**Last recorded:** 2026-07-04 (C5 adjusted-liquid closeout)
 
 ---
 
@@ -22,7 +22,15 @@
 | Command | `python -m pytest tests/ -q` |
 | Result | **335 passed** |
 | Duration | ~4.0s |
-| Date | 2026-05-27 |
+| Date | 2026-07-04 (C5 subset; full suite count varies) |
+
+### C5 adjusted-liquid regression (no ORATS cache required)
+
+```powershell
+C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_fetch_splits_cli.py tests/unit/test_apply_split_adjustment_cli.py tests/unit/test_split_adjuster.py tests/unit/test_split_adjuster_filtered_zip.py tests/unit/test_ticker_universe.py tests/unit/test_audit_adjusted_liquid.py tests/unit/test_adjusted_liquid_paths.py -q
+```
+
+Production adjusted chains: `C:/MomentumCVG_env/input/adjusted_liquid` (see [sprint_memos/004_c5_adjusted_liquid.md](sprint_memos/004_c5_adjusted_liquid.md)).
 
 No integration or end-to-end backtest smoke test in CI yet.
 
@@ -83,3 +91,4 @@ python scripts/run_backtest.py configs/baseline_sp500.json
 |------|--------|
 | 2026-05-23 | Week 0: 326 tests green via project venv |
 | 2026-05-27 | Sprint 001 Session B: +9 surface runner data-flow tests; 335 total |
+| 2026-07-04 | C5 closeout: adjusted-liquid path constants + audit regression subset documented |
