@@ -16,7 +16,7 @@ File structure expected:
     data_root/YYYY/ORATS_SMV_Strikes_YYYYMMDD.parquet
     
 Example:
-    c:/ORATS/data/ORATS_Adjusted/2023/ORATS_SMV_Strikes_20230103.parquet
+    C:/MomentumCVG_env/input/adjusted_liquid/2023/ORATS_SMV_Strikes_20230103.parquet
 """
 
 from typing import Protocol, List, Optional, Tuple
@@ -27,6 +27,7 @@ from functools import lru_cache
 import pandas as pd
 
 from src.core.models import OptionQuote
+from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT
 
 
 class IDataProvider(Protocol):
@@ -87,7 +88,8 @@ class ORATSDataProvider:
     """
     Data provider for ORATS parquet files.
     
-    Loads split-adjusted option data from ORATS_Adjusted folder.
+    Loads split-adjusted option data from the C5 adjusted-liquid parquet store
+    (default ``DEFAULT_ADJUSTED_LIQUID_ROOT``).
     Handles wide-format data (each row contains both call and put).
     
     File structure expected:
@@ -103,7 +105,7 @@ class ORATSDataProvider:
     
     def __init__(
         self,
-        data_root: str = "c:/ORATS/data/ORATS_Adjusted",
+        data_root: str | Path | None = None,
         min_volume: int = 10,
         min_open_interest: int = 100,
         min_bid: float = 0.01,
@@ -114,7 +116,8 @@ class ORATSDataProvider:
         Initialize ORATS data provider with LRU caching.
         
         Args:
-            data_root: Path to ORATS_Adjusted folder (contains split-adjusted data)
+            data_root: Path to split-adjusted daily parquet root (default:
+                ``DEFAULT_ADJUSTED_LIQUID_ROOT``)
             min_volume: Minimum option volume filter
             min_open_interest: Minimum open interest filter
             min_bid: Minimum bid price filter (filters out illiquid far OTM)
@@ -125,7 +128,7 @@ class ORATSDataProvider:
                        - For date batching: only 2 dates active (entry + expiry)
                        - 16 workers × 250MB = 4GB total (safe for 32GB RAM)
         """
-        self.data_root = Path(data_root)
+        self.data_root = Path(data_root or DEFAULT_ADJUSTED_LIQUID_ROOT)
         self.min_volume = min_volume
         self.min_open_interest = min_open_interest
         self.min_bid = min_bid
@@ -158,7 +161,8 @@ class ORATSDataProvider:
         if not file_path.exists():
             raise FileNotFoundError(
                 f"ORATS data file not found: {file_path}\n"
-                f"Expected format: ORATS_Adjusted/YYYY/ORATS_SMV_Strikes_YYYYMMDD.parquet"
+                f"Expected format: {{root}}/YYYY/ORATS_SMV_Strikes_YYYYMMDD.parquet "
+                f"(default root: {DEFAULT_ADJUSTED_LIQUID_ROOT})"
             )
         
         return pd.read_parquet(file_path)

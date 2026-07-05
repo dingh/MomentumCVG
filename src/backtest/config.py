@@ -26,6 +26,7 @@ from typing import Dict, Any, List, Optional
 import pandas as pd
 
 from src.data.orats_provider import ORATSDataProvider, IDataProvider
+from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT
 from src.strategy.momentum_cvg import MomentumCVGStrategy
 from src.strategy.base import IStrategy
 from src.strategy.universe_filter import SP500UniverseFilter, AllTickersUniverseFilter, IUniverseFilter
@@ -72,7 +73,7 @@ DEFAULT_CONFIG = {
     "data_provider": {
         "type": "ORATS",
         "params": {
-            "data_root": "c:/ORATS/data/ORATS_Adjusted",
+            "data_root": DEFAULT_ADJUSTED_LIQUID_ROOT.as_posix(),
             "min_volume": 10,
             "min_open_interest": 0,
             "min_bid": 0.05,

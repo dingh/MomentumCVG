@@ -45,6 +45,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.data.orats_provider import ORATSDataProvider
+from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT
 
 
 # Setup logging
@@ -60,7 +61,7 @@ def get_trading_dates_from_files(data_root: Path, start_year: int, end_year: int
     Get all available trading dates by scanning ORATS file names.
     
     Args:
-        data_root: Path to ORATS_Adjusted folder
+        data_root: Path to split-adjusted daily parquet root
         start_year: First year to include
         end_year: Last year to include
         
@@ -139,8 +140,8 @@ def main():
     parser.add_argument(
         '--data-root',
         type=str,
-        default='C:/ORATS/data/ORATS_Adjusted',
-        help='Path to ORATS_Adjusted folder'
+        default=str(DEFAULT_ADJUSTED_LIQUID_ROOT),
+        help=f'Path to split-adjusted daily parquet root (default: {DEFAULT_ADJUSTED_LIQUID_ROOT})'
     )
     parser.add_argument(
         '--output',

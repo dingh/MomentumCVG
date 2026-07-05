@@ -15,7 +15,7 @@ Key responsibilities:
 
 Example usage:
     # Setup components
-    data_provider = ORATSDataProvider(data_root='c:/ORATS/data/ORATS_Adjusted')
+    data_provider = ORATSDataProvider()  # default: adjusted-liquid root
     features = pd.read_parquet('cache/features_all.parquet')
     strategy = MomentumCVGStrategy(max_lag=60, min_lag=8, cvg_filter_pct=0.50)
     optimizer = EqualWeightOptimizer(max_positions=10)

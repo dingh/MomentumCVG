@@ -50,12 +50,13 @@ _SCRIPT_DIR   = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
+from src.data.paths import LEGACY_ORATS_ADJUSTED_ROOT, RAW_ORATS_ROOT
 from src.data.split_adjuster import SplitAdjuster  # noqa: E402
 from src.data.ticker_universe import load_ticker_universe  # noqa: E402
 
 # ── defaults ──────────────────────────────────────────────────────────────────
-DEFAULT_RAW_ROOT    = Path("C:/ORATS/data/ORATS_Data")
-DEFAULT_ADJ_ROOT    = Path("C:/ORATS/data/ORATS_Adjusted")
+DEFAULT_RAW_ROOT = RAW_ORATS_ROOT
+DEFAULT_ADJ_ROOT = LEGACY_ORATS_ADJUSTED_ROOT
 DEFAULT_SPLITS_PATH = Path("C:/MomentumCVG_env/cache/splits_hist.parquet")
 
 # ── logging ───────────────────────────────────────────────────────────────────

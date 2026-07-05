@@ -34,6 +34,7 @@ from tqdm import tqdm
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT
 from src.features.straddle_analyzer import StraddleHistoryBuilder
 from src.data.spot_price_db import SpotPriceDB
 
@@ -296,8 +297,8 @@ def main():
     parser = argparse.ArgumentParser(
         description='Precompute historical weekly straddle P&L (7 DTE target)'
     )
-    parser.add_argument('--data-root', type=str, default='C:/ORATS/data/ORATS_Adjusted',
-                        help='Path to ORATS data directory (default: C:/ORATS/data/ORATS_Adjusted)')
+    parser.add_argument('--data-root', type=str, default=str(DEFAULT_ADJUSTED_LIQUID_ROOT),
+                        help=f'Path to split-adjusted daily parquet root (default: {DEFAULT_ADJUSTED_LIQUID_ROOT})')
     parser.add_argument('--start-year', type=int, default=2018,
                         help='Start year (default: 2018)')
     parser.add_argument('--end-year', type=int, default=2024,

@@ -48,6 +48,7 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT
 from src.features.option_surface_analyzer import OptionSurfaceBuilder
 from src.data.spot_price_db import SpotPriceDB
 
@@ -239,8 +240,8 @@ def main() -> None:
         description="Precompute an expiry-level option quote surface for fly / condor backtests."
     )
     parser.add_argument(
-        '--data-root', type=str, default='C:/ORATS/data/ORATS_Adjusted',
-        help='Path to ORATS adjusted parquet data directory (default: C:/ORATS/data/ORATS_Adjusted)',
+        '--data-root', type=str, default=str(DEFAULT_ADJUSTED_LIQUID_ROOT),
+        help=f'Path to split-adjusted daily parquet root (default: {DEFAULT_ADJUSTED_LIQUID_ROOT})',
     )
     parser.add_argument(
         '--start-year', type=int, default=2018,

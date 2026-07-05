@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from ..data.orats_provider import ORATSDataProvider
+from ..data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT
 from . import COLUMN_MAP
 from .chain_slice import ChainSlice
 
@@ -25,20 +26,21 @@ class ChainLoader:
     Parameters
     ----------
     data_root : str
-        Path to ORATS_Adjusted folder.
+        Path to split-adjusted daily parquet root.
     cache_size : int
         Number of daily files kept in the LRU cache.
     """
 
     def __init__(
         self,
-        data_root: str = "c:/ORATS/data/ORATS_Adjusted",
+        data_root: str | None = None,
         cache_size: int = 5,
     ) -> None:
         # We only need the raw file-loading capability of ORATSDataProvider.
         # Set filter thresholds to zero so _load_day_data gives everything.
+        root = data_root or str(DEFAULT_ADJUSTED_LIQUID_ROOT)
         self._provider = ORATSDataProvider(
-            data_root=data_root,
+            data_root=root,
             min_volume=0,
             min_open_interest=0,
             min_bid=0.0,

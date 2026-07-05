@@ -43,6 +43,7 @@ from tqdm import tqdm
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT
 from src.features.ironfly_analyzer import IronFlyHistoryBuilder
 from src.data.spot_price_db import SpotPriceDB
 
@@ -229,8 +230,8 @@ def main() -> None:
         )
     )
     parser.add_argument(
-        '--data-root', type=str, default='C:/ORATS/data/ORATS_Adjusted',
-        help='Path to ORATS data directory (default: C:/ORATS/data/ORATS_Adjusted)',
+        '--data-root', type=str, default=str(DEFAULT_ADJUSTED_LIQUID_ROOT),
+        help=f'Path to split-adjusted daily parquet root (default: {DEFAULT_ADJUSTED_LIQUID_ROOT})',
     )
     parser.add_argument(
         '--start-year', type=int, default=2018,

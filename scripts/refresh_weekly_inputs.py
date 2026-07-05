@@ -54,11 +54,12 @@ from src.data.input_snapshot import (  # noqa: E402
     INPUT_SNAPSHOT_SCHEMA_VERSION,
     compute_snapshot_id,
 )
+from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT
 from src.data.trading_day import resolve_as_of_trading_day  # noqa: E402
 
 # ── Defaults (match existing Stage A scripts; overridable via CLI flags) ───────
 DEFAULT_CACHE_DIR = Path("C:/MomentumCVG_env/cache")
-DEFAULT_ORATS_ADJ_ROOT = Path("C:/ORATS/data/ORATS_Adjusted")
+DEFAULT_ORATS_ADJ_ROOT = DEFAULT_ADJUSTED_LIQUID_ROOT
 
 # Cache-relative artifact paths for the weekly input receipt. Kept here (not in C1)
 # so C1 stays a minimal receipt module; CLI owns operator-facing path defaults.

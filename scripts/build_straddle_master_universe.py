@@ -19,6 +19,7 @@ for candidate in [Path.cwd(), THIS_FILE.parent, THIS_FILE.parent.parent]:
         sys.path.insert(0, str(candidate))
 
 from src.data.orats_provider import ORATSDataProvider  # type: ignore
+from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT  # type: ignore
 
 
 @dataclass(frozen=True)
@@ -319,7 +320,7 @@ def build_universe(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build a broad ATM-straddle master universe from ORATS files.")
-    parser.add_argument("--data-root", type=str, default="c:/ORATS/data/ORATS_Adjusted")
+    parser.add_argument("--data-root", type=str, default=str(DEFAULT_ADJUSTED_LIQUID_ROOT))
     parser.add_argument("--start-date", type=parse_date, default=None)
     parser.add_argument("--end-date", type=parse_date, default=None)
     parser.add_argument("--min-dte", type=int, default=5)
