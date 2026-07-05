@@ -65,7 +65,7 @@ Initial inventory was read-only. Follow-up worker smoke (2020, `--workers 8`) ra
 
 **Why:** `SplitAdjuster.run()` parallelizes **by year**, not by ZIP within a year. One year → one worker regardless of `--workers 8`.
 
-**Backfill speed:** run **all years in one command** with `--workers 8` (up to 8 year folders in parallel; ~2–3× vs serial years, not 8×). Do not run year-by-year if speed matters.
+**Backfill speed:** run **all years in one command** with `--workers 10` (one worker per year on 16-core host). Do not run year-by-year if speed matters.
 
 ---
 
@@ -74,7 +74,7 @@ Initial inventory was read-only. Follow-up worker smoke (2020, `--workers 8`) ra
 | Topic | Decision |
 |-------|----------|
 | Year window | **2017 → latest 2026** |
-| Workers | **`--workers 8`**, all target years in one invocation |
+| Workers | **`--workers 10`**, all target years in one invocation (16-core host) |
 | Overwrite | **No** — skip-existing on clean production root |
 | Post-backfill audit | **Full inventory pass** via `audit_adjusted_liquid.py` |
 | Downstream path wiring | **Deferred** — backfill first; repoint `ORATSDataProvider` / Stage A scripts when consuming new root (C5.9 WARN) |
@@ -87,7 +87,7 @@ Initial inventory was read-only. Follow-up worker smoke (2020, `--workers 8`) ra
 ```text
 Raw ORATS ZIPs 2017–2026
   + liquid_tickers.csv + splits_hist_liquid.parquet
-    -> apply_split_adjustment.py  (--workers 8; no --overwrite)
+    -> apply_split_adjustment.py  (--workers 10; no --overwrite)
       -> input/adjusted_liquid/{YYYY}/ORATS_SMV_Strikes_YYYYMMDD.parquet
         -> audit_adjusted_liquid.py  (full inventory pass)
           -> ORATSDataProvider smoke (explicit --data-root)
