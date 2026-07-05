@@ -55,6 +55,8 @@ def _raw_csv_rows() -> list[dict]:
             "expirDate": "2020-01-17",
             "stkPx": 100.0,
             "strike": 100.0,
+            "cOpra": "AAA200117C00100000",
+            "pOpra": "AAA200117P00100000",
             "cBidPx": 10.0,
             "cAskPx": 11.0,
             "pBidPx": 9.0,
@@ -65,6 +67,8 @@ def _raw_csv_rows() -> list[dict]:
             "expirDate": "2020-01-17",
             "stkPx": 50.0,
             "strike": 55.0,
+            "cOpra": "BBB200117C00055000",
+            "pOpra": "BBB200117P00055000",
             "cBidPx": 3.0,
             "cAskPx": 4.0,
             "pBidPx": 5.0,
@@ -95,6 +99,8 @@ def _valid_adjusted_rows(*, split_factor: float = 2.0, spot_override: float | No
             {
                 "ticker": raw["ticker"],
                 "expirDate": raw["expirDate"],
+                "cOpra": raw["cOpra"],
+                "pOpra": raw["pOpra"],
                 "trade_date": pd.Timestamp("2020-01-02"),
                 "split_factor": sf,
                 "stkPx": raw["stkPx"],
@@ -401,3 +407,129 @@ def test_cli_has_no_legacy_adj_root_argument(cli_module):
         ]
     )
     assert not hasattr(parser, "legacy_adj_root")
+
+
+def _spx_duplicate_raw_rows() -> list[dict]:
+    """SPX monthly vs SPXW weekly: same 3-key, different OPRA and stkPx."""
+    base = {
+        "ticker": "SPX",
+        "expirDate": "2/17/2023",
+        "strike": 5025.0,
+        "cBidPx": 0.05,
+        "cAskPx": 0.15,
+        "pBidPx": 1154.8,
+        "pAskPx": 1167.6,
+    }
+    return [
+        {
+            **base,
+            "stkPx": 3831.79,
+            "cOpra": "SPX230217C05025000",
+            "pOpra": "SPX230217P05025000",
+        },
+        {
+            **base,
+            "stkPx": 3831.75,
+            "cOpra": "SPXW230217C05025000",
+            "pOpra": "SPXW230217P05025000",
+        },
+    ]
+
+
+def _adjusted_from_raw_rows(raw_rows: list[dict], *, split_factor: float = 1.0) -> list[dict]:
+    sf = split_factor
+    out = []
+    for raw in raw_rows:
+        adj_stk = raw["stkPx"] / sf
+        out.append(
+            {
+                "ticker": raw["ticker"],
+                "expirDate": raw["expirDate"],
+                "cOpra": raw["cOpra"],
+                "pOpra": raw["pOpra"],
+                "trade_date": pd.Timestamp("2020-01-02"),
+                "split_factor": sf,
+                "stkPx": raw["stkPx"],
+                "strike": raw["strike"],
+                "adj_stkPx": adj_stk,
+                "adj_strike": raw["strike"] / sf,
+                "spot_px": adj_stk,
+                "cBidPx": raw["cBidPx"],
+                "cAskPx": raw["cAskPx"],
+                "pBidPx": raw["pBidPx"],
+                "pAskPx": raw["pAskPx"],
+                "adj_cBidPx": raw["cBidPx"] / sf,
+                "adj_cAskPx": raw["cAskPx"] / sf,
+                "adj_pBidPx": raw["pBidPx"] / sf,
+                "adj_pAskPx": raw["pAskPx"] / sf,
+            }
+        )
+    return out
+
+
+def test_raw_math_opra_aware_merge_passes_spx_spxw_duplicate_keys(cli_module, tmp_path):
+    """Regression for C5.10C: 3-key merge false-fails; OPRA-aware merge passes."""
+    universe = _write_universe_csv(tmp_path / "liquid_tickers.csv", ["SPX"])
+    splits = _write_splits(tmp_path / "splits.parquet", [])
+    raw_rows = _spx_duplicate_raw_rows()
+    _write_raw_zip(tmp_path, rows=raw_rows)
+    _write_adjusted_parquet(tmp_path, rows=_adjusted_from_raw_rows(raw_rows))
+
+    result = cli_module.audit_raw_math_sample(
+        tmp_path / "raw",
+        tmp_path / "adj",
+        [2020],
+        {"SPX"},
+        sample_files=1,
+        sample_rows=10,
+        seed=57,
+    )
+    assert result.status == "PASS"
+    assert result.metrics["math_mismatch_count"] == 0
+    assert result.metrics["matched_rows"] <= result.metrics["sampled_rows"]
+    assert result.metrics["matched_rows"] == result.metrics["sampled_rows"]
+    assert result.metrics["join_key_columns_used"] == [
+        "ticker",
+        "expirDate",
+        "strike",
+        "cOpra",
+        "pOpra",
+    ]
+
+
+def test_raw_math_fails_on_fallback_duplicate_keys_without_opra(cli_module, tmp_path):
+    """Fallback 3-key join must fail clearly when OPRA columns are absent."""
+    universe = _write_universe_csv(tmp_path / "liquid_tickers.csv", ["SPX"])
+    splits = _write_splits(tmp_path / "splits.parquet", [])
+    raw_rows = _spx_duplicate_raw_rows()
+    adj_rows = _adjusted_from_raw_rows(raw_rows)
+    _write_raw_zip(tmp_path, rows=raw_rows)
+    _write_adjusted_parquet(tmp_path, rows=adj_rows)
+
+    # Strip OPRA columns to force fallback join keys.
+    zip_path = tmp_path / "raw" / "2020" / _ZIP_NAME
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        csv_name = [n for n in zf.namelist() if n.endswith(".csv")][0]
+        raw_df = pd.read_csv(zf.open(csv_name), dtype={"ticker": str})
+    raw_df = raw_df.drop(columns=["cOpra", "pOpra"])
+    csv_buf = io.StringIO()
+    raw_df.to_csv(csv_buf, index=False)
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr(_CSV_NAME, csv_buf.getvalue().encode("utf-8"))
+
+    adj_path = tmp_path / "adj" / "2020" / _PARQUET_NAME
+    pd.DataFrame(adj_rows).drop(columns=["cOpra", "pOpra"]).to_parquet(adj_path, index=False)
+
+    result = cli_module.audit_raw_math_sample(
+        tmp_path / "raw",
+        tmp_path / "adj",
+        [2020],
+        {"SPX"},
+        sample_files=1,
+        sample_rows=10,
+        seed=57,
+    )
+    assert result.status == "FAIL"
+    assert result.metrics["raw_duplicate_join_key_rows"] > 0
+    assert result.metrics["math_mismatch_count"] == 0
+    assert any("non-unique join keys" in f for f in result.failures)

@@ -54,7 +54,10 @@ OPTIONAL_ADJ_PRICE_MAP = {
     "pBidPx": "adj_pBidPx",
     "pAskPx": "adj_pAskPx",
 }
-JOIN_KEYS = ("ticker", "expirDate", "strike")
+JOIN_KEYS_BASE = ("ticker", "expirDate", "strike")
+JOIN_KEYS_OPRA = ("cOpra", "pOpra")
+# Legacy alias kept for tests/docs that reference JOIN_KEYS.
+JOIN_KEYS = JOIN_KEYS_BASE
 ZIP_PREFIX = "ORATS_SMV_Strikes_"
 MATH_RTOL = 1e-8
 MATH_ATOL = 1e-8
@@ -520,6 +523,40 @@ def _merged_raw_column_name(df: pd.DataFrame, raw_col: str) -> str | None:
     return None
 
 
+def _normalize_join_columns(df: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
+    """Return a copy with normalized ticker/strike columns for join keys."""
+    out = df.copy()
+    if "ticker" in keys and "ticker" in out.columns:
+        out["ticker"] = out["ticker"].astype(str).str.strip().str.upper()
+    if "strike" in keys and "strike" in out.columns:
+        out["strike"] = pd.to_numeric(out["strike"], errors="coerce")
+    return out
+
+
+def _resolve_join_keys(raw_df: pd.DataFrame, adj_df: pd.DataFrame) -> tuple[list[str], bool]:
+    """Choose join keys; prefer OPRA columns when present on both sides."""
+    missing_base = [k for k in JOIN_KEYS_BASE if k not in raw_df.columns or k not in adj_df.columns]
+    if missing_base:
+        return [], False
+    keys = list(JOIN_KEYS_BASE)
+    if all(k in raw_df.columns and k in adj_df.columns for k in JOIN_KEYS_OPRA):
+        keys.extend(JOIN_KEYS_OPRA)
+        return keys, True
+    return keys, False
+
+
+def _duplicate_key_row_count(df: pd.DataFrame, keys: list[str]) -> int:
+    """Count rows participating in a non-unique join-key group."""
+    if df.empty:
+        return 0
+    return int(df.duplicated(subset=keys, keep=False).sum())
+
+
+def _merge_expansion_count(adj_rows: int, merged_len: int) -> int:
+    """Return how many extra merge rows were produced beyond the adj sample."""
+    return max(0, merged_len - adj_rows)
+
+
 def audit_raw_math_sample(
     raw_root: Path,
     adj_root: Path,
@@ -543,8 +580,11 @@ def audit_raw_math_sample(
     matched_rows = 0
     unmatched_rows = 0
     math_mismatch_count = 0
-
-    join_keys = list(JOIN_KEYS)
+    raw_duplicate_join_key_rows = 0
+    adjusted_duplicate_join_key_rows = 0
+    join_key_columns_used: list[str] | None = None
+    fallback_join_key_files = 0
+    merge_expansion_rows = 0
 
     for adj_path in sampled_paths:
         date_str = _date_str_from_filename(adj_path.name)
@@ -564,7 +604,6 @@ def audit_raw_math_sample(
 
         n_sample = min(sample_rows, len(adj_df))
         adj_sample = adj_df.sample(n=n_sample, random_state=seed).copy()
-        adj_sample["ticker"] = adj_sample["ticker"].astype(str).str.strip().str.upper()
         sampled_rows_total += len(adj_sample)
 
         try:
@@ -575,40 +614,73 @@ def audit_raw_math_sample(
 
         raw_df = _filter_raw_to_universe(raw_df, universe)
 
-        available_keys = [k for k in join_keys if k in raw_df.columns and k in adj_sample.columns]
-        if len(available_keys) < len(join_keys):
-            missing = set(join_keys) - set(available_keys)
+        join_keys, using_opra = _resolve_join_keys(raw_df, adj_sample)
+        if not join_keys:
+            missing = sorted(set(JOIN_KEYS_BASE) - set(raw_df.columns) - set(adj_sample.columns))
             result.status = "FAIL"
             result.failures.append(
-                f"{adj_path.name}: missing join key columns {sorted(missing)}"
+                f"{adj_path.name}: missing base join key columns {missing}"
             )
             continue
 
-        raw_keys = raw_df[available_keys].copy()
-        for col in available_keys:
-            if col == "ticker":
-                raw_keys[col] = raw_keys[col].astype(str).str.strip().str.upper()
-            if col == "strike":
-                raw_keys[col] = pd.to_numeric(raw_keys[col], errors="coerce")
+        if join_key_columns_used is None:
+            join_key_columns_used = join_keys
+        elif join_key_columns_used != join_keys:
+            result.warnings.append(
+                f"{adj_path.name}: join keys {join_keys} differ from prior "
+                f"{join_key_columns_used}"
+            )
 
-        adj_keys = adj_sample[available_keys].copy()
-        for col in available_keys:
-            if col == "ticker":
-                adj_keys[col] = adj_keys[col].astype(str).str.strip().str.upper()
-            if col == "strike":
-                adj_keys[col] = pd.to_numeric(adj_keys[col], errors="coerce")
+        if not using_opra:
+            fallback_join_key_files += 1
+            result.warnings.append(
+                f"{adj_path.name}: OPRA columns unavailable; using fallback join keys "
+                f"{join_keys}"
+            )
 
-        raw_for_merge = raw_df.copy()
-        raw_for_merge["ticker"] = raw_for_merge["ticker"].astype(str).str.strip().str.upper()
-        raw_for_merge["strike"] = pd.to_numeric(raw_for_merge["strike"], errors="coerce")
+        raw_for_merge = _normalize_join_columns(raw_df, join_keys)
+        adj_for_merge = _normalize_join_columns(adj_sample, join_keys)
 
-        merged = adj_sample.merge(
-            raw_for_merge,
-            on=available_keys,
-            how="left",
-            suffixes=("_adj", "_raw"),
-            indicator=True,
-        )
+        raw_dup_rows = _duplicate_key_row_count(raw_for_merge, join_keys)
+        adj_dup_rows = _duplicate_key_row_count(adj_for_merge, join_keys)
+        raw_duplicate_join_key_rows += raw_dup_rows
+        adjusted_duplicate_join_key_rows += adj_dup_rows
+
+        if raw_dup_rows or adj_dup_rows:
+            result.status = "FAIL"
+            result.failures.append(
+                f"{adj_path.name}: non-unique join keys {join_keys} "
+                f"(raw_dup_rows={raw_dup_rows}, adj_dup_rows={adj_dup_rows}); "
+                "cannot compare raw-vs-adjusted math safely"
+            )
+            continue
+
+        try:
+            merged = adj_for_merge.merge(
+                raw_for_merge,
+                on=join_keys,
+                how="left",
+                suffixes=("_adj", "_raw"),
+                indicator=True,
+                validate="one_to_one",
+            )
+        except pd.errors.MergeError as exc:
+            result.status = "FAIL"
+            result.failures.append(
+                f"{adj_path.name}: join keys {join_keys} are not one-to-one "
+                f"({exc})"
+            )
+            continue
+
+        expansion = _merge_expansion_count(len(adj_for_merge), len(merged))
+        if expansion:
+            merge_expansion_rows += expansion
+            result.status = "FAIL"
+            result.failures.append(
+                f"{adj_path.name}: merge produced {len(merged)} rows from "
+                f"{len(adj_for_merge)} sampled rows (+{expansion} expansion)"
+            )
+            continue
 
         matched = merged[merged["_merge"] == "both"]
         unmatched = merged[merged["_merge"] != "both"]
@@ -665,6 +737,11 @@ def audit_raw_math_sample(
         "matched_rows": matched_rows,
         "unmatched_rows": unmatched_rows,
         "math_mismatch_count": math_mismatch_count,
+        "join_key_columns_used": join_key_columns_used or list(JOIN_KEYS_BASE),
+        "raw_duplicate_join_key_rows": raw_duplicate_join_key_rows,
+        "adjusted_duplicate_join_key_rows": adjusted_duplicate_join_key_rows,
+        "fallback_join_key_files": fallback_join_key_files,
+        "merge_expansion_rows": merge_expansion_rows,
     }
     return result
 
