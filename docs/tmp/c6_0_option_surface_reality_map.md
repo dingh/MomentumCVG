@@ -1,8 +1,9 @@
 # C6.0 — Option Surface Reality Map and Delivery Definition
 
 **Sprint:** 004 · **Task:** C6.0 (read-only reconnaissance)  
-**Date:** 2026-07-04  
-**Mode:** Audit / delivery definition only — no code, tests, cache, or data changes
+**Date:** 2026-07-04 · **Review updated:** 2026-07-05  
+**Mode:** Audit / delivery definition only — no code, tests, cache, or data changes  
+**Status:** **C6.0 reality map accepted** — subtask plan mostly correct; sequence refined below
 
 ---
 
@@ -13,7 +14,7 @@
 - Map producer (`precompute_option_surface.py`, `option_surface_analyzer.py`), consumer (`OptionSurfaceDB`, S3 assembly, `SurfaceDataPaths`), tests, and on-disk cache artifacts.
 - Answer: **what C6 must deliver** so A1/A2 artifacts are trustworthy enough for later `SurfaceRunner` / step3 strategy assembly.
 - Separate **schema validity** from **assembly-readiness**.
-- Assess whether a **producer-safety patch (C6.1A)** is required before sample regeneration.
+- Assess whether a **producer-safety patch (C6.1A)** is required before **regenerated surface samples** (not before design).
 
 ### Explicit non-goals (honored)
 
@@ -38,6 +39,74 @@ Per [current_sprint.md](../agenda/current_sprint.md) and [surface_engine_evaluat
 | Incremental surface append / watermarks | **Out** | Sprint 005 |
 
 **Rule:** Real-data validation in 004 means **input artifacts and precompute correctness**, not strategy evidence.
+
+---
+
+## C6 design direction (from review)
+
+C6 should produce an **audit gate**, not just more tests.
+
+| Mechanism | Protects |
+|-----------|----------|
+| **Tests (C6.2)** | Producer **code behavior** on synthetic fixtures — invariants enforced at build time |
+| **Audit gate (C6.3 / C6.4)** | The **actual A1/A2 parquet artifacts** that later backtests will consume — integrity and readiness on disk |
+
+Pytest alone cannot certify that `option_surface_meta_weekly_2018_2026.parquet` is safe for `SurfaceRunner`; the audit CLI/report is the closeout evidence layer.
+
+### Three-layer framing (C6.1 design should adopt)
+
+```text
+Layer 1 — Producer semantics     how OptionSurfaceBuilder + precompute script build rows
+Layer 2 — Artifact integrity     schema, join, grain, settlement fields, failure vocabulary on parquets
+Layer 3 — Assembly-readiness     whether valid surfaces can build straddle / ironfly / ironcondor at S3
+```
+
+Layers are **sequential dependencies**: Layer 2 assumes Layer 1 is correct; Layer 3 assumes Layer 2 passes. Do not collapse them into a single `surface_valid` flag.
+
+### Recommended semantics (`surface_valid` vs audit readiness)
+
+**Keep `surface_valid` as the general surface validity flag** (contract + T1):
+
+```text
+surface_valid == has_body_call AND has_body_put AND n_surface_quotes > 0
+```
+
+**Do not** redefine `surface_valid` to require iron fly / iron condor wings. Wing requirements are **assembly-time** (S3), not producer meta validity.
+
+**Add audit-level readiness concepts** (computed in C6.3 audit, not necessarily new A1 columns unless C6.1B approves):
+
+| Concept | Meaning |
+|---------|---------|
+| `body_pair_ready` | Exactly one body call and one body put in quotes |
+| `otm_wing_pair_available` | ≥1 OTM call and ≥1 OTM put in quotes |
+| `straddle_ready` | `surface_valid` AND `body_pair_ready` |
+| `ironfly_candidate_ready` | `straddle_ready` AND `otm_wing_pair_available` (wing delta fit checked at S3) |
+| `ironcondor_candidate_ready` | `straddle_ready` AND sufficient OTM quotes for short+long wing selection |
+
+### PASS / WARN / FAIL policy direction (C6.1 to lock)
+
+| Severity | Examples |
+|----------|----------|
+| **FAIL** | Missing required columns; duplicate meta keys; orphan quotes; valid meta without quotes; missing settlement fields on valid rows; `dte_actual` mismatch; quote/meta `expiry_date` mismatch; `body_strike` mismatch; invalid rows with null `failure_reason` **after** producer semantics fix (C6.1B if approved) |
+| **WARN** | Low overall `surface_valid` rate; missing OTM wings on otherwise valid rows; bid/mid/ask ordering violations when ORATS mid is vendor-derived; weekly DTE calendar deviations; stale artifact lineage (pre-C5 root / spot path undocumented) |
+| **INFO** | Validity rate by year/ticker; failure_reason breakdown; wing coverage (`straddle_ready` vs `ironfly_candidate_ready` rates) |
+
+Duplicate quote grain (T3): **FAIL only after C6.3/C6.4 triage** determines whether duplicates are a true integrity violation or an under-specified grain — see § Duplicate quote grain.
+
+### Refined subtask sequence (accepted plan)
+
+```text
+C6.1  — design memo first (layers, semantics, PASS/WARN/FAIL, T4/T6 decisions)
+C6.1A — producer safety patch after design (output root, ticker/date scope, dry-run, overwrite guard)
+C6.1B — producer semantics patch only if design approves (e.g. T6 failure_reason on soft failures)
+C6.2  — synthetic invariant tests (code behavior)
+C6.3  — audit CLI / artifact gate (parquet integrity + readiness metrics)
+C6.4  — real-cache audit + regenerated-smoke audit evidence (two passes if needed)
+C6.6  — closeout memo
+(C6.5 surface-audit wiring → defer to C8)
+```
+
+**Ordering rule:** C6.1 **before** C6.1A/C6.1B. C6.1A **before any regenerated surface sample** — not before design. C6.3 before C6.4. Spot full refresh is **not** part of C6.0/C6 closeout itself — see § Upstream spot DB.
 
 ---
 
@@ -301,7 +370,7 @@ Linear pipeline: entry spot → expiry → chain → body strike (min distance, 
 | Quote grain uniqueness (T3) | None | — | **Missing** | C6.2 fixture + C6.3 FAIL rule |
 | Trade date / `--as-of` alignment (T4) | `trading_day` unit tests (C2) | `tests/unit/test_refresh_weekly_inputs_cli.py` (partial) | **No test for `get_trading_fridays` / `generate_trade_dates`** | C6.2 |
 | Settlement fields + dte (T5) | Contract doc only | — | **Missing** on producer + cache | C6.3 audit |
-| Failure vocabulary (T6) | Failure row tags exist | contract test | **Success-path invalid rows with `failure_reason=None` untested** | C6.2 + producer fix optional |
+| Failure vocabulary (T6) | Failure row tags exist | contract test | Success-path invalid rows with `failure_reason=None` untested | C6.2 + **C6.1B if design approves** |
 | Real-cache sample (T7) | None | — | **Missing** | C6.4 report |
 | `OptionSurfaceDB` load/lookup | Synthetic only | unit + contract fixtures | No duplicate detection; no real parquet | C6.3 |
 | `build_straddle/ironfly/ironcondor` | Synthetic L2 goldens | `tests/unit/test_option_surface_*.py` | Handmade fixtures; not producer-shaped | Keep; add assembly-readiness audit |
@@ -355,7 +424,7 @@ Linear pipeline: entry spot → expiry → chain → body strike (min distance, 
 | `dte_target` | 100% `7` |
 | `surface_valid` | 348,639 (**33.17%**) |
 | Duplicate meta `(ticker, entry_date)` | **0** |
-| Duplicate quote grain `(ticker, entry_date, expiry_date, strike, side)` | **9,682** rows involved |
+| Duplicate quote grain `(ticker, entry_date, expiry_date, strike, side)` | **9,682** rows involved — **triage required** (see § Duplicate quote grain) |
 | Orphan quote keys | **0** |
 | Valid meta with no quotes | **0** |
 | Valid meta null `exit_spot` / `expiry_date` / `body_strike` / `entry_spot` | **0** |
@@ -414,7 +483,26 @@ Linear pipeline: entry spot → expiry → chain → body strike (min distance, 
 | Missing | **None** | |
 | Extra | **None** | |
 | `spread_pct` | Consistent with formula on sample | |
-| Assembly gaps | Duplicate grain; 810 bid/mid/ask ordering violations | Audit FAIL/WARN |
+| Assembly gaps | Duplicate grain (pending triage); 810 bid/mid/ask ordering violations | Audit WARN/FAIL per C6.1 policy |
+
+---
+
+## Duplicate quote grain (T3 — triage, not assumed producer bug)
+
+Real cache shows **9,682** quote rows involved in duplicate groups on grain `(ticker, entry_date, expiry_date, strike, side)`.
+
+**Do not immediately classify this as a producer bug.** C6.3/C6.4 should:
+
+1. **Sample duplicate groups** — pull full rows for a bounded set of keys (ticker, date, strike, side).
+2. **Compare differing fields** — bid/ask/mid, volume, OI, greeks, `nearest_delta_bucket`, timestamps if present.
+3. **Determine root cause:**
+   - **Under-specified A2 grain** — e.g. multiple OPRA roots, expiry types, or line identifiers collapsed into one row key; contract may need extra columns or a documented composite grain.
+   - **Upstream chain duplicates** — raw adjusted parquets carry duplicate strikes; producer should dedupe with a deterministic rule (document in C6.1B if approved).
+   - **Producer double-emit** — builder appends same quote twice (code fix in C6.1B).
+
+4. **Emit audit outcome:** FAIL if duplicates imply ambiguous assembly leg selection; WARN + documented dedupe rule if benign and deterministic; INFO if rate is negligible after dedupe policy.
+
+Until triage completes, T3 status in checklist below is **“needs audit / design decision”**, not **“confirmed FAIL”**.
 
 ---
 
@@ -424,28 +512,30 @@ Linear pipeline: entry spot → expiry → chain → body strike (min distance, 
 |----|----------------|----------|
 | **T1** | **Enforced by code but not tested** on full builder output | `_metadata_success_row` logic; contract tests partial; real cache: 57 valid rows violate exactly-one-body-leg expectation |
 | **T2** | **Not enforced but should be audited** | 0 orphan quotes; valid-without-quotes 0; producer emits quotes only on success path — C6.3 join rules |
-| **T3** | **Not enforced but should be audited** | 9,682 duplicate grain rows in cache → **FAIL** |
+| **T3** | **Not enforced; needs audit / design decision** | 9,682 duplicate grain rows — sample before FAIL vs grain-spec change vs dedupe rule |
 | **T4** | **Unclear / needs design decision** | Producer `get_trading_fridays` vs `trading_day.resolve_as_of_trading_day`; meta 97% Friday / 3% Thursday holiday fallback — align with HD-004-2 in C6.1 |
 | **T5** | **Enforced by code but not tested**; **passes on real valid rows** | Null settlement 0; dte mismatch 0 |
 | **T6** | **Not enforced** | 25,733 invalid rows with null `failure_reason`; vocabulary not closed for soft failures |
-| **T7** | **Not enforced but should be audited** | Real cache loaded; schema pass; consistency **partial FAIL** (duplicates, T6, wing gaps) |
+| **T7** | **Not enforced but should be audited** | Real cache loaded; schema pass; Layer 2/3 checks partial (T6, duplicate triage, readiness rates) |
 
 ---
 
-## Assembly-readiness checklist
+## Assembly-readiness checklist (Layer 3 — audit metrics)
 
-| ID | Check | Classification | Real-cache note |
-|----|-------|----------------|-----------------|
-| **A** | Exactly one body call + one body put | **Not enforced** | 57 valid rows fail |
-| **B** | ≥1 OTM call and ≥1 OTM put for fly/condor | **Not enforced in meta** | 35,460 valid rows fail (~10%) → S3 assembly failures |
-| **C** | Quote `expiry_date` matches meta | **Implied by producer** | 0 mismatches on valid rows |
-| **D** | Meta `body_strike` matches body quotes | **Implied** | 0 mismatches |
-| **E** | No duplicate meta keys | **Not enforced in consumer** | 0 duplicates |
-| **F** | bid ≤ mid ≤ ask (or documented mid semantics) | **Not enforced** | 810 violations → WARN/FAIL per C6.1 policy |
-| **G** | `spread_pct` consistent | **Enforced at production** | Pass (float noise only) |
-| **H** | Delta sign sanity | **Not enforced** | call δ<0: 0%; put δ>0: 0% → **WARN** rule only |
+These map to **audit-level readiness concepts** above. They are **not** part of `surface_valid`.
 
-**Schema validity ≠ assembly-readiness:** 33% `surface_valid` can PASS/WARN for coverage, but short iron fly/condor also needs OTM wings — effective assembly rate lower.
+| ID | Audit metric | Maps to | Real-cache note |
+|----|--------------|---------|-----------------|
+| **A** | `body_pair_ready` | Exactly one body call + one body put | 57 valid rows fail |
+| **B** | `otm_wing_pair_available` | ≥1 OTM call and ≥1 OTM put | 35,460 valid rows fail (~10%) → `ironfly_candidate_ready` false |
+| **C** | Quote `expiry_date` matches meta | Layer 2 integrity | 0 mismatches on valid rows |
+| **D** | Meta `body_strike` matches body quotes | Layer 2 integrity | 0 mismatches |
+| **E** | No duplicate meta keys | Layer 2 integrity | 0 duplicates |
+| **F** | bid ≤ mid ≤ ask (or documented ORATS mid semantics) | Layer 2 / WARN | 810 violations → **WARN** if vendor mid |
+| **G** | `spread_pct` consistent | Layer 2 | Pass (float noise only) |
+| **H** | Delta sign sanity | Layer 3 INFO/WARN | call δ<0: 0%; put δ>0: 0% |
+
+**Schema validity ≠ assembly-readiness:** 33% `surface_valid` can WARN for coverage; `straddle_ready` and `ironfly_candidate_ready` rates describe effective S3 yield separately.
 
 ---
 
@@ -466,7 +556,7 @@ Linear pipeline: entry spot → expiry → chain → body strike (min distance, 
 
 **Not reliably.** A non-colliding filename (e.g. `weekly_2026_2026`) avoids overwriting `weekly_2018_2026` but still: (1) processes full ticker CSV, (2) appends shared log, (3) no dry-run, (4) no isolated output root, (5) long runtime.
 
-**Recommendation:** **C6.1A producer-safety patch** before any regeneration sample:
+**Recommendation:** **C6.1A producer-safety patch** after C6.1 design, **before any regenerated surface sample**:
 
 - `--output-root` (default remains cache)
 - `--tickers` / `--tickers-file`
@@ -482,7 +572,7 @@ Linear pipeline: entry spot → expiry → chain → body strike (min distance, 
 |------|--------|------------------|
 | Output always under `C:/MomentumCVG_env/cache` | Colliding runs destroy artifacts | C6.1A `--output-root` + overwrite guard |
 | Universe from `cache/liquid_tickers.csv` not `input/liquidity/liquid_tickers.csv` | Divergence from C4/C5 superset | Document in C6.1; optional align flag |
-| Spot DB path fixed | Stale spot if not re-extracted post-C5 | **Required refresh before C7/C8** (see § Upstream spot DB) |
+| Spot DB path fixed | Stale spot if not re-extracted post-C5 | Document lineage in C6.4; full refresh before C7/C8 — **not part of C6.0** (see § Upstream spot DB) |
 | Shared log append | Concurrent runs interleave | C6.1A per-run log or `--log-file` |
 | Producer default `monthly` vs consumer `weekly` | Wrong filename if operator omits flag | C6.1 design + runbook |
 | Cache built 2026-04-23, C5 closed 2026-07-04 | Surface may not reflect `adjusted_liquid` | C6.4 audit existing; C6.1A sample rebuild on C5 root |
@@ -490,24 +580,27 @@ Linear pipeline: entry spot → expiry → chain → body strike (min distance, 
 
 ---
 
-## Upstream spot DB (light touch — required before C7/C8)
+## Upstream spot DB (documented dependency — not C6.0 scope)
 
-C6.0 did **not** deep-audit `extract_spot_prices.py` or inventory `spot_prices_adjusted.parquet` the way it did A1/A2. Spot remains a **separate closeout input** (`validate` / C3) but is an **upstream blocker** for trustworthy surface regen:
+C6.0 did **not** deep-audit `extract_spot_prices.py` or inventory `spot_prices_adjusted.parquet`. Spot is a **pipeline dependency** for surface precompute and a **closeout input** for C3 `validate`, but **full spot refresh is not part of C6.0 or C6 closeout itself**.
 
 | Role | Detail |
 |------|--------|
 | **Producer** | `scripts/extract_spot_prices.py` — scans `adjusted_liquid` daily parquets, writes spot DB |
 | **Default input** | `--data-root` → `C:/MomentumCVG_env/input/adjusted_liquid` (C5.11A wired) |
 | **Default output** | `C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet` (C1 manifest key `spot_prices`) |
-| **Surface usage** | `SpotPriceDB` → meta `spot_move_pct`, `realized_volatility`; entry/exit spot still from `ORATSDataProvider.get_spot_price` on chains |
-| **Tests** | `tests/unit/test_spot_price_db.py` covers **reader** only — no CLI / real-cache extract tests |
-| **Lineage gap** | On-disk spot DB (71 MB) likely built **pre-C5** (same era as surface cache, 2026-04-23) |
+| **Surface usage** | `SpotPriceDB` → meta `spot_move_pct`, `realized_volatility`; entry/exit spot from `ORATSDataProvider.get_spot_price` on chains |
+| **Tests** | `tests/unit/test_spot_price_db.py` covers **reader** only |
+| **Lineage gap** | On-disk spot DB (71 MB) likely **pre-C5** (same era as surface cache, 2026-04-23) |
 
-### Required operator action (before C7 + C8)
+### What C6 must document (not execute in C6.0)
 
-**Re-run full spot extraction against the C5 production backfill** and write to the **canonical cache path** so PIT harness (C7) and `refresh` wiring (C8) see C5-aligned spot, not legacy mirror data.
+- Record **spot path + mtime/hash** in C6.4 audit reports for any artifact under review.
+- For **regenerated C5-aligned surface smoke** (post-C6.1A): require **explicit spot lineage** in the audit report — which `spot_prices_adjusted.parquet` path and `--data-root` were used. If spot is stale relative to `adjusted_liquid`, flag **WARN** on smoke evidence.
 
-Suggested command (explicit paths — matches C5 closeout / runbook pattern):
+### Operator action before C7 + C8 (outside C6 closeout)
+
+Full spot re-extract on C5 backfill should run **before C7 (PIT) and C8 (`refresh` wiring)** and **before regenerated C5-aligned surface evidence** — not as a C6 deliverable.
 
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe scripts/extract_spot_prices.py `
@@ -517,18 +610,9 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/extract_spot_prices.py `
   --end-year 2026
 ```
 
-**Why before C7/C8:** C7 PIT universe samples and C8 bounded `refresh` both assume Stage A artifacts under `cache/` reflect the same input snapshot as splits + adjusted chains. Spot DB is step 3 in the refresh pipeline and is referenced by surface precompute (hardcoded `SPOT_DB_PATH`).
+**Safety:** `extract_spot_prices.py` supports `--output` but still full-file overwrite — back up existing parquet if rollback matters.
 
-**Safety notes (vs surface C6.1A):**
-
-- `extract_spot_prices.py` already supports `--output` (better than surface script).
-- Still **full-file overwrite** on save — no append, no ticker subset, no overwrite guard.
-- Back up or note mtime/hash of existing `spot_prices_adjusted.parquet` before rerun if rollback matters.
-- After spot refresh, any **surface regen** should use the same `adjusted_liquid` root (post-C6.1A sample or full backfill — separate decision).
-
-**Acceptance (minimal):** new parquet exists; date range covers adjusted_liquid files (2017→2026); ticker count in same ballpark as liquid universe; spot row count > 0; optional spot sanity checks folded into C3 `validate` or a one-line note in C6/C7 sprint memo.
-
-**Out of scope for this paragraph:** full spot audit module (defer to C3 validate inventory or a future C6.0B if HD wants parity with surface audit depth).
+**Defer:** full spot audit module → C3 `validate` or optional future spot recon memo (not C6.0B unless HD requests).
 
 ---
 
@@ -537,47 +621,56 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/extract_spot_prices.py `
 1. **Artifact lineage:** Was `weekly_2018_2026` built with pre-C5 `--data-root` / spot DB? No manifest field records it.
 2. **T4 resolver unification:** Should `get_trading_fridays` move to shared module matching `trading_day.py` + HD-004-2?
 3. **T6 soft failures:** Should `_metadata_success_row` emit `missing_body_legs` / `insufficient_surface_quotes` when `surface_valid=False`?
-4. **Duplicate quote grain:** Upstream chain duplicates vs producer bug — needs sampled root-cause in C6.4.
+4. **Duplicate quote grain:** Under-specified A2 grain vs upstream duplicates vs producer double-emit — **sample in C6.3/C6.4 before FAIL** (see § Duplicate quote grain).
 5. **Wing coverage SLA:** Is ~10% valid-but-no-OTM-wings acceptable (WARN) or repair scope?
 6. **Validity rate 33%:** Expected for universe breadth vs WARN threshold — document by year/ticker in audit.
 7. **Re-precompute scope post-C5:** Full weekly rebuild deferred — what sample window satisfies closeout T7?
-8. **Spot DB post-C5 refresh:** Has `extract_spot_prices` been rerun on `adjusted_liquid` since C5.10B backfill? Required before C7/C8 — see § Upstream spot DB.
+8. **Spot DB lineage:** Document path/hash in C6.4; full re-extract before C7/C8 and before C5-aligned surface smoke — **not a C6 deliverable**.
 
 ---
 
 ## Recommended C6 task breakdown
 
+**Sequence:** C6.1 → C6.1A → (C6.1B if approved) → C6.2 → C6.3 → C6.4 → C6.6. C6.1A gates **regenerated surface samples only**.
+
 | Task | Purpose | Expected files | Tests / report | Accept criteria | Closeout? |
 |------|---------|----------------|----------------|-----------------|-----------|
-| **C6.1** | Option surface **design plan** (audit rules, T6 vocabulary, T4 decision, PASS/WARN/FAIL thresholds) | `docs/tmp/c6_option_surface_design_plan.md` | — | HD-approved scope | **Required** |
-| **C6.1A** | **Producer safety patch** — output root, ticker/date subset, dry-run, overwrite guard | `scripts/precompute_option_surface.py`, tests | CLI unit tests | Sample run writes only under chosen root; cannot clobber default artifacts accidentally | **Required before sample regen** |
-| **C6.2** | Synthetic invariant tests T1–T6 | extend `tests/contract/`, new `tests/unit/test_option_surface_analyzer.py` | pytest green | T1–T6 enforced on fixtures | **Required** |
-| **C6.3** | Surface artifact audit module + standalone CLI (and later `surface-audit` wrapper) | e.g. `scripts/audit_option_surface.py` or `src/data/surface_audit.py` | module tests | Implements sprint report sections; duplicate/join/T5/T6 rules | **Required** |
-| **C6.4** | Real-cache sample audit report on existing `weekly_2018_2026` | `docs/tmp/c6_4_real_cache_surface_audit.md` | C6.3 tool output | ≥1 documented window; PASS/WARN/FAIL with evidence | **Required** |
-| **C6.5** | Wire `refresh_weekly_inputs surface-audit` | `refresh_weekly_inputs.py` | CLI test | Delegates to C6.3 | **Defer to C8** (same pattern as split-audit) |
-| **C6.6** | Closeout memo | `docs/sprint_memos/004_c6_option_surface.md` | — | T1–T7 + audit archived | **Required at C6 close** |
-| **Spot refresh** | Re-extract spot DB from C5 `adjusted_liquid` backfill → canonical cache | `scripts/extract_spot_prices.py` (run only) | Log + optional row-count note in memo | `spot_prices_adjusted.parquet` on disk, C5 root, 2017–2026 | **Required before C7/C8** |
+| **C6.1** | **Design memo first** — three layers, semantics, PASS/WARN/FAIL, T4/T6/T3 duplicate triage policy | `docs/tmp/c6_option_surface_design_plan.md` | — | HD-approved scope | **Required** |
+| **C6.1A** | **Producer safety patch** (after design) — output root, ticker/date subset, dry-run, overwrite guard | `scripts/precompute_option_surface.py`, tests | CLI unit tests | Isolated sample run cannot clobber canonical cache | **Required before regenerated surface sample** |
+| **C6.1B** | **Producer semantics patch** (only if design approves) — e.g. T6 soft-failure tags, dedupe rule | `option_surface_analyzer.py`, tests | pytest | Design-approved behavior only | **Conditional** |
+| **C6.2** | Synthetic invariant tests — **code behavior** (T1–T6) | extend `tests/contract/`, `tests/unit/test_option_surface_analyzer.py` | pytest green | T1–T6 on fixtures | **Required** |
+| **C6.3** | **Audit CLI / artifact gate** — Layer 2 + Layer 3 metrics on parquets | e.g. `scripts/audit_option_surface.py` | module tests | PASS/WARN/FAIL report sections; readiness metrics | **Required** |
+| **C6.4** | **Real-cache + regenerated-smoke audit evidence** | `docs/tmp/c6_4_real_cache_surface_audit.md` (+ smoke report if regen) | C6.3 output | Pass 1: existing cache read-only; Pass 2: post-C6.1A smoke with documented spot/adj lineage | **Required** |
+| **C6.5** | Wire `refresh_weekly_inputs surface-audit` | `refresh_weekly_inputs.py` | CLI test | Delegates to C6.3 | **Defer to C8** |
+| **C6.6** | Closeout memo | `docs/sprint_memos/004_c6_option_surface.md` | — | T1–T7 + audit archived | **Required** |
 
 ### Adjustments vs sprint template
 
-- **C6.1A elevated to closeout prerequisite** for any regenerated sample (not optional).
-- **C6.4 can run read-only on existing cache immediately after C6.3** — does not require regen for first pass.
-- Post-C5 **regenerated sample** (small ticker×date window on `adjusted_liquid`) is a **second audit** after C6.1A + spot refresh — document in C6.1.
-- **Spot DB full re-extract on `adjusted_liquid`** is a **pipeline prerequisite before C7 (PIT) and C8 (refresh wiring)** — not a substitute for C6 surface audit, but required so downstream steps share one input baseline.
+- **C6.1 before C6.1A/C6.1B** — design locks semantics and audit policy first.
+- **C6.1A before regenerated surface sample** — not before design or read-only C6.4 pass on existing cache.
+- **C6.4 pass 1** can run read-only on existing cache immediately after C6.3.
+- **C6.4 pass 2** (regenerated smoke on `adjusted_liquid`) after C6.1A + documented spot lineage; optional C6.1B if design requires producer fixes first.
+- **Spot full re-extract** — pipeline prerequisite before C7/C8 and before C5-aligned surface smoke; **document in C6.4**, not a C6 task row.
 
 ---
 
 ## Final recommendation
 
-### **NOT READY — NEED C6.1A PRODUCER SAFETY PATCH FIRST**
+### **READY FOR C6.1 DESIGN**
 
-**Rationale (ordered):**
+### **NOT READY TO REGENERATE SURFACE SAMPLES UNTIL C6.1A PRODUCER SAFETY PATCH**
 
-1. **Operational safety:** C6 closeout requires ≥1 substantive sample run; current producer cannot isolate output or ticker/date scope and will overwrite canonical filenames if year range matches.
-2. **Stale cache lineage:** Existing `weekly_2018_2026` predates C5 closeout — C6.4 must audit it read-only, but **trustworthy regeneration** for `adjusted_liquid` requires a safe sample path (C6.1A) before design implementation proceeds to execution.
-3. **Real-cache consistency gaps:** Duplicate quote grain (T3 FAIL), T6 vocabulary holes, and assembly-readiness gaps (A, B) mean C6 deliverables must include audit module + tests — not schema review alone.
+**C6.0 reality map:** **Accepted.** Findings and subtask plan are sufficient to start C6.1 design memo.
 
-**C6.1 design may proceed in parallel** using this map; **do not run sample precompute or wire destructive refresh** until C6.1A lands.
+**Rationale:**
+
+1. **Design can proceed now** — three-layer framing, semantics, and PASS/WARN/FAIL policy are scoped; no code changes required to begin C6.1.
+2. **Regenerated surface samples blocked** — producer lacks isolated output root, ticker/date scope, dry-run, and overwrite guard (C6.1A after design).
+3. **Audit gate is the closeout centerpiece** — C6.3/C6.4 protect on-disk A1/A2; C6.2 tests protect code only.
+4. **Existing cache** — read-only C6.4 pass 1 can proceed after C6.3 without regen; stale lineage and duplicate grain require triage, not assumed producer bug.
+5. **Spot DB** — document lineage in C6.4; full refresh before C7/C8 and before C5-aligned smoke — outside C6.0/C6 closeout scope.
+
+**Do not run regenerated surface precompute until C6.1A lands.** Read-only audit of existing parquets is fine after C6.3.
 
 ### What C6 must deliver (answer to core question)
 
@@ -586,15 +679,15 @@ C6 must prove producer-created A1/A2 artifacts are:
 | Dimension | Deliverable |
 |-----------|-------------|
 | **Present** | C6.3 inventory + C6.4 report on cache paths |
-| **Schema-compatible** | C6.2 contract tests + C6.3 schema section |
-| **Internally consistent** | C6.2 T1/T5/T6 + C6.3 rules (duplicates, dte, validity) |
+| **Schema-compatible** | C6.2 contract tests + C6.3 schema section (Layer 2) |
+| **Internally consistent** | C6.2 T1/T5/T6 + C6.3 integrity rules (Layer 2) |
 | **Joinable** | C6.3 join integrity (T2) |
-| **Assembly-ready** | C6.3 checks A–H; wing coverage WARN thresholds in C6.1 |
+| **Assembly-ready** | C6.3 readiness metrics (`straddle_ready`, `ironfly_candidate_ready`, …) — Layer 3 |
 | **Date-aligned** | C6.1 T4 decision + C6.3 date alignment section |
 | **Safe to audit on real cache** | C6.3 read-only CLI (no writes) |
-| **Safe to regenerate samples** | **C6.1A** then bounded sample + C6.4 second report |
+| **Safe to regenerate samples** | C6.1 → C6.1A → (C6.1B) → smoke with documented spot/adj lineage → C6.4 pass 2 |
 
-Until those ship: **do not treat A1/A2 as trustworthy inputs for SurfaceRunner real-data work (Sprint 006)** — synthetic runner tests remain the only validated assembly path.
+Until C6 closeout: **do not treat A1/A2 as trustworthy inputs for SurfaceRunner real-data work (Sprint 006)** — synthetic runner tests remain the only validated assembly path.
 
 ---
 
