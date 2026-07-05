@@ -482,11 +482,53 @@ Linear pipeline: entry spot → expiry → chain → body strike (min distance, 
 |------|--------|------------------|
 | Output always under `C:/MomentumCVG_env/cache` | Colliding runs destroy artifacts | C6.1A `--output-root` + overwrite guard |
 | Universe from `cache/liquid_tickers.csv` not `input/liquidity/liquid_tickers.csv` | Divergence from C4/C5 superset | Document in C6.1; optional align flag |
-| Spot DB path fixed | Stale spot if not re-extracted post-C5 | C6.4 note lineage; repair via extract_spot |
+| Spot DB path fixed | Stale spot if not re-extracted post-C5 | **Required refresh before C7/C8** (see § Upstream spot DB) |
 | Shared log append | Concurrent runs interleave | C6.1A per-run log or `--log-file` |
 | Producer default `monthly` vs consumer `weekly` | Wrong filename if operator omits flag | C6.1 design + runbook |
 | Cache built 2026-04-23, C5 closed 2026-07-04 | Surface may not reflect `adjusted_liquid` | C6.4 audit existing; C6.1A sample rebuild on C5 root |
 | `surface-audit` stub | No PASS/WARN/FAIL gate | C6.3 + C8 wiring (C6.5 optional defer) |
+
+---
+
+## Upstream spot DB (light touch — required before C7/C8)
+
+C6.0 did **not** deep-audit `extract_spot_prices.py` or inventory `spot_prices_adjusted.parquet` the way it did A1/A2. Spot remains a **separate closeout input** (`validate` / C3) but is an **upstream blocker** for trustworthy surface regen:
+
+| Role | Detail |
+|------|--------|
+| **Producer** | `scripts/extract_spot_prices.py` — scans `adjusted_liquid` daily parquets, writes spot DB |
+| **Default input** | `--data-root` → `C:/MomentumCVG_env/input/adjusted_liquid` (C5.11A wired) |
+| **Default output** | `C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet` (C1 manifest key `spot_prices`) |
+| **Surface usage** | `SpotPriceDB` → meta `spot_move_pct`, `realized_volatility`; entry/exit spot still from `ORATSDataProvider.get_spot_price` on chains |
+| **Tests** | `tests/unit/test_spot_price_db.py` covers **reader** only — no CLI / real-cache extract tests |
+| **Lineage gap** | On-disk spot DB (71 MB) likely built **pre-C5** (same era as surface cache, 2026-04-23) |
+
+### Required operator action (before C7 + C8)
+
+**Re-run full spot extraction against the C5 production backfill** and write to the **canonical cache path** so PIT harness (C7) and `refresh` wiring (C8) see C5-aligned spot, not legacy mirror data.
+
+Suggested command (explicit paths — matches C5 closeout / runbook pattern):
+
+```powershell
+C:/MomentumCVG_env/venv/Scripts/python.exe scripts/extract_spot_prices.py `
+  --data-root C:/MomentumCVG_env/input/adjusted_liquid `
+  --output C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet `
+  --start-year 2017 `
+  --end-year 2026
+```
+
+**Why before C7/C8:** C7 PIT universe samples and C8 bounded `refresh` both assume Stage A artifacts under `cache/` reflect the same input snapshot as splits + adjusted chains. Spot DB is step 3 in the refresh pipeline and is referenced by surface precompute (hardcoded `SPOT_DB_PATH`).
+
+**Safety notes (vs surface C6.1A):**
+
+- `extract_spot_prices.py` already supports `--output` (better than surface script).
+- Still **full-file overwrite** on save — no append, no ticker subset, no overwrite guard.
+- Back up or note mtime/hash of existing `spot_prices_adjusted.parquet` before rerun if rollback matters.
+- After spot refresh, any **surface regen** should use the same `adjusted_liquid` root (post-C6.1A sample or full backfill — separate decision).
+
+**Acceptance (minimal):** new parquet exists; date range covers adjusted_liquid files (2017→2026); ticker count in same ballpark as liquid universe; spot row count > 0; optional spot sanity checks folded into C3 `validate` or a one-line note in C6/C7 sprint memo.
+
+**Out of scope for this paragraph:** full spot audit module (defer to C3 validate inventory or a future C6.0B if HD wants parity with surface audit depth).
 
 ---
 
@@ -499,6 +541,7 @@ Linear pipeline: entry spot → expiry → chain → body strike (min distance, 
 5. **Wing coverage SLA:** Is ~10% valid-but-no-OTM-wings acceptable (WARN) or repair scope?
 6. **Validity rate 33%:** Expected for universe breadth vs WARN threshold — document by year/ticker in audit.
 7. **Re-precompute scope post-C5:** Full weekly rebuild deferred — what sample window satisfies closeout T7?
+8. **Spot DB post-C5 refresh:** Has `extract_spot_prices` been rerun on `adjusted_liquid` since C5.10B backfill? Required before C7/C8 — see § Upstream spot DB.
 
 ---
 
@@ -513,12 +556,14 @@ Linear pipeline: entry spot → expiry → chain → body strike (min distance, 
 | **C6.4** | Real-cache sample audit report on existing `weekly_2018_2026` | `docs/tmp/c6_4_real_cache_surface_audit.md` | C6.3 tool output | ≥1 documented window; PASS/WARN/FAIL with evidence | **Required** |
 | **C6.5** | Wire `refresh_weekly_inputs surface-audit` | `refresh_weekly_inputs.py` | CLI test | Delegates to C6.3 | **Defer to C8** (same pattern as split-audit) |
 | **C6.6** | Closeout memo | `docs/sprint_memos/004_c6_option_surface.md` | — | T1–T7 + audit archived | **Required at C6 close** |
+| **Spot refresh** | Re-extract spot DB from C5 `adjusted_liquid` backfill → canonical cache | `scripts/extract_spot_prices.py` (run only) | Log + optional row-count note in memo | `spot_prices_adjusted.parquet` on disk, C5 root, 2017–2026 | **Required before C7/C8** |
 
 ### Adjustments vs sprint template
 
 - **C6.1A elevated to closeout prerequisite** for any regenerated sample (not optional).
 - **C6.4 can run read-only on existing cache immediately after C6.3** — does not require regen for first pass.
 - Post-C5 **regenerated sample** (small ticker×date window on `adjusted_liquid`) is a **second audit** after C6.1A + spot refresh — document in C6.1.
+- **Spot DB full re-extract on `adjusted_liquid`** is a **pipeline prerequisite before C7 (PIT) and C8 (refresh wiring)** — not a substitute for C6 surface audit, but required so downstream steps share one input baseline.
 
 ---
 
