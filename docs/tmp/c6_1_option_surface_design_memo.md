@@ -5,7 +5,7 @@
 **Mode:** Design / documentation — no code, tests, cache, or data changes  
 **Inputs:** [c6_0_option_surface_reality_map.md](c6_0_option_surface_reality_map.md) (accepted), [current_sprint.md](../agenda/current_sprint.md), [surface_engine_data_contract.md](../surface_engine_data_contract.md)
 
-**Status:** HD review updates — C6.1A/B/C split for weekly expiry semantics (2026-07-07)
+**Status:** C6.1 design accepted — implementation-ready cleanup (2026-07-07)
 
 ---
 
@@ -45,7 +45,7 @@ C6 is an **audit gate**, not a schema-only test sprint.
 | **Layer 3 — Assembly-readiness (C6.3)** | Whether valid surfaces can build straddle / iron fly / iron condor at S3 | computed audit metrics, not new A1 columns |
 
 **Ordering:** C6.1 (this memo) → **C6.1A** (producer safety + paths + **entry** schedule only) → **C6.1B** (weekly expiry diagnostic) → **C6.1C** (weekly expiry semantics, if C6.1B supports) → C6.2 → C6.3 → C6.4 → C6.6.  
-Optional **C6.1D:** soft-failure vocabulary + duplicate dedupe (producer semantics; independent of expiry policy).  
+Optional **C6.1D:** soft-failure tags (recommended for clean T6 on regen); producer dedupe **only after** C6.4 duplicate triage.  
 **Regenerated surface samples:** blocked until C6.1A lands. C6.4 pass 2 regen after C6.1A; **expiry semantics change waits for C6.1B/C6.1C** before expecting calendar-paired expiries in smoke output.
 
 **Core semantic decision (validated against code):** Keep `surface_valid` as general A1/A2 surface validity. Do **not** fold iron fly / iron condor wing requirements into `surface_valid`. Wing and body-pair constraints are **assembly-readiness metrics** computed at audit time (Layer 3) and enforced at S3 assembly time.
@@ -454,7 +454,7 @@ Step 4 — Decision matrix
 
 | Triage outcome | Action | Audit severity |
 |----------------|--------|----------------|
-| **A** — identical duplicates | Document; apply deterministic dedupe rule in audit (and optionally C6.1D producer dedupe) | WARN on legacy; PASS if dedupe rule applied consistently |
+| **A** — identical duplicates | Document; apply deterministic dedupe rule in audit | WARN on legacy; PASS if dedupe rule applied consistently in C6.3 metrics |
 | **B** — diagnostic-only diff | Enrich grain or dedupe on `(strike, side, bid, ask, mid)` | WARN; consider contract doc update |
 | **C** — ambiguous economics | Fail integrity unless dedupe rule picks max volume / latest / min spread | **FAIL** until resolved |
 | **D** — expiry in grain | Add `expiry_date` to documented grain explicitly | WARN → update contract in C9 drift register |
@@ -467,15 +467,17 @@ When duplicates share `(ticker, entry_date, strike, side)` on valid rows:
 2. Tie-break: lowest `spread_pct`.
 3. Tie-break: lowest `strike` (deterministic, arbitrary).
 
-Audit module applies this for readiness metrics and reports `n_deduped_quotes`. Producer dedupe in C6.1D is **optional** — only if triage shows producer double-emit or upstream duplicates are systematic.
+Audit module applies this for readiness metrics and reports `n_deduped_quotes`. **Producer-side dedupe** is a separate, lower-priority change — only after C6.4 duplicate triage confirms the rule (see § C6.1D); not bundled with soft-failure tags.
 
 ### T3 test placement
 
 | Stage | T3 enforcement |
 |-------|----------------|
-| C6.2 pytest | Synthetic fixture with injected duplicate → expect audit helper flags |
-| C6.3 audit | FAIL/WARN per triage outcome on real cache |
-| C6.1D | Optional producer-side dedupe before write |
+| **C6.3** pytest | Audit helper/module tests on synthetic parquets with injected duplicate grain |
+| **C6.3** audit CLI | FAIL/WARN per triage outcome on real cache |
+| **C6.1D** (conditional) | Producer-side dedupe before write — **only** if C6.4 triage warrants it |
+
+C6.2 does **not** own duplicate-grain tests. If a shared helper module lands before C6.3 CLI wiring, its unit tests may land early, but **primary ownership is C6.3**.
 
 **Until C6.4 triage completes:** T3 status = **needs audit / design decision**, not confirmed FAIL.
 
@@ -493,11 +495,11 @@ Audit module applies this for readiness metrics and reports `n_deduped_quotes`. 
 | `no_strikes_in_chain` | No strikes after chain load |
 | `no_spot_at_expiry` | No exit spot at expiry |
 
-### Soft failures (success path but `surface_valid=False`) — **C6.1D recommendation**
+### Soft failures (success path but `surface_valid=False`) — **C6.1D-a**
 
 Today `_metadata_success_row` always sets `failure_reason=None` even when validity gate fails (~25.7k rows in existing cache). This violates T6 spirit.
 
-**Proposed C6.1D tags** (exactly one when `surface_valid=False` on success path):
+**Proposed C6.1D-a tags** (exactly one when `surface_valid=False` on success path):
 
 | Tag | Condition |
 |-----|-----------|
@@ -656,31 +658,40 @@ Producer imports: `from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT, DEFA
 |------|---------|---------|
 | `--data-root` | Split-adjusted chain input root | `DEFAULT_ADJUSTED_LIQUID_ROOT` (`paths.py`) |
 | `--output-root` | Directory for meta/quotes parquets | `DEFAULT_CACHE_ROOT` (`paths.py`) |
-| `--tickers` | Comma-separated subset | all from universe file |
-| `--tickers-file` | Path to CSV with `Ticker` column | `DEFAULT_LIQUID_TICKERS_PATH` when added; else current behavior |
+| `--tickers` | One or more ticker symbols (`nargs="+"`, e.g. `--tickers AAPL MSFT NVDA`) | all from `--tickers-file` or universe file |
+| `--tickers-file` | Path to CSV with `Ticker` column | `DEFAULT_LIQUID_TICKERS_PATH` when added; else current behavior. Mutually exclusive with inline `--tickers`. |
 | `--start-date` / `--end-date` | ISO dates; explicit inclusive bounds | if omitted: `Jan 1` `start_year` … **`Dec 31` `end_year`** (replaces Feb 20 hack) |
-| `--dry-run` | Print planned dates, ticker count, output paths, exit 0 without write | off |
+| `--dry-run` | Print planned run summary (see below); exit `0` without write | off |
 | `--overwrite` | Allow replacing existing output parquets | **default false** — refuse if outputs exist |
 | `--spot-db-path` | Spot parquet input | `DEFAULT_SPOT_PRICES_PATH` (`paths.py`) |
 | `--log-file` | Per-run log path | default shared log; `--log-file -` → stderr only |
 
 ### Behavior rules
 
-1. **Output paths:** `{output_root}/option_surface_meta_{frequency}_{start_year}_{end_year}.parquet` (preserve filename pattern for consumer compatibility).
-2. **Overwrite guard:** If meta or quotes target exists and not `--overwrite`, exit `2` with clear message.
-3. **Dry-run:** No joblib execution (or optional `--dry-run --execute-sample 0` — prefer no execution for speed).
-4. **Ticker scoping:** When `--tickers` or `--tickers-file` set, process only that list; log count.
-5. **Date scoping:** `start_dt` / `end_dt` passed to `weekly_trade_dates_in_range`. Default when only year args: `Jan 1` … `Dec 31`. Optional `--start-date` / `--end-date` narrow the window for smokes.
-6. **Weekly-only for C6:** all resolved Fridays; no monthly entry subsampling.
-7. **Path resolution:** all defaults from `paths.py`; CLI flags override. Dry-run logs resolved `data_root`, `output_root`, `spot_db_path`, `tickers_file`.
-8. **Universe path:** prefer `DEFAULT_LIQUID_TICKERS_PATH` over legacy `cache/liquid_tickers.csv`.
+1. **Output paths:** `{output_root}/option_surface_meta_{frequency}_{start_year}_{end_year}.parquet` and matching quotes file (preserve filename pattern for consumer compatibility). **Filename uses year args only** — see rule 2.
+2. **Filename vs narrowed date window:** When `--start-date` / `--end-date` narrow the run (e.g. Q1 smoke), output filenames still use `{start_year}_{end_year}` from year args. **This is acceptable** because `--output-root` isolates smoke output (e.g. `cache/c6_smoke/`). C6.4 audit reports must record filename vs actual date coverage separately (see § C6.4 evidence plan). Do **not** add `--output-tag` in C6.1A unless explicitly approved as optional future cleanup.
+3. **Overwrite guard:** If meta or quotes target exists and not `--overwrite`, exit `2` with clear message.
+4. **Dry-run (required output):** No joblib execution. Must print all of:
+   - requested `start` / `end` date (from `--start-date`/`--end-date` or year-derived `Jan 1` … `Dec 31`)
+   - resolved schedule `min(entry_date)` / `max(entry_date)` from `weekly_trade_dates_in_range`
+   - count of resolved weekly entry dates
+   - ticker count (and inline ticker list or `--tickers-file` path)
+   - output meta and quote paths (full paths)
+   - `data_root`, `output_root`, `spot_db_path`
+   - whether output files already exist
+   - whether `--overwrite` would be required to run
+5. **Ticker scoping:** `--tickers AAPL MSFT NVDA` (space-separated, `argparse nargs="+"`). When `--tickers` or `--tickers-file` set, process only that list.
+6. **Date scoping:** `start_dt` / `end_dt` passed to `weekly_trade_dates_in_range`. Default when only year args: `Jan 1` … `Dec 31`. Optional `--start-date` / `--end-date` narrow the window for smokes. Resolved schedule may be a **subset** of the requested calendar range when chain files are missing (dry-run must show both requested and resolved bounds).
+7. **Weekly-only for C6:** all resolved Fridays; no monthly entry subsampling.
+8. **Path resolution:** all defaults from `paths.py`; CLI flags override.
+9. **Universe path:** prefer `DEFAULT_LIQUID_TICKERS_PATH` over legacy `cache/liquid_tickers.csv`.
 
 ### Tests (C6.1A)
 
 | Test | File |
 |------|------|
 | `weekly_trade_dates_in_range` holiday fallback | `tests/unit/test_trading_day.py` |
-| `--dry-run` prints paths, no write | `tests/unit/test_precompute_option_surface_cli.py` (new) |
+| `--dry-run` prints required summary fields | `tests/unit/test_precompute_option_surface_cli.py` (new) |
 | overwrite guard refuses | same |
 | `--output-root` redirects outputs | same |
 | ticker subset reduces work | same (mock builder) |
@@ -781,28 +792,69 @@ Keep `_find_best_expiry`; document in C6.6 closeout memo that weekly surface use
 
 ---
 
-## C6.1D producer semantics patch (optional, independent)
+## C6.1D producer semantics patch
 
-**Scope:** Soft-failure tags on success-path invalid rows; optional quote dedupe. Independent of C6.1B/C expiry policy.
+**Independent of C6.1B/C expiry policy.** Two sub-scopes with different risk profiles:
 
-See § Failure-reason vocabulary policy (`missing_body_legs`, etc.) and § Duplicate quote-grain policy.
+### C6.1D-a — Soft-failure tags (recommended)
+
+**Recommended** if regenerated smoke artifacts should pass **T6** cleanly (no `surface_valid=False` rows with null `failure_reason`).
+
+See § Failure-reason vocabulary policy (`missing_body_legs`, `insufficient_surface_quotes`, etc.).
+
+| When | Action |
+|------|--------|
+| Before C6.4 pass 2 regen | Implement if HD wants strict T6 on fresh smoke |
+| Legacy cache | WARN only on null soft-failure reasons |
+
+### C6.1D-b — Producer-side quote dedupe (conditional)
+
+**Not recommended until C6.4 duplicate triage completes.** Apply a producer dedupe rule **only when** triage shows systematic duplicates and HD approves the documented rule.
+
+See § Duplicate quote-grain policy. Do **not** treat dedupe as equally safe as soft-failure tags — it changes on-disk quote rows and can mask upstream data issues if applied prematurely.
 
 ---
 
 ## C6.2 test design
 
-**Purpose:** Layer 1 — prove producer **code behavior** on synthetic fixtures (T1–T6). Does not certify production parquets.
+**Purpose:** Layer 1 — prove **producer code behavior** on synthetic fixtures. Does not certify production parquets. Does **not** own artifact-audit helper tests (those are C6.3).
 
-### Deliverables
+### C6.2 owns (producer behavior)
 
-| ID | Test | Location (proposed) |
-|----|------|---------------------|
-| T1 | `surface_valid` ⇔ body flags + quote count on builder output | extend `tests/contract/test_precompute_input_contract.py` + `tests/unit/test_option_surface_analyzer.py` |
-| T2 | Join: quotes only when meta would be valid; fixture parquet round-trip | `tests/unit/test_option_surface_analyzer.py` or contract fixture |
-| T3 | Duplicate grain flagged by audit helper | unit test for C6.3 helper + synthetic duplicate rows |
-| T4 | `weekly_trade_dates_in_range` holiday fallback | `tests/unit/test_trading_day.py` |
-| T5 | Valid builder rows: settlement fields + `dte_actual` | unit on `process_single_entry` synthetic chain |
-| T6 | Failure vocabulary on all invalid paths | contract + unit; include C6.1D soft tags + C6.1C `no_target_weekly_expiry` when landed |
+| Area | Tests |
+|------|-------|
+| **T1** `surface_valid` invariant | `surface_valid` ⇔ body flags + `n_surface_quotes` on builder output |
+| **T4** Weekly entry schedule | `weekly_trade_dates_in_range` holiday fallback (`test_trading_day.py`) |
+| **T5** Settlement fields | Valid rows: `exit_spot`, `expiry_date`, `body_strike`, `entry_spot`, `dte_actual` |
+| **T6** Failure vocabulary | Hard-failure tags; C6.1D-a soft tags when landed; C6.1C `no_target_weekly_expiry` when landed |
+| Quote row filters | `_quote_rows`: OTM delta bounds, ITM exclusion, `is_body XOR is_otm` |
+
+**Locations:** extend `tests/contract/test_precompute_input_contract.py`, `tests/unit/test_option_surface_analyzer.py`, `tests/unit/test_trading_day.py`.
+
+### C6.3 owns (audit helper / artifact checks)
+
+| Area | Tests |
+|------|-------|
+| **T2** Join integrity | Orphan quotes, valid-without-quotes |
+| **T3** Duplicate quote grain | Injected duplicates in synthetic parquets |
+| Body / expiry mismatch | Meta vs quote `expiry_date`, `body_strike` alignment |
+| Readiness metrics | `body_pair_ready`, `straddle_ready`, `ironfly_candidate_ready`, etc. |
+
+**Location:** `tests/unit/test_audit_option_surface.py` (and shared helper module if factored).
+
+If a reusable audit helper module is extracted before the C6.3 CLI lands, helper unit tests may commit early — **primary ownership remains C6.3**.
+
+### Deliverables table (sprint T1–T7 mapping)
+
+| ID | Test | Owner | Location (proposed) |
+|----|------|-------|---------------------|
+| T1 | `surface_valid` invariant | **C6.2** | contract + `test_option_surface_analyzer.py` |
+| T2 | Meta ↔ quotes join | **C6.3** | `test_audit_option_surface.py` |
+| T3 | Quote grain uniqueness | **C6.3** | `test_audit_option_surface.py` |
+| T4 | Weekly entry schedule | **C6.2** | `test_trading_day.py` |
+| T5 | Settlement fields + `dte_actual` | **C6.2** | `test_option_surface_analyzer.py` |
+| T6 | Failure vocabulary | **C6.2** (+ C6.1D-a / C6.1C tags when landed) | contract + unit |
+| T7 | Real-cache sample | **C6.4** | audit report evidence |
 
 ### Fixtures
 
@@ -818,7 +870,7 @@ See § Failure-reason vocabulary policy (`missing_body_legs`, etc.) and § Dupli
 
 ### Acceptance
 
-- T1–T6 green in pytest.
+- C6.2 producer tests (T1, T4, T5, T6 + quote filters) green in pytest.
 - No changes to S5/S8/ORCH/strategy logic.
 
 ---
@@ -871,10 +923,13 @@ Optional: `--dedupe-quotes` applies duplicate policy for metrics.
 
 Unit tests: `tests/unit/test_audit_option_surface.py` on tiny synthetic parquets.
 
+**C6.3 test ownership:** duplicate quote grain (T3), orphan quotes, valid-without-quotes (T2), body/expiry mismatch, readiness metrics. See § C6.2 test design.
+
 ### Relationship to C6.2
 
-- C6.2 tests producer and shared check helpers where cheap.
-- C6.3 runs full parquet scans (possibly column-projected for quotes).
+- **C6.2** = producer behavior only (invariants, schedule, vocabulary, quote filters).
+- **C6.3** = audit helper tests + full parquet scans on real or synthetic artifact files.
+- No requirement that C6.2 lands duplicate-grain tests before the audit module exists.
 
 ---
 
@@ -902,6 +957,22 @@ Two passes:
 
 Pass 1 proves real-cache schema + partial consistency. Pass 2 proves producer output under C5 root with documented lineage. Closeout requires **at least one substantive documented run** — recommend pass 1 full + pass 2 smoke.
 
+### Audit report scope fields (required for every C6.4 run)
+
+Each C6.3/C6.4 audit report must record **all** of the following (in addition to PASS/WARN/FAIL checks):
+
+| Field | Purpose |
+|-------|---------|
+| Output meta filename | e.g. `option_surface_meta_weekly_2024_2024.parquet` |
+| Output quotes filename | matching quotes parquet |
+| Requested `start` / `end` date | CLI `--start-date`/`--end-date` or year-derived bounds |
+| Resolved schedule min / max `entry_date` | from `weekly_trade_dates_in_range` for the same window |
+| Actual meta `entry_date` min / max | on-disk artifact |
+| Actual quote `entry_date` min / max | on-disk artifact |
+| Ticker scope | inline `--tickers` list or `--tickers-file` path + count |
+
+This separates **filename year span** from **actual data coverage** — especially for Q1 smokes where filename says `_2024_2024` but rows cover only a narrowed window.
+
 ---
 
 ## C6.6 closeout plan
@@ -917,7 +988,7 @@ Pass 1 proves real-cache schema + partial consistency. Pass 2 proves producer ou
 - Links to C6.4 audit reports + overall PASS/WARN/FAIL  
 - Duplicate triage conclusion  
 - Remaining WARNs accepted for 004 closeout  
-- Explicit statement: A1/A2 **not** cleared for Sprint 006 real-data backtest until HD accepts audit + any open WARNs  
+- Explicit statement: A1/A2 are **not** cleared for Sprint 006 real-data backtest until **all FAILs are resolved** and HD **explicitly accepts** any remaining WARNs (WARNs need not disappear — they must be understood and accepted)
 
 ### Closeout checklist mapping
 
@@ -954,7 +1025,7 @@ Pass 1 proves real-cache schema + partial consistency. Pass 2 proves producer ou
 
 ## Open questions for HD review
 
-1. **C6.1D approval:** Adopt soft-failure tags (`missing_body_legs`, etc.) before pass 2 smoke, or WARN-only on legacy null reasons through 004 closeout?  
+1. **C6.1D-a approval:** Adopt soft-failure tags before pass 2 regen, or WARN-only on legacy null reasons through 004 closeout?  
 2. **C6.1B threshold:** What `% target_listed_on_chain` qualifies as "high share" for C6.1C go?  
 3. **Duplicate triage FAIL threshold:** Any ambiguous duplicate rate >0 → FAIL, or rate-based (e.g. FAIL if >0.01% of quote rows)?  
 4. **Pass 2 smoke requirement:** Mandatory for closeout, or is pass 1 read-only + pytest sufficient if lineage WARN documented?  
@@ -963,7 +1034,7 @@ Pass 1 proves real-cache schema + partial consistency. Pass 2 proves producer ou
 7. **Producer default frequency:** Change code default to `weekly`, or runbook-only?  
 8. **`--strict` defaults:** Should closeout runs use `--strict` (WARN→FAIL) or default lenient?  
 9. **Iron condor readiness metric:** Structural only in C6.3, or require default delta config probe?  
-10. **Dedupe in producer vs audit-only:** If triage shows upstream duplicates, patch in C6.1D or audit-only dedupe?  
+10. **Producer dedupe (C6.1D-b):** After C6.4 triage, patch producer or audit-only dedupe?  
 11. **Blocks-005 B4:** Confirm low `surface_valid` rate (~33%) is WARN-only on sample (current sprint doc says yes).
 
 ---
@@ -979,7 +1050,7 @@ That A1/A2 artifacts are schema-compatible, internally consistent, join-correct,
 Unchanged: both body legs tradable + ≥1 quote row. Not iron-fly/condor readiness.
 
 **3. Checks by layer?**  
-Producer tests: T1, T4, T5, T6 code paths. Artifact audit: T2, T3, T5 on disk, schema, join, duplicates, date alignment. Assembly-readiness: straddle/ironfly/condor candidate metrics (Layer 3).
+C6.2 producer tests: T1, T4, T5, T6, quote filters. C6.3 audit tests + CLI: T2, T3, join/grain, readiness metrics on disk. C6.1B diagnostic: weekly expiry comparison (read-only).
 
 **4. PASS / WARN / FAIL?**  
 See policy table above — FAIL on integrity breaks; WARN on coverage, lineage, legacy T6 nulls, pending duplicate triage; INFO for rates.
@@ -997,7 +1068,7 @@ WARN (`otm_wing_pair_available`); not a `surface_valid` defect.
 C6.1A: `weekly_trade_dates_in_range` for **entries**. Expiry: chain-scanned until C6.1C; C6.1B diagnostic compares to target schedule expiry.
 
 **9. C6.1A / B / C scope?**  
-**C6.1A:** paths + safety CLI + entry schedule in `trading_day.py` — **no expiry change**. **C6.1B:** read-only weekly expiry diagnostic. **C6.1C:** calendar-paired expiry + `no_target_weekly_expiry` if B supports. **C6.1D (optional):** soft-failure tags + dedupe.
+**C6.1A:** paths + safety CLI + entry schedule — **no expiry change**. **C6.1B:** read-only weekly expiry diagnostic. **C6.1C:** calendar-paired expiry if B supports. **C6.1D-a:** soft-failure tags (recommended). **C6.1D-b:** producer dedupe only after C6.4 triage.
 
 **10. C6.2 / C6.3 / C6.4 / C6.6?**  
 See sections above — tests, audit CLI, archived evidence, closeout memo.
@@ -1012,7 +1083,7 @@ C8 wiring, C3 validate, C7 PIT, 005 features/incremental, 006 backtest, 007 go/n
 | **Now** | HD review of this memo |
 | **Next** | C6.1A — producer safety + paths + entry schedule (no expiry change) |
 | **Then** | C6.1B weekly expiry diagnostic → C6.1C if supported |
-| **Parallel optional** | C6.1D soft-failure tags |
+| **Parallel optional** | C6.1D-a soft-failure tags (before pass 2 regen if strict T6 desired) |
 | **Then** | C6.2 → C6.3 → C6.4 pass 1 → (spot refresh if required) → pass 2 → C6.6 |
 
 **Do not regenerate surface samples until C6.1A lands.**
