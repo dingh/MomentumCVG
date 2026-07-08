@@ -5,7 +5,7 @@
 **Mode:** Design / documentation — no code, tests, cache, or data changes  
 **Inputs:** [c6_0_option_surface_reality_map.md](c6_0_option_surface_reality_map.md) (accepted), [current_sprint.md](../agenda/current_sprint.md), [surface_engine_data_contract.md](../surface_engine_data_contract.md)
 
-**Status:** Draft for HD review — implementation prompts for C6.1A, C6.2, C6.3 follow approval.
+**Status:** HD review updates — C6.1A/B/C split for weekly expiry semantics (2026-07-07)
 
 ---
 
@@ -44,8 +44,9 @@ C6 is an **audit gate**, not a schema-only test sprint.
 | **Layer 2 — Artifact audit (C6.3/C6.4)** | On-disk meta + quotes parquets | read-only CLI on real cache |
 | **Layer 3 — Assembly-readiness (C6.3)** | Whether valid surfaces can build straddle / iron fly / iron condor at S3 | computed audit metrics, not new A1 columns |
 
-**Ordering:** C6.1 (this memo) → C6.1A (producer safety) → optional C6.1B (semantics patch) → C6.2 → C6.3 → C6.4 → C6.6.  
-**Regenerated surface samples:** blocked until C6.1A lands. Read-only C6.4 pass 1 on existing cache is allowed after C6.3.
+**Ordering:** C6.1 (this memo) → **C6.1A** (producer safety + paths + **entry** schedule only) → **C6.1B** (weekly expiry diagnostic) → **C6.1C** (weekly expiry semantics, if C6.1B supports) → C6.2 → C6.3 → C6.4 → C6.6.  
+Optional **C6.1D:** soft-failure vocabulary + duplicate dedupe (producer semantics; independent of expiry policy).  
+**Regenerated surface samples:** blocked until C6.1A lands. C6.4 pass 2 regen after C6.1A; **expiry semantics change waits for C6.1B/C6.1C** before expecting calendar-paired expiries in smoke output.
 
 **Core semantic decision (validated against code):** Keep `surface_valid` as general A1/A2 surface validity. Do **not** fold iron fly / iron condor wing requirements into `surface_valid`. Wing and body-pair constraints are **assembly-readiness metrics** computed at audit time (Layer 3) and enforced at S3 assembly time.
 
@@ -124,45 +125,42 @@ For every `(ticker, entry_date)` in the run scope, the producer emits **exactly 
 
 **HD decision (2026-07-07):** v1 / C6 targets **weekly only** — every calendar Friday in the requested range, resolved to the **last trading day of that week** when Friday is a holiday. Monthly subsampling (`sample_fridays_by_frequency`) is **not required for the first pass** and is deferred.
 
-**HD decision (2026-07-07):** Consolidate calendar logic in **`src/data/trading_day.py`** in C6.1A. For **weekly v1**, one canonical calendar of **last trading days per week** serves **both** entry dates and expiry dates. Backtest/precompute resolves weeks from **chain file existence**; forward/live resolves the **next** week from **calendar** when the file is not on disk yet.
+**HD decision (2026-07-07):** Consolidate **entry-date** calendar logic in **`src/data/trading_day.py`** in C6.1A (`weekly_trade_dates_in_range`). **Weekly expiry semantics are a separate decision** — see § Weekly expiry semantics (C6.1B / C6.1C); **not** part of C6.1A.
 
-#### Weekly trade ↔ expiry model (HD clarified 2026-07-07)
+#### Weekly trade ↔ expiry model — target v1 semantics (HD clarified 2026-07-07)
 
 This strategy is **weekly options**: hold from one week's resolution day to the next.
 
 ```text
-schedule = [W0, W1, W2, W3, …]   # each Wi = last trading day of week i
-
-Trade entered on W1  →  expires on W2
-Trade entered on W2  →  expires on W3
-…
-consecutive schedule entries form (entry_date → expiry_date) pairs
+entry_date        = last available trading day of week i
+target_expiry_date = last available trading day of week i+1
 ```
 
-| Mode | How `schedule` is built | How expiry is chosen |
-|------|-------------------------|----------------------|
-| **Historical / backtest / precompute** | `weekly_trade_dates_in_range` — file-existence walk-back per week | **`schedule[i+1]`** for entry `schedule[i]` (next row in the same list) |
-| **Forward / live / paper** | Only **today's** trade date is known; next week's file may not exist | **`resolve_next_weekly_expiry_forward(entry_date)`** — calendar next week, **no file check** |
+Consecutive schedule entries define one weekly holding cycle explicitly.
 
-**Implications:**
+| Mode | How `schedule` is built | Target expiry (design intent) |
+|------|-------------------------|-------------------------------|
+| **Historical / backtest / precompute** | `weekly_trade_dates_in_range` — file-existence walk-back per week | **`schedule[i+1]`** when `entry_date == schedule[i]` |
+| **Forward / live / paper** | Current trade date known; next week's file may not exist | Calendar next week's resolution day (**no file check**) |
 
-- For weekly C6, we do **not** scan the option chain's listed expiries to pick ~7 DTE (`_find_best_expiry` / `resolve_best_expiry` chain path). Expiry is **defined by the weekly calendar**, not a separate chain query.
-- `dte_actual = (expiry_date − entry_date).days` follows naturally from consecutive schedule dates (typically ~5–7 days).
-- The **last** week in a backtest window has no successor → producer emits `no_expiry_found` or equivalent for that entry (edge case).
-- Chain data on entry date must still **list options** for the resolved `expiry_date` (or nearby) — calendar picks the date; ORATS chain is the quote source, not the expiry picker.
+**Current production code (unchanged until C6.1C):** `OptionSurfaceBuilder._find_best_expiry` **chain-scans** listed ORATS expiries near target DTE (prefers Friday, then Thursday). This is **functionally robust** but **semantically loose** — it does not encode the weekly-cycle definition above.
 
-**Existing cache note:** `option_surface_meta_weekly_2018_2026` was built with chain-scanned `_find_best_expiry`, not consecutive schedule pairing. C6.4 pass 1 may show `expiry_date ≠ next_schedule_date(entry_date)` on some rows — expected until post-C6.1A regen. Pass 2 smoke should use the new pairing rule.
+**C6.1A does not change expiry picking.** C6.1B diagnoses whether calendar-paired expiry is viable; C6.1C implements it only if the diagnostic supports it.
 
-#### Shared module design (`trading_day.py`)
+**Existing cache note:** `option_surface_meta_weekly_2018_2026` uses chain-scanned expiry. C6.4 pass 1 may compare `expiry_date` vs next schedule date as **diagnostic evidence** (C6.1B), not as a FAIL until C6.1C lands.
 
-| Function | Role | Callers |
-|----------|------|---------|
+#### Shared module design (`trading_day.py`) — C6.1A scope (entry schedule)
+
+| Function | Role | C6 phase |
+|----------|------|----------|
 | `orats_daily_parquet_path` | Canonical chain file path | *(exists)* |
-| `resolve_as_of_trading_day` | Point lookup: latest day ≤ `as_of` with a chain file (HD-004-2) | `refresh_weekly_inputs.py` |
-| `resolve_weekly_entry_date` | Friday anchor → last chain-file day that week (Fri→Mon, `max_lookback_days=5`) | schedule builder, audits |
-| `weekly_trade_dates_in_range` | Sorted weekly schedule for `[start, end]` — one last-trading-day per week (file-based) | precompute, audits, backtest |
-| `resolve_weekly_expiry_from_schedule` | **New.** `entry_date` → next date in sorted `schedule` (backtest / precompute) | `OptionSurfaceBuilder` |
-| `resolve_next_weekly_expiry_forward` | **New.** `entry_date` → next week's resolution day by **calendar** (no file check) | live/paper, incremental edge |
+| `resolve_as_of_trading_day` | Point lookup: latest day ≤ `as_of` with a chain file (HD-004-2) | *(exists)* |
+| `resolve_weekly_entry_date` | Friday anchor → last chain-file day that week (Fri→Mon, `max_lookback_days=5`) | **C6.1A** |
+| `weekly_trade_dates_in_range` | Sorted weekly **entry** schedule for `[start, end]` (file-based) | **C6.1A** |
+| `target_weekly_expiry_from_schedule` | `entry_date` → `schedule[i+1]` (pure helper for diagnostic + future producer) | **C6.1B** (diagnostic); **C6.1C** (wire producer) |
+| `resolve_next_weekly_expiry_forward` | Forward/live: next week's resolution day by calendar (no file) | **C6.1C** (if calendar expiry approved) |
+
+Functions below the line are **designed** in C6.1 but **implemented only after C6.1B evidence**, except the pure `target_weekly_expiry_from_schedule` helper used by the diagnostic.
 
 **`resolve_weekly_entry_date`** is a thin wrapper over `resolve_as_of_trading_day(friday, root, max_lookback_days=5)` — same rule as today's `get_trading_fridays` inner loop, but reuses `orats_daily_parquet_path` and one implementation.
 
@@ -179,32 +177,16 @@ consecutive schedule entries form (entry_date → expiry_date) pairs
 
 So the schedule is **every week's last available trading day**, not "every Friday regardless of holidays." Weeks are not skipped when Friday is a holiday but Thursday has a file — Thursday becomes the entry date.
 
-**Expiry pairing (backtest / precompute):**
+#### C6.1A migration scope (entry schedule + safety only)
 
-```python
-schedule = weekly_trade_dates_in_range(start, end, data_root)  # sorted ascending
-expiry = resolve_weekly_expiry_from_schedule(entry_date, schedule)
-# equivalent: schedule[i + 1] when entry_date == schedule[i]
-```
+| Remove / stop duplicating | Replace with | Phase |
+|---------------------------|--------------|-------|
+| `get_trading_fridays` in `precompute_option_surface.py` | `weekly_trade_dates_in_range` | **C6.1A** |
+| Inline `ORATS_SMV_Strikes_*` path strings in producer | `orats_daily_parquet_path` | **C6.1A** |
+| Hardcoded cache / data paths | `paths.py` constants + CLI flags | **C6.1A** |
+| `OptionSurfaceBuilder._find_best_expiry` for weekly | **No change in C6.1A** — stays chain-scanned until C6.1C | C6.1C |
 
-**Expiry pairing (forward / live):**
-
-```python
-expiry = resolve_next_weekly_expiry_forward(entry_date)
-# next calendar week's resolution day — Friday of the following week as default rule;
-# holiday adjustment without file existence is TBD (simple calendar first; exchange table later if needed)
-```
-
-**`resolve_best_expiry` (chain expiry scan):** **Deferred for weekly v1.** Today's `OptionSurfaceBuilder._find_best_expiry` picks from `get_available_expiries` — that path does **not** match the weekly calendar model above. C6.1A replaces it for `--frequency weekly` with schedule pairing + forward helper. Retain chain-scan logic only if monthly research resumes (Sprint 005+).
-
-#### C6.1A migration scope
-
-| Remove / stop duplicating | Replace with |
-|---------------------------|--------------|
-| `get_trading_fridays` in `precompute_option_surface.py` | `weekly_trade_dates_in_range` |
-| Inline `ORATS_SMV_Strikes_*` path strings in producer | `orats_daily_parquet_path` |
-| `OptionSurfaceBuilder._find_best_expiry` for **weekly** | `resolve_weekly_expiry_from_schedule` (precompute passes full schedule) |
-| Ad-hoc expiry at live edge | `resolve_next_weekly_expiry_forward` |
+**Out of C6.1A:** expiry semantics (`_find_best_expiry` replacement), `resolve_next_weekly_expiry_forward` wiring, analyzer changes for calendar expiry.
 
 **Out of C6.1A (follow-on):** identical `get_trading_fridays` copies in `precompute_straddle_history.py` / `precompute_ironfly_history.py` — migrate when those scripts are touched (Sprint 005).
 
@@ -246,10 +228,10 @@ C6.1A and runbook (C9): **`--frequency weekly` required** for v1 surface filenam
 |-------|-----------|-------|
 | T1 `surface_valid` invariant | contract + unit | success helper + full builder synthetic paths |
 | T5 settlement fields on valid rows | unit on builder output | `exit_spot`, `expiry_date`, `body_strike`, `entry_spot`, `dte_actual` |
-| T6 failure vocabulary | contract + unit | hard failures + soft failures (post-C6.1B) |
+| T6 failure vocabulary | contract + unit | hard failures + soft failures (post-C6.1D) |
 | T4 trade dates | `tests/unit/test_trading_day.py` | `weekly_trade_dates_in_range` + holiday fallback fixtures |
 | Quote row schema / OTM filter | unit on `_quote_rows` | delta bounds, ITM exclusion, `is_body XOR is_otm` |
-| Expiry pairing | `tests/unit/test_trading_day.py` | consecutive schedule → `resolve_weekly_expiry_from_schedule`; forward helper without files |
+| Weekly expiry diagnostic | C6.1B report / script | chain-scanned vs target schedule expiry vs chain listing |
 
 Layer 1 tests do **not** certify on-disk cache bytes — that is Layer 2.
 
@@ -278,7 +260,7 @@ Layer 1 tests do **not** certify on-disk cache bytes — that is Layer 2.
 | L2-08 | Valid rows: `dte_actual == (expiry_date − entry_date).days` | 2 |
 | L2-09 | Valid rows: quote `expiry_date` matches meta `expiry_date` | 2 |
 | L2-10 | Valid rows: body quote strikes match meta `body_strike` | 2 |
-| L2-11 | Invalid rows: `failure_reason` in closed vocabulary (policy varies pre/post C6.1B) | 2 |
+| L2-11 | Invalid rows: `failure_reason` in closed vocabulary (policy varies pre/post C6.1D) | 2 |
 | L2-12 | `side ∈ {call, put}`; `is_body` xor `is_otm` | 2 |
 | L2-13 | OTM quotes within configured delta window (default [0.03, 0.45]) | 2 |
 | L2-14 | Date alignment: meta `entry_date` set consistent with producer trade-date rules in sample range | 2 |
@@ -390,7 +372,7 @@ Severity follows [current_sprint.md](../agenda/current_sprint.md) § Validation 
 | Meta `body_strike` vs body quote strike mismatch on valid rows | 2 |
 | `surface_valid` inconsistent with body flags / `n_surface_quotes` | 2 |
 | Duplicate quote grain **after triage concludes true integrity violation** | 2 |
-| Invalid rows with null `failure_reason` **on post-C6.1B regenerated artifacts** | 2 |
+| Invalid rows with null `failure_reason` **on post-C6.1D regenerated artifacts** | 2 |
 | Quote/meta join broken on audited sample (T2) | 2 |
 
 ### WARN (usable with documented limitation; does not block 004 closeout unless `--strict`)
@@ -398,7 +380,7 @@ Severity follows [current_sprint.md](../agenda/current_sprint.md) § Validation 
 | Check | Layer |
 |-------|-------|
 | Low overall `surface_valid` rate (report by year/ticker) | 2 / INFO |
-| Invalid rows with null `failure_reason` **on legacy pre-C6.1B cache** | 2 |
+| Invalid rows with null `failure_reason` **on legacy pre-C6.1D cache** | 2 |
 | Unknown `failure_reason` tag (not in vocabulary) | 2 |
 | Valid rows missing OTM wing pair (`otm_wing_pair_available=False`) | 3 |
 | Valid rows failing `body_pair_ready` (duplicate or missing body rows) | 3 |
@@ -472,7 +454,7 @@ Step 4 — Decision matrix
 
 | Triage outcome | Action | Audit severity |
 |----------------|--------|----------------|
-| **A** — identical duplicates | Document; apply deterministic dedupe rule in audit (and optionally C6.1B producer dedupe) | WARN on legacy; PASS if dedupe rule applied consistently |
+| **A** — identical duplicates | Document; apply deterministic dedupe rule in audit (and optionally C6.1D producer dedupe) | WARN on legacy; PASS if dedupe rule applied consistently |
 | **B** — diagnostic-only diff | Enrich grain or dedupe on `(strike, side, bid, ask, mid)` | WARN; consider contract doc update |
 | **C** — ambiguous economics | Fail integrity unless dedupe rule picks max volume / latest / min spread | **FAIL** until resolved |
 | **D** — expiry in grain | Add `expiry_date` to documented grain explicitly | WARN → update contract in C9 drift register |
@@ -485,7 +467,7 @@ When duplicates share `(ticker, entry_date, strike, side)` on valid rows:
 2. Tie-break: lowest `spread_pct`.
 3. Tie-break: lowest `strike` (deterministic, arbitrary).
 
-Audit module applies this for readiness metrics and reports `n_deduped_quotes`. Producer dedupe in C6.1B is **optional** — only if triage shows producer double-emit or upstream duplicates are systematic.
+Audit module applies this for readiness metrics and reports `n_deduped_quotes`. Producer dedupe in C6.1D is **optional** — only if triage shows producer double-emit or upstream duplicates are systematic.
 
 ### T3 test placement
 
@@ -493,7 +475,7 @@ Audit module applies this for readiness metrics and reports `n_deduped_quotes`. 
 |-------|----------------|
 | C6.2 pytest | Synthetic fixture with injected duplicate → expect audit helper flags |
 | C6.3 audit | FAIL/WARN per triage outcome on real cache |
-| C6.1B | Optional producer-side dedupe before write |
+| C6.1D | Optional producer-side dedupe before write |
 
 **Until C6.4 triage completes:** T3 status = **needs audit / design decision**, not confirmed FAIL.
 
@@ -511,11 +493,11 @@ Audit module applies this for readiness metrics and reports `n_deduped_quotes`. 
 | `no_strikes_in_chain` | No strikes after chain load |
 | `no_spot_at_expiry` | No exit spot at expiry |
 
-### Soft failures (success path but `surface_valid=False`) — **C6.1B recommendation**
+### Soft failures (success path but `surface_valid=False`) — **C6.1D recommendation**
 
 Today `_metadata_success_row` always sets `failure_reason=None` even when validity gate fails (~25.7k rows in existing cache). This violates T6 spirit.
 
-**Proposed C6.1B tags** (exactly one when `surface_valid=False` on success path):
+**Proposed C6.1D tags** (exactly one when `surface_valid=False` on success path):
 
 | Tag | Condition |
 |-----|-----------|
@@ -533,8 +515,8 @@ Priority: use most specific tag; reserve `partial_body_and_quotes` for edge case
 
 | Artifact era | null `failure_reason` on invalid rows |
 |--------------|---------------------------------------|
-| Legacy cache (pre-C6.1B, e.g. mtime 2026-04-23) | **WARN** with count + note |
-| Post-C6.1B regenerated smoke | **FAIL** if any null on `surface_valid=False` |
+| Legacy cache (pre-C6.1D, e.g. mtime 2026-04-23) | **WARN** with count + note |
+| Post-C6.1D regenerated smoke | **FAIL** if any null on `surface_valid=False` |
 | Unknown lineage | **WARN** until pass 2 smoke documents generation |
 
 ### Unknown tags
@@ -549,9 +531,9 @@ Any other non-null string → **WARN** `unknown_failure_reason:{tag}`; do not FA
 
 | Concept | Mechanism | Used by |
 |---------|-----------|---------|
-| **Weekly entry schedule** | `weekly_trade_dates_in_range` (file-based last day per week) | precompute, backtest |
-| **Weekly expiry (historical)** | `resolve_weekly_expiry_from_schedule` — next consecutive schedule date | `OptionSurfaceBuilder` |
-| **Weekly expiry (forward)** | `resolve_next_weekly_expiry_forward` — calendar next week, no file | live/paper |
+| **Weekly entry schedule** | `weekly_trade_dates_in_range` (file-based last day per week) | precompute, backtest — **C6.1A** |
+| **Weekly expiry (target)** | `target_weekly_expiry_from_schedule` — next schedule date | **C6.1B** diagnostic; **C6.1C** producer if approved |
+| **Weekly expiry (production today)** | `_find_best_expiry` — chain-scanned near DTE | producer until C6.1C |
 | **CLI as-of resolution** | `resolve_as_of_trading_day` (same module) | `refresh_weekly_inputs.py` (HD-004-2) |
 | **Runner trade dates** | From `BacktestRunConfig` / precomputed list | `SurfaceRunner` (Sprint 005 alignment) |
 
@@ -559,14 +541,12 @@ Any other non-null string → **WARN** `unknown_failure_reason:{tag}`; do not FA
 
 For weekly v1 surfaces:
 
-- **One canonical weekly calendar** — last trading day per week (file-based in backtest).
-- **Entry → expiry = consecutive calendar entries:** `expiry_date` for `entry_date` is the **next** date in `weekly_trade_dates_in_range` output, not a chain-scanned expiry.
-- **One entry per calendar week:** Fri→Mon walk-back from Friday anchor; holiday weeks land on Thursday or earlier.
-- **Data-gap weeks only:** Mon–Fri all lack chain file → week omitted from schedule (rare).
-- **Forward edge:** when only the current trade date exists, `resolve_next_weekly_expiry_forward` supplies expiry without a chain file for that day.
+- **Entry schedule (C6.1A):** one last-trading-day per week via `weekly_trade_dates_in_range`; Fri→Mon walk-back; data-gap weeks omitted.
+- **Expiry (until C6.1C):** producer continues **`_find_best_expiry`** chain scan — audit may **compare** to target schedule expiry (C6.1B) but does not FAIL solely on mismatch pre-C6.1C.
+- **Expiry (after C6.1C, if approved):** `expiry_date == target_weekly_expiry_from_schedule(entry_date, schedule)`; no silent fallback to a different listed expiry.
 - `[start, end]` full window (year args → Jan 1 … Dec 31).
-- Every meta `entry_date` must appear in `weekly_trade_dates_in_range(...)`; `expiry_date` must equal the next schedule date (or forward helper at live edge).
-- `dte_actual` should match `(expiry_date − entry_date).days`; audit WARN if weekly pairs drift far from expected spacing.
+- Every meta `entry_date` must appear in `weekly_trade_dates_in_range(...)` for the build window.
+- `dte_actual` should match `(expiry_date − entry_date).days`.
 
 ### Audit checks (C6.3)
 
@@ -578,10 +558,10 @@ For weekly v1 surfaces:
 
 ### C6.2 tests
 
-- Unit-test `weekly_trade_dates_in_range` and `resolve_weekly_expiry_from_schedule` in `tests/unit/test_trading_day.py`.
-- Unit-test `resolve_next_weekly_expiry_forward` (no files; calendar next week).
-- Extend existing `resolve_as_of_trading_day` tests — all calendar policy in one module.
-- C6.3 audit: recompute schedule; assert `expiry_date == next_schedule_date(entry_date)` on valid weekly rows.
+- Unit-test `weekly_trade_dates_in_range` in `tests/unit/test_trading_day.py` (synthetic `data_root`; missing Friday → Thursday).
+- Extend existing `resolve_as_of_trading_day` tests.
+- C6.3 audit: recompute expected **entry** dates via `weekly_trade_dates_in_range`.
+- C6.1B/C6.3: compare `expiry_date` vs target schedule expiry (INFO/WARN pre-C6.1C; enforce post-C6.1C).
 
 ---
 
@@ -643,21 +623,20 @@ C6.1A should add **`--spot-db-path`** (default unchanged) so smoke runs can reco
 
 **Gate:** No regenerated surface samples until C6.1A merges.
 
-C6.1A has three parts: **(A) shared calendar refactor** in `trading_day.py` + **(B) path centralization** in `paths.py` + **(C) producer safety CLI**.
+**Scope boundary:** C6.1A is **producer safety, path centralization, and entry-date schedule only**. It does **not** change weekly expiry semantics (`_find_best_expiry` stays until C6.1C).
 
-### (A) Shared calendar refactor (`src/data/trading_day.py`)
+C6.1A has three parts: **(A) entry schedule in `trading_day.py`** + **(B) path centralization in `paths.py`** + **(C) producer safety CLI**.
+
+### (A) Entry schedule refactor (`src/data/trading_day.py`)
 
 | Deliverable | Detail |
 |-------------|--------|
 | `resolve_weekly_entry_date` | Friday → last chain-file day that week (`max_lookback_days=5`) |
-| `weekly_trade_dates_in_range` | Sorted weekly schedule for `[start, end]` (file-based) |
-| `resolve_weekly_expiry_from_schedule` | Backtest/precompute: next consecutive schedule date |
-| `resolve_next_weekly_expiry_forward` | Live/forward: next week's day by calendar (no file) |
-| Wire `precompute_option_surface.py` | Build schedule once; pass to builder; drop `get_trading_fridays` |
-| Wire `option_surface_analyzer.py` | Weekly path: schedule pairing replaces `_find_best_expiry` chain scan |
-| Tests | Extend `tests/unit/test_trading_day.py` (schedule + pairing + forward) |
-
-**Design principle:** One weekly calendar drives **both** trade dates and expiries. Backtest uses files to build the schedule; live uses calendar for the next expiry when the file is not there yet.
+| `weekly_trade_dates_in_range` | Sorted weekly **entry** schedule for `[start, end]` (file-based) |
+| `target_weekly_expiry_from_schedule` | Pure helper: `schedule[i+1]` for diagnostic use in C6.1B (no producer wire yet) |
+| Wire `precompute_option_surface.py` | Drop `get_trading_fridays`; use `weekly_trade_dates_in_range` for trade dates |
+| **Do not wire** | `_find_best_expiry` replacement, `resolve_next_weekly_expiry_forward` |
+| Tests | `weekly_trade_dates_in_range` + holiday fallback in `tests/unit/test_trading_day.py` |
 
 ### (B) Path centralization (`src/data/paths.py`)
 
@@ -701,14 +680,14 @@ Producer imports: `from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT, DEFA
 | Test | File |
 |------|------|
 | `weekly_trade_dates_in_range` holiday fallback | `tests/unit/test_trading_day.py` |
-| `resolve_weekly_expiry_from_schedule` consecutive pairing | `tests/unit/test_trading_day.py` |
-| `resolve_next_weekly_expiry_forward` (no file) | `tests/unit/test_trading_day.py` |
 | `--dry-run` prints paths, no write | `tests/unit/test_precompute_option_surface_cli.py` (new) |
 | overwrite guard refuses | same |
 | `--output-root` redirects outputs | same |
 | ticker subset reduces work | same (mock builder) |
 
 ### Smoke recipe (post-C6.1A, for C6.4 pass 2)
+
+Regenerated smoke uses **C6.1A entry schedule + paths** but **still chain-scanned expiry** until C6.1C. Run C6.1B diagnostic on the same sample before expecting calendar-paired expiries.
 
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe scripts/precompute_option_surface.py `
@@ -726,6 +705,90 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/precompute_option_surface.py 
 
 ---
 
+## C6.1B weekly expiry policy diagnostic
+
+**Mode:** Read-only — no producer changes, no cache overwrites.
+
+**Purpose:** Decide whether calendar-paired weekly expiry (`entry week i` → `expiry week i+1`) is viable on real `adjusted_liquid` data before implementing C6.1C.
+
+### Comparisons (per `(ticker, entry_date)` in sample)
+
+| # | Field | Source |
+|---|-------|--------|
+| 1 | `expiry_chain_scanned` | Current `_find_best_expiry` / `get_available_expiries` path |
+| 2 | `expiry_target_weekly` | `target_weekly_expiry_from_schedule(entry_date, schedule)` |
+| 3 | `target_listed_on_chain` | Does ORATS chain on `entry_date` contain quotes for `expiry_target_weekly`? |
+
+Also report: `expiry_chain_scanned == expiry_target_weekly` rate; mismatch DTE delta distribution.
+
+### Sample
+
+Same window as C6.4 smoke (e.g. 3–5 tickers × 8–12 weekly entry dates in Q1 2024) on `DEFAULT_ADJUSTED_LIQUID_ROOT`.
+
+### Decision rule (HD locked 2026-07-07)
+
+```text
+If target weekly expiry is listed and usable for a high share of the sample
+  → proceed to C6.1C (implement calendar-paired weekly expiry)
+
+If coverage is poor
+  → keep chain-scanned expiry for now; document semantic gap; revisit after C6 closeout
+```
+
+**"High share"** threshold: propose ≥90% of sample rows with `target_listed_on_chain=True` and quotable body legs — HD to confirm in C6.1B report review.
+
+### Deliverable
+
+`docs/tmp/c6_1b_weekly_expiry_diagnostic.md` — rates, examples of mismatches, recommendation for/against C6.1C.
+
+---
+
+## C6.1C weekly expiry semantics implementation
+
+**Gate:** C6.1B recommends proceed. **Not** part of C6.1A.
+
+**Scope:** Replace weekly `_find_best_expiry` chain scan with calendar-paired expiry in `OptionSurfaceBuilder` + `trading_day.py` helpers.
+
+### Behavior (if implemented)
+
+```text
+entry_date  = schedule[i]
+expiry_date = schedule[i+1]   # target_weekly_expiry_from_schedule
+
+If target expiry not listed on chain for this ticker:
+  → failure_reason = no_target_weekly_expiry
+  → do NOT silently pick a different listed expiry
+```
+
+**Forward / live edge:** `resolve_next_weekly_expiry_forward(entry_date)` — calendar next week when next schedule file does not exist yet.
+
+### New failure vocabulary (C6.1C)
+
+| Tag | When |
+|-----|------|
+| `no_target_weekly_expiry` | Target schedule expiry not listed / not quotable on entry chain |
+| `no_successor_week` | Last week in schedule — no `schedule[i+1]` (edge of window) |
+
+### Tests
+
+- `target_weekly_expiry_from_schedule` unit tests
+- Producer integration: target listed → success; target missing → `no_target_weekly_expiry`
+- C6.4 pass 2 regen **after C6.1C** if calendar expiry approved (may require third audit pass)
+
+### If C6.1B does not support implementation
+
+Keep `_find_best_expiry`; document in C6.6 closeout memo that weekly surface uses nearest listed expiry, not strict weekly-cycle hold. C6.3 audit adds INFO section: `% expiry matches target schedule date`.
+
+---
+
+## C6.1D producer semantics patch (optional, independent)
+
+**Scope:** Soft-failure tags on success-path invalid rows; optional quote dedupe. Independent of C6.1B/C expiry policy.
+
+See § Failure-reason vocabulary policy (`missing_body_legs`, etc.) and § Duplicate quote-grain policy.
+
+---
+
 ## C6.2 test design
 
 **Purpose:** Layer 1 — prove producer **code behavior** on synthetic fixtures (T1–T6). Does not certify production parquets.
@@ -739,7 +802,7 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/precompute_option_surface.py 
 | T3 | Duplicate grain flagged by audit helper | unit test for C6.3 helper + synthetic duplicate rows |
 | T4 | `weekly_trade_dates_in_range` holiday fallback | `tests/unit/test_trading_day.py` |
 | T5 | Valid builder rows: settlement fields + `dte_actual` | unit on `process_single_entry` synthetic chain |
-| T6 | Failure vocabulary on all invalid paths | contract + unit; include C6.1B soft tags when landed |
+| T6 | Failure vocabulary on all invalid paths | contract + unit; include C6.1D soft tags + C6.1C `no_target_weekly_expiry` when landed |
 
 ### Fixtures
 
@@ -848,7 +911,8 @@ Pass 1 proves real-cache schema + partial consistency. Pass 2 proves producer ou
 ### Contents
 
 - Summary of C6.1 design decisions adopted after HD review  
-- C6.1A/C6.1B change notes  
+- C6.1A / C6.1B / C6.1C / C6.1D change notes  
+- C6.1B weekly expiry diagnostic recommendation
 - pytest evidence (T1–T6)  
 - Links to C6.4 audit reports + overall PASS/WARN/FAIL  
 - Duplicate triage conclusion  
@@ -890,16 +954,17 @@ Pass 1 proves real-cache schema + partial consistency. Pass 2 proves producer ou
 
 ## Open questions for HD review
 
-1. **C6.1B approval:** Adopt soft-failure tags (`missing_body_legs`, etc.) before pass 2 smoke, or WARN-only on legacy null reasons through 004 closeout?  
-2. **Duplicate triage FAIL threshold:** Any ambiguous duplicate rate >0 → FAIL, or rate-based (e.g. FAIL if >0.01% of quote rows)?  
-3. **Pass 2 smoke requirement:** Mandatory for closeout, or is pass 1 read-only + pytest sufficient if lineage WARN documented?  
-4. **Spot refresh gate:** FAIL pass 2 if spot not re-extracted post-C5, or WARN only?  
-5. **Ticker universe default:** Switch producer default to `input/liquidity/liquid_tickers.csv` in C6.1A or document divergence only?  
-6. **Producer default frequency:** Change code default to `weekly`, or runbook-only? *(Trade-date policy: weekly all-Fridays locked; monthly sampler deferred.)*  
-7. **`--strict` defaults:** Should closeout runs use `--strict` (WARN→FAIL) or default lenient?  
-8. **Iron condor readiness metric:** Structural only in C6.3, or require default delta config probe?  
-9. **Dedupe in producer vs audit-only:** If triage shows upstream duplicates, patch producer (C6.1B) or audit-only dedupe?  
-10. **Blocks-005 B4:** Confirm low `surface_valid` rate (~33%) is WARN-only on sample (current sprint doc says yes).
+1. **C6.1D approval:** Adopt soft-failure tags (`missing_body_legs`, etc.) before pass 2 smoke, or WARN-only on legacy null reasons through 004 closeout?  
+2. **C6.1B threshold:** What `% target_listed_on_chain` qualifies as "high share" for C6.1C go?  
+3. **Duplicate triage FAIL threshold:** Any ambiguous duplicate rate >0 → FAIL, or rate-based (e.g. FAIL if >0.01% of quote rows)?  
+4. **Pass 2 smoke requirement:** Mandatory for closeout, or is pass 1 read-only + pytest sufficient if lineage WARN documented?  
+5. **Spot refresh gate:** FAIL pass 2 if spot not re-extracted post-C5, or WARN only?  
+6. **Ticker universe default:** Switch producer default to `input/liquidity/liquid_tickers.csv` in C6.1A or document divergence only?  
+7. **Producer default frequency:** Change code default to `weekly`, or runbook-only?  
+8. **`--strict` defaults:** Should closeout runs use `--strict` (WARN→FAIL) or default lenient?  
+9. **Iron condor readiness metric:** Structural only in C6.3, or require default delta config probe?  
+10. **Dedupe in producer vs audit-only:** If triage shows upstream duplicates, patch in C6.1D or audit-only dedupe?  
+11. **Blocks-005 B4:** Confirm low `surface_valid` rate (~33%) is WARN-only on sample (current sprint doc says yes).
 
 ---
 
@@ -923,16 +988,16 @@ See policy table above — FAIL on integrity breaks; WARN on coverage, lineage, 
 Triage before FAIL; sample 50 groups; classify identical vs ambiguous; optional deterministic dedupe; do not assume producer bug.
 
 **6. Invalid rows with null `failure_reason`?**  
-C6.1B soft tags recommended; legacy WARN, post-regen FAIL.
+C6.1D soft tags recommended; legacy WARN, post-regen FAIL.
 
 **7. Valid rows without OTM wings?**  
 WARN (`otm_wing_pair_available`); not a `surface_valid` defect.
 
 **8. Date alignment?**  
-One weekly calendar: `weekly_trade_dates_in_range` for entries; **expiry = next consecutive schedule date** (backtest) or `resolve_next_weekly_expiry_forward` (live). Audit checks entry ∈ schedule and expiry = successor.
+C6.1A: `weekly_trade_dates_in_range` for **entries**. Expiry: chain-scanned until C6.1C; C6.1B diagnostic compares to target schedule expiry.
 
-**9. C6.1A scope?**  
-**(A)** `trading_day.py`: weekly schedule + consecutive expiry pairing + forward expiry helper; wire surface precompute + analyzer. **(B)** `paths.py`: `DEFAULT_CACHE_ROOT`, spot/tickers paths; no script hardcodes. **(C)** Safety CLI: configurable `--data-root`, `--output-root`, ticker/date scope, `--dry-run`, overwrite guard, `--spot-db-path`, `--log-file`, Dec 31 end bound.
+**9. C6.1A / B / C scope?**  
+**C6.1A:** paths + safety CLI + entry schedule in `trading_day.py` — **no expiry change**. **C6.1B:** read-only weekly expiry diagnostic. **C6.1C:** calendar-paired expiry + `no_target_weekly_expiry` if B supports. **C6.1D (optional):** soft-failure tags + dedupe.
 
 **10. C6.2 / C6.3 / C6.4 / C6.6?**  
 See sections above — tests, audit CLI, archived evidence, closeout memo.
@@ -945,8 +1010,9 @@ C8 wiring, C3 validate, C7 PIT, 005 features/incremental, 006 backtest, 007 go/n
 | Step | Action |
 |------|--------|
 | **Now** | HD review of this memo |
-| **Next** | C6.1A producer-safety patch (implementation prompt after approval) |
-| **Parallel optional** | C6.1B if HD approves soft-failure tags before smoke |
+| **Next** | C6.1A — producer safety + paths + entry schedule (no expiry change) |
+| **Then** | C6.1B weekly expiry diagnostic → C6.1C if supported |
+| **Parallel optional** | C6.1D soft-failure tags |
 | **Then** | C6.2 → C6.3 → C6.4 pass 1 → (spot refresh if required) → pass 2 → C6.6 |
 
 **Do not regenerate surface samples until C6.1A lands.**
