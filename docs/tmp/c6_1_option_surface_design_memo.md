@@ -122,26 +122,123 @@ For every `(ticker, entry_date)` in the run scope, the producer emits **exactly 
 
 ### Trade-date generation (T4 precursor)
 
-Producer uses `get_trading_fridays(start, end, data_root)`:
+**HD decision (2026-07-07):** v1 / C6 targets **weekly only** — every calendar Friday in the requested range, resolved to the **last trading day of that week** when Friday is a holiday. Monthly subsampling (`sample_fridays_by_frequency`) is **not required for the first pass** and is deferred.
 
-- Enumerate calendar Fridays in range.
-- For each Friday, walk back Fri→Mon until `ORATS_SMV_Strikes_{YYYYMMDD}.parquet` exists under `data_root`.
-- `sample_fridays_by_frequency`: weekly = all resolved days; monthly = first resolved day per calendar month.
-- End bound: `datetime(end_year, 2, 20)` (not Dec 31).
+**HD decision (2026-07-07):** Consolidate calendar logic in **`src/data/trading_day.py`** in C6.1A. For **weekly v1**, one canonical calendar of **last trading days per week** serves **both** entry dates and expiry dates. Backtest/precompute resolves weeks from **chain file existence**; forward/live resolves the **next** week from **calendar** when the file is not on disk yet.
 
-**Not the same module as** `src/data/trading_day.py::resolve_as_of_trading_day` (HD-004-2 for CLI `--as-of`). Both use “walk back until data exists” spirit but different APIs and call sites. C6.1 **documents** both; C6.2 **tests** producer dates against file-existence fixtures; C6.3 **audits** meta `entry_date` distribution (Fridays vs holiday fallback Thursdays).
+#### Weekly trade ↔ expiry model (HD clarified 2026-07-07)
+
+This strategy is **weekly options**: hold from one week's resolution day to the next.
+
+```text
+schedule = [W0, W1, W2, W3, …]   # each Wi = last trading day of week i
+
+Trade entered on W1  →  expires on W2
+Trade entered on W2  →  expires on W3
+…
+consecutive schedule entries form (entry_date → expiry_date) pairs
+```
+
+| Mode | How `schedule` is built | How expiry is chosen |
+|------|-------------------------|----------------------|
+| **Historical / backtest / precompute** | `weekly_trade_dates_in_range` — file-existence walk-back per week | **`schedule[i+1]`** for entry `schedule[i]` (next row in the same list) |
+| **Forward / live / paper** | Only **today's** trade date is known; next week's file may not exist | **`resolve_next_weekly_expiry_forward(entry_date)`** — calendar next week, **no file check** |
+
+**Implications:**
+
+- For weekly C6, we do **not** scan the option chain's listed expiries to pick ~7 DTE (`_find_best_expiry` / `resolve_best_expiry` chain path). Expiry is **defined by the weekly calendar**, not a separate chain query.
+- `dte_actual = (expiry_date − entry_date).days` follows naturally from consecutive schedule dates (typically ~5–7 days).
+- The **last** week in a backtest window has no successor → producer emits `no_expiry_found` or equivalent for that entry (edge case).
+- Chain data on entry date must still **list options** for the resolved `expiry_date` (or nearby) — calendar picks the date; ORATS chain is the quote source, not the expiry picker.
+
+**Existing cache note:** `option_surface_meta_weekly_2018_2026` was built with chain-scanned `_find_best_expiry`, not consecutive schedule pairing. C6.4 pass 1 may show `expiry_date ≠ next_schedule_date(entry_date)` on some rows — expected until post-C6.1A regen. Pass 2 smoke should use the new pairing rule.
+
+#### Shared module design (`trading_day.py`)
+
+| Function | Role | Callers |
+|----------|------|---------|
+| `orats_daily_parquet_path` | Canonical chain file path | *(exists)* |
+| `resolve_as_of_trading_day` | Point lookup: latest day ≤ `as_of` with a chain file (HD-004-2) | `refresh_weekly_inputs.py` |
+| `resolve_weekly_entry_date` | Friday anchor → last chain-file day that week (Fri→Mon, `max_lookback_days=5`) | schedule builder, audits |
+| `weekly_trade_dates_in_range` | Sorted weekly schedule for `[start, end]` — one last-trading-day per week (file-based) | precompute, audits, backtest |
+| `resolve_weekly_expiry_from_schedule` | **New.** `entry_date` → next date in sorted `schedule` (backtest / precompute) | `OptionSurfaceBuilder` |
+| `resolve_next_weekly_expiry_forward` | **New.** `entry_date` → next week's resolution day by **calendar** (no file check) | live/paper, incremental edge |
+
+**`resolve_weekly_entry_date`** is a thin wrapper over `resolve_as_of_trading_day(friday, root, max_lookback_days=5)` — same rule as today's `get_trading_fridays` inner loop, but reuses `orats_daily_parquet_path` and one implementation.
+
+**`weekly_trade_dates_in_range(start, end, orats_adj_root)`** replaces script-local `get_trading_fridays` + `generate_trade_dates` for weekly C6 runs.
+
+**Range:** `[start, end]` inclusive. Year args → `Jan 1` `start_year` … **`Dec 31` `end_year`** (not Feb 20).
+
+**Per-week algorithm (one output date per calendar week):**
+
+1. Take the calendar **Friday** of that week as the anchor (Fridays enumerate the weeks in `[start, end]`).
+2. Walk back **Fri → Thu → Wed → Tue → Mon**; use the **first** day (starting from Friday) whose chain parquet exists under `data_root`.
+3. That day is the week's **entry date** — the last trading day of the week *for which we have data*. On a normal week this is Friday; on a holiday week it may be Thursday or earlier.
+4. **Only if no chain file exists on any weekday Mon–Fri** is the week omitted from the output list. That is a **data-gap edge case** (missing backfill), not normal operation. It matches today's producer warning: *"no trading day found in week, skipping"*.
+
+So the schedule is **every week's last available trading day**, not "every Friday regardless of holidays." Weeks are not skipped when Friday is a holiday but Thursday has a file — Thursday becomes the entry date.
+
+**Expiry pairing (backtest / precompute):**
+
+```python
+schedule = weekly_trade_dates_in_range(start, end, data_root)  # sorted ascending
+expiry = resolve_weekly_expiry_from_schedule(entry_date, schedule)
+# equivalent: schedule[i + 1] when entry_date == schedule[i]
+```
+
+**Expiry pairing (forward / live):**
+
+```python
+expiry = resolve_next_weekly_expiry_forward(entry_date)
+# next calendar week's resolution day — Friday of the following week as default rule;
+# holiday adjustment without file existence is TBD (simple calendar first; exchange table later if needed)
+```
+
+**`resolve_best_expiry` (chain expiry scan):** **Deferred for weekly v1.** Today's `OptionSurfaceBuilder._find_best_expiry` picks from `get_available_expiries` — that path does **not** match the weekly calendar model above. C6.1A replaces it for `--frequency weekly` with schedule pairing + forward helper. Retain chain-scan logic only if monthly research resumes (Sprint 005+).
+
+#### C6.1A migration scope
+
+| Remove / stop duplicating | Replace with |
+|---------------------------|--------------|
+| `get_trading_fridays` in `precompute_option_surface.py` | `weekly_trade_dates_in_range` |
+| Inline `ORATS_SMV_Strikes_*` path strings in producer | `orats_daily_parquet_path` |
+| `OptionSurfaceBuilder._find_best_expiry` for **weekly** | `resolve_weekly_expiry_from_schedule` (precompute passes full schedule) |
+| Ad-hoc expiry at live edge | `resolve_next_weekly_expiry_forward` |
+
+**Out of C6.1A (follow-on):** identical `get_trading_fridays` copies in `precompute_straddle_history.py` / `precompute_ironfly_history.py` — migrate when those scripts are touched (Sprint 005).
+
+**Current code gap (C6.1A fix):** `end_dt = datetime(end_year, 2, 20)` is a historical data shortcut; replace with `Dec 31` of `end_year` (or explicit `--end-date`).
+
+**Deferred:** `sample_fridays_by_frequency` / monthly first-Friday **entry** sampling — not used in C6 evidence.
 
 ### Producer configuration defaults (operational risk)
 
-| Setting | Producer default | v1 consumer default | Risk |
-|---------|------------------|---------------------|------|
-| `--frequency` | `monthly` | weekly filenames in `SurfaceDataPaths` | Wrong artifact if operator omits flag |
-| `--data-root` | `DEFAULT_ADJUSTED_LIQUID_ROOT` (C5) | — | OK post-C5.11A |
-| Output root | hardcoded `C:/MomentumCVG_env/cache` | same | Overwrite risk |
-| Ticker universe | `cache/liquid_tickers.csv` | — | May diverge from C4/C5 `input/liquidity/liquid_tickers.csv` |
-| Spot DB | hardcoded `cache/spot_prices_adjusted.parquet` | C1 manifest key | Stale pre-C5 lineage |
+**HD decision (2026-07-07):** **Input root** (`--data-root`) and **output root** (`--output-root`) must not be hardcoded in the producer script. Defaults live in **`src/data/paths.py`**; every path is overridable via CLI. Same pattern as C5.11A for `DEFAULT_ADJUSTED_LIQUID_ROOT`.
 
-C6.1A and runbook (C9) should steer operators toward `--frequency weekly` for v1 surface filenames.
+#### Path constants (`paths.py` — C6.1A extend)
+
+| Constant | Proposed default | Used for |
+|----------|------------------|----------|
+| `DEFAULT_ADJUSTED_LIQUID_ROOT` | `C:/MomentumCVG_env/input/adjusted_liquid` | *(exists)* chain input `--data-root` |
+| `DEFAULT_CACHE_ROOT` | `C:/MomentumCVG_env/cache` | **New.** Stage A output cache; `--output-root` default |
+| `DEFAULT_SPOT_PRICES_PATH` | `DEFAULT_CACHE_ROOT / spot_prices_adjusted.parquet` | **New.** `--spot-db-path` default |
+| `DEFAULT_LIQUID_TICKERS_PATH` | `C:/MomentumCVG_env/input/liquidity/liquid_tickers.csv` | **New (optional).** `--tickers-file` default; align with C4/C5 |
+
+**Rule:** `precompute_option_surface.py` imports defaults from `paths.py` only — no inline `C:/MomentumCVG_env/...` strings. CLI flags override defaults at runtime.
+
+**Follow-on (not blocking C6.1A):** `SurfaceDataPaths`, `refresh_weekly_inputs.DEFAULT_CACHE_DIR`, and `corporate_actions.DEFAULT_CACHE_DIR` should converge on `paths.DEFAULT_CACHE_ROOT` in C9 or Sprint 005 — document drift until then.
+
+| Setting | Producer default (after C6.1A) | v1 consumer default | Notes |
+|---------|-------------------------------|---------------------|-------|
+| `--frequency` | `monthly` (legacy code) | weekly filenames in `SurfaceDataPaths` | C6 runs pass `--frequency weekly` |
+| End of year range | `Feb 20` of `end_year` (bug) | full calendar year | C6.1A fixes to `Dec 31` |
+| `--data-root` | `DEFAULT_ADJUSTED_LIQUID_ROOT` from `paths.py` | — | CLI override supported |
+| `--output-root` | `DEFAULT_CACHE_ROOT` from `paths.py` | `SurfaceDataPaths.cache_dir` | CLI override; smoke → `cache/c6_smoke/` |
+| `--spot-db-path` | `DEFAULT_SPOT_PRICES_PATH` from `paths.py` | C1 manifest `spot_prices` | CLI override supported |
+| Ticker universe | hardcoded `cache/liquid_tickers.csv` today | — | C6.1A → `DEFAULT_LIQUID_TICKERS_PATH` or `--tickers-file` |
+
+C6.1A and runbook (C9): **`--frequency weekly` required** for v1 surface filenames; do not use monthly sampling for Sprint 004 evidence.
 
 ### Layer 1 checks → C6.2 producer tests
 
@@ -150,9 +247,9 @@ C6.1A and runbook (C9) should steer operators toward `--frequency weekly` for v1
 | T1 `surface_valid` invariant | contract + unit | success helper + full builder synthetic paths |
 | T5 settlement fields on valid rows | unit on builder output | `exit_spot`, `expiry_date`, `body_strike`, `entry_spot`, `dte_actual` |
 | T6 failure vocabulary | contract + unit | hard failures + soft failures (post-C6.1B) |
-| T4 trade dates | unit on `generate_trade_dates` | fixture dir with selective missing Fridays |
+| T4 trade dates | `tests/unit/test_trading_day.py` | `weekly_trade_dates_in_range` + holiday fallback fixtures |
 | Quote row schema / OTM filter | unit on `_quote_rows` | delta bounds, ITM exclusion, `is_body XOR is_otm` |
-| Expiry selection edge cases | unit (targeted) | weekly vs monthly path, tolerance window |
+| Expiry pairing | `tests/unit/test_trading_day.py` | consecutive schedule → `resolve_weekly_expiry_from_schedule`; forward helper without files |
 
 Layer 1 tests do **not** certify on-disk cache bytes — that is Layer 2.
 
@@ -452,17 +549,24 @@ Any other non-null string → **WARN** `unknown_failure_reason:{tag}`; do not FA
 
 | Concept | Mechanism | Used by |
 |---------|-----------|---------|
-| **Producer trade dates** | `get_trading_fridays` + frequency sampler | `precompute_option_surface.py` |
-| **CLI as-of resolution** | `resolve_as_of_trading_day(requested, data_root)` walk-back | `refresh_weekly_inputs.py` (HD-004-2) |
+| **Weekly entry schedule** | `weekly_trade_dates_in_range` (file-based last day per week) | precompute, backtest |
+| **Weekly expiry (historical)** | `resolve_weekly_expiry_from_schedule` — next consecutive schedule date | `OptionSurfaceBuilder` |
+| **Weekly expiry (forward)** | `resolve_next_weekly_expiry_forward` — calendar next week, no file | live/paper |
+| **CLI as-of resolution** | `resolve_as_of_trading_day` (same module) | `refresh_weekly_inputs.py` (HD-004-2) |
 | **Runner trade dates** | From `BacktestRunConfig` / precomputed list | `SurfaceRunner` (Sprint 005 alignment) |
 
 ### Producer alignment spec (C6.1 locks)
 
 For weekly v1 surfaces:
 
-- Every meta `entry_date` must be a **resolved trading day** in `[start, end]` per `get_trading_fridays` logic against the **same `--data-root`** used to build the artifact.
-- Holiday weeks may produce **Thursday (or earlier) entry_date** (~3% in existing cache) — valid, not FAIL.
-- `entry_date` must not be a weekend or a day without chain file under `data_root`.
+- **One canonical weekly calendar** — last trading day per week (file-based in backtest).
+- **Entry → expiry = consecutive calendar entries:** `expiry_date` for `entry_date` is the **next** date in `weekly_trade_dates_in_range` output, not a chain-scanned expiry.
+- **One entry per calendar week:** Fri→Mon walk-back from Friday anchor; holiday weeks land on Thursday or earlier.
+- **Data-gap weeks only:** Mon–Fri all lack chain file → week omitted from schedule (rare).
+- **Forward edge:** when only the current trade date exists, `resolve_next_weekly_expiry_forward` supplies expiry without a chain file for that day.
+- `[start, end]` full window (year args → Jan 1 … Dec 31).
+- Every meta `entry_date` must appear in `weekly_trade_dates_in_range(...)`; `expiry_date` must equal the next schedule date (or forward helper at live edge).
+- `dte_actual` should match `(expiry_date − entry_date).days`; audit WARN if weekly pairs drift far from expected spacing.
 
 ### Audit checks (C6.3)
 
@@ -474,10 +578,10 @@ For weekly v1 surfaces:
 
 ### C6.2 tests
 
-- Unit-test `generate_trade_dates` against a tiny synthetic `data_root` tree (missing Friday → Thursday).
-- Unit-test `resolve_as_of_trading_day` separately (existing C2 tests) — **cross-reference doc**, not merge modules in C6 unless HD requests.
-
-**Defer:** extracting shared `get_trading_fridays` into `trading_day.py` → Sprint 005 or C9 runbook note only.
+- Unit-test `weekly_trade_dates_in_range` and `resolve_weekly_expiry_from_schedule` in `tests/unit/test_trading_day.py`.
+- Unit-test `resolve_next_weekly_expiry_forward` (no files; calendar next week).
+- Extend existing `resolve_as_of_trading_day` tests — all calendar policy in one module.
+- C6.3 audit: recompute schedule; assert `expiry_date == next_schedule_date(entry_date)` on valid weekly rows.
 
 ---
 
@@ -539,17 +643,46 @@ C6.1A should add **`--spot-db-path`** (default unchanged) so smoke runs can reco
 
 **Gate:** No regenerated surface samples until C6.1A merges.
 
-### Required CLI additions (`precompute_option_surface.py`)
+C6.1A has three parts: **(A) shared calendar refactor** in `trading_day.py` + **(B) path centralization** in `paths.py` + **(C) producer safety CLI**.
+
+### (A) Shared calendar refactor (`src/data/trading_day.py`)
+
+| Deliverable | Detail |
+|-------------|--------|
+| `resolve_weekly_entry_date` | Friday → last chain-file day that week (`max_lookback_days=5`) |
+| `weekly_trade_dates_in_range` | Sorted weekly schedule for `[start, end]` (file-based) |
+| `resolve_weekly_expiry_from_schedule` | Backtest/precompute: next consecutive schedule date |
+| `resolve_next_weekly_expiry_forward` | Live/forward: next week's day by calendar (no file) |
+| Wire `precompute_option_surface.py` | Build schedule once; pass to builder; drop `get_trading_fridays` |
+| Wire `option_surface_analyzer.py` | Weekly path: schedule pairing replaces `_find_best_expiry` chain scan |
+| Tests | Extend `tests/unit/test_trading_day.py` (schedule + pairing + forward) |
+
+**Design principle:** One weekly calendar drives **both** trade dates and expiries. Backtest uses files to build the schedule; live uses calendar for the next expiry when the file is not there yet.
+
+### (B) Path centralization (`src/data/paths.py`)
+
+| Deliverable | Detail |
+|-------------|--------|
+| `DEFAULT_CACHE_ROOT` | Canonical Stage A output directory |
+| `DEFAULT_SPOT_PRICES_PATH` | Derived from cache root |
+| `DEFAULT_LIQUID_TICKERS_PATH` | Align producer universe with C4/C5 liquid list |
+| Remove script hardcodes | No `Path('C:/MomentumCVG_env/cache')` in producer |
+| Tests | Extend `tests/unit/test_adjusted_liquid_paths.py` or add `test_paths.py` for new constants |
+
+Producer imports: `from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT, DEFAULT_CACHE_ROOT, ...`
+
+### (C) Producer safety CLI (`precompute_option_surface.py`)
 
 | Flag | Purpose | Default |
 |------|---------|---------|
-| `--output-root` | Directory for meta/quotes parquets | `C:/MomentumCVG_env/cache` |
+| `--data-root` | Split-adjusted chain input root | `DEFAULT_ADJUSTED_LIQUID_ROOT` (`paths.py`) |
+| `--output-root` | Directory for meta/quotes parquets | `DEFAULT_CACHE_ROOT` (`paths.py`) |
 | `--tickers` | Comma-separated subset | all from universe file |
-| `--tickers-file` | Path to CSV with `Ticker` column | mutually exclusive with inline list; overrides default universe path when set |
-| `--start-date` / `--end-date` | ISO dates; filter trade dates after generation | if omitted, keep `--start-year`/`--end-year` behavior |
+| `--tickers-file` | Path to CSV with `Ticker` column | `DEFAULT_LIQUID_TICKERS_PATH` when added; else current behavior |
+| `--start-date` / `--end-date` | ISO dates; explicit inclusive bounds | if omitted: `Jan 1` `start_year` … **`Dec 31` `end_year`** (replaces Feb 20 hack) |
 | `--dry-run` | Print planned dates, ticker count, output paths, exit 0 without write | off |
 | `--overwrite` | Allow replacing existing output parquets | **default false** — refuse if outputs exist |
-| `--spot-db-path` | Spot parquet input | current hardcoded path |
+| `--spot-db-path` | Spot parquet input | `DEFAULT_SPOT_PRICES_PATH` (`paths.py`) |
 | `--log-file` | Per-run log path | default shared log; `--log-file -` → stderr only |
 
 ### Behavior rules
@@ -558,13 +691,18 @@ C6.1A should add **`--spot-db-path`** (default unchanged) so smoke runs can reco
 2. **Overwrite guard:** If meta or quotes target exists and not `--overwrite`, exit `2` with clear message.
 3. **Dry-run:** No joblib execution (or optional `--dry-run --execute-sample 0` — prefer no execution for speed).
 4. **Ticker scoping:** When `--tickers` or `--tickers-file` set, process only that list; log count.
-5. **Date scoping:** When `--start-date`/`--end-date` set, filter `trade_dates` after `generate_trade_dates`; years in filename still from year args (document that narrow smokes may use `--start-year` = `--end-year` = smoke year).
-6. **Universe path (optional stretch):** `--ticker-universe-file` defaulting to current `liquid_tickers.csv` with doc note to prefer `input/liquidity/liquid_tickers.csv` alignment — do not silently switch default without HD ack.
+5. **Date scoping:** `start_dt` / `end_dt` passed to `weekly_trade_dates_in_range`. Default when only year args: `Jan 1` … `Dec 31`. Optional `--start-date` / `--end-date` narrow the window for smokes.
+6. **Weekly-only for C6:** all resolved Fridays; no monthly entry subsampling.
+7. **Path resolution:** all defaults from `paths.py`; CLI flags override. Dry-run logs resolved `data_root`, `output_root`, `spot_db_path`, `tickers_file`.
+8. **Universe path:** prefer `DEFAULT_LIQUID_TICKERS_PATH` over legacy `cache/liquid_tickers.csv`.
 
 ### Tests (C6.1A)
 
 | Test | File |
 |------|------|
+| `weekly_trade_dates_in_range` holiday fallback | `tests/unit/test_trading_day.py` |
+| `resolve_weekly_expiry_from_schedule` consecutive pairing | `tests/unit/test_trading_day.py` |
+| `resolve_next_weekly_expiry_forward` (no file) | `tests/unit/test_trading_day.py` |
 | `--dry-run` prints paths, no write | `tests/unit/test_precompute_option_surface_cli.py` (new) |
 | overwrite guard refuses | same |
 | `--output-root` redirects outputs | same |
@@ -599,7 +737,7 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/precompute_option_surface.py 
 | T1 | `surface_valid` ⇔ body flags + quote count on builder output | extend `tests/contract/test_precompute_input_contract.py` + `tests/unit/test_option_surface_analyzer.py` |
 | T2 | Join: quotes only when meta would be valid; fixture parquet round-trip | `tests/unit/test_option_surface_analyzer.py` or contract fixture |
 | T3 | Duplicate grain flagged by audit helper | unit test for C6.3 helper + synthetic duplicate rows |
-| T4 | `generate_trade_dates` holiday fallback | `tests/unit/test_precompute_option_surface_dates.py` (new) |
+| T4 | `weekly_trade_dates_in_range` holiday fallback | `tests/unit/test_trading_day.py` |
 | T5 | Valid builder rows: settlement fields + `dte_actual` | unit on `process_single_entry` synthetic chain |
 | T6 | Failure vocabulary on all invalid paths | contract + unit; include C6.1B soft tags when landed |
 
@@ -737,7 +875,7 @@ Pass 1 proves real-cache schema + partial consistency. Pass 2 proves producer ou
 | PIT universe harness | C7 | Spot refresh before C7 |
 | Full spot audit / re-extract execution | Pre-C7/C8 operator step | Documented in C6.4 |
 | Incremental surface append / watermarks | Sprint 005 | HD-004-5 |
-| Shared `get_trading_fridays` in `trading_day.py` | 005 or C9 runbook | Spec + dual tests enough for 004 |
+| `get_trading_fridays` in straddle/ironfly precompute scripts | Sprint 005 | Surface path migrated in C6.1A |
 | Full-universe surface rebuild | Stretch | Not required for closeout |
 | A4 / features trust | Sprint 005 | |
 | SurfaceRunner L4/L5 real-data smoke | Sprint 006 | Requires 004+005 trust |
@@ -757,7 +895,7 @@ Pass 1 proves real-cache schema + partial consistency. Pass 2 proves producer ou
 3. **Pass 2 smoke requirement:** Mandatory for closeout, or is pass 1 read-only + pytest sufficient if lineage WARN documented?  
 4. **Spot refresh gate:** FAIL pass 2 if spot not re-extracted post-C5, or WARN only?  
 5. **Ticker universe default:** Switch producer default to `input/liquidity/liquid_tickers.csv` in C6.1A or document divergence only?  
-6. **Producer default frequency:** Change default to `weekly` to match `SurfaceDataPaths`, or runbook-only?  
+6. **Producer default frequency:** Change code default to `weekly`, or runbook-only? *(Trade-date policy: weekly all-Fridays locked; monthly sampler deferred.)*  
 7. **`--strict` defaults:** Should closeout runs use `--strict` (WARN→FAIL) or default lenient?  
 8. **Iron condor readiness metric:** Structural only in C6.3, or require default delta config probe?  
 9. **Dedupe in producer vs audit-only:** If triage shows upstream duplicates, patch producer (C6.1B) or audit-only dedupe?  
@@ -791,10 +929,10 @@ C6.1B soft tags recommended; legacy WARN, post-regen FAIL.
 WARN (`otm_wing_pair_available`); not a `surface_valid` defect.
 
 **8. Date alignment?**  
-Producer file-existence Friday resolver documented; audit compares expected set; CLI `--as-of` separate; holiday Thursdays valid.
+One weekly calendar: `weekly_trade_dates_in_range` for entries; **expiry = next consecutive schedule date** (backtest) or `resolve_next_weekly_expiry_forward` (live). Audit checks entry ∈ schedule and expiry = successor.
 
 **9. C6.1A scope?**  
-`--output-root`, ticker/date scope, `--dry-run`, overwrite guard, `--spot-db-path`, `--log-file` — required before any regen.
+**(A)** `trading_day.py`: weekly schedule + consecutive expiry pairing + forward expiry helper; wire surface precompute + analyzer. **(B)** `paths.py`: `DEFAULT_CACHE_ROOT`, spot/tickers paths; no script hardcodes. **(C)** Safety CLI: configurable `--data-root`, `--output-root`, ticker/date scope, `--dry-run`, overwrite guard, `--spot-db-path`, `--log-file`, Dec 31 end bound.
 
 **10. C6.2 / C6.3 / C6.4 / C6.6?**  
 See sections above — tests, audit CLI, archived evidence, closeout memo.
@@ -826,6 +964,7 @@ C8 wiring, C3 validate, C7 PIT, 005 features/incremental, 006 backtest, 007 go/n
 | Assembly failure | `step3` → `failure_reason=str(exc)` |
 | Consumer paths | `SurfaceDataPaths` expects `option_surface_*_weekly_2018_2026.parquet` |
 | C5 data root default | `precompute_option_surface.py` `--data-root` → `DEFAULT_ADJUSTED_LIQUID_ROOT` |
+| Output/cache paths | C6.1A → `DEFAULT_CACHE_ROOT` in `paths.py`; producer `--output-root` defaults there |
 
 ---
 
