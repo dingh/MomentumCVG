@@ -339,9 +339,27 @@ def resolve_log_file(raw: str | None) -> Path | None:
     return Path(raw)
 
 
+def normalize_tickers(raw_tickers: Sequence[object]) -> list[str]:
+    """Strip, uppercase, dedupe, and preserve first-seen order for ticker scope."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_tickers:
+        if pd.isna(raw):
+            continue
+        symbol = str(raw).strip().upper()
+        if not symbol:
+            continue
+        if symbol not in seen:
+            seen.add(symbol)
+            normalized.append(symbol)
+    if not normalized:
+        raise ValueError("Ticker scope is empty after normalization")
+    return normalized
+
+
 def load_tickers(args: argparse.Namespace) -> tuple[list[str], str]:
     if args.tickers is not None:
-        return list(args.tickers), "inline --tickers"
+        return normalize_tickers(args.tickers), "inline --tickers"
 
     tickers_path = args.tickers_file or DEFAULT_LIQUID_TICKERS_PATH
     if not tickers_path.exists():
@@ -350,7 +368,7 @@ def load_tickers(args: argparse.Namespace) -> tuple[list[str], str]:
     df_tickers = pd.read_csv(tickers_path)
     if "Ticker" not in df_tickers.columns:
         raise ValueError(f"Ticker column not found in {tickers_path}")
-    tickers = df_tickers["Ticker"].tolist()
+    tickers = normalize_tickers(df_tickers["Ticker"].tolist())
     return tickers, str(tickers_path)
 
 

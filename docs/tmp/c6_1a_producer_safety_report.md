@@ -143,10 +143,38 @@ C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_trading_day
 | `--output-root` redirect | `test_precompute_option_surface_cli.py` |
 | Bounded date scope | `test_precompute_option_surface_cli.py` |
 | Inline `--tickers` | `test_precompute_option_surface_cli.py` |
+| Inline/file ticker normalization (strip, uppercase, dedupe) | `test_precompute_option_surface_cli.py` |
+| Empty normalized ticker scope → exit 2 | `test_precompute_option_surface_cli.py` |
+| Dry-run `ticker_count` uses normalized unique tickers | `test_precompute_option_surface_cli.py` |
+| Dry-run does not call `Parallel` | `test_precompute_option_surface_cli.py` |
 | `--tickers` / `--tickers-file` mutual exclusion | `test_precompute_option_surface_cli.py` |
 | Default full-year bounds (Dec 31) | `test_precompute_option_surface_cli.py` |
 
 Heavy processing mocked/isolated; no real ORATS data required.
+
+---
+
+## Follow-up: ticker normalization
+
+Inline and file-based ticker scopes are now normalized via `normalize_tickers` in `scripts/precompute_option_surface.py`:
+
+- Each value is skipped when null/NaN; otherwise converted to string, stripped, and uppercased.
+- Blank symbols are dropped.
+- Duplicates are removed while preserving first-seen order.
+- An empty normalized scope raises `ValueError`; `main()` returns exit code `2` with a clear error.
+
+**Examples:**
+
+- `--tickers aapl " msft " AAPL` → `["AAPL", "MSFT"]`
+- Ticker file with lowercase, padded, blank, and duplicate rows → unique uppercase symbols in first-seen order.
+
+**Tests run (follow-up):**
+
+```powershell
+C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_precompute_option_surface_cli.py -q
+```
+
+Result: `17 passed in 0.31s`
 
 ---
 
@@ -173,6 +201,7 @@ Heavy processing mocked/isolated; no real ORATS data required.
 | Output root can be redirected | ✓ |
 | Existing outputs protected by default | ✓ |
 | Ticker/date scope can be bounded | ✓ |
+| Ticker scope normalized (strip, uppercase, dedupe, non-empty) | ✓ |
 | Spot DB path configurable | ✓ |
 | Producer path defaults from `paths.py` | ✓ |
 | Weekly entry schedule from `trading_day.py` | ✓ |

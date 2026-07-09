@@ -316,6 +316,13 @@ def test_load_tickers_inline(cli_module) -> None:
     assert source == "inline --tickers"
 
 
+def test_load_tickers_inline_normalizes(cli_module) -> None:
+    args = cli_module.parse_args(["--tickers", "aapl", " msft ", "AAPL"])
+    tickers, source = cli_module.load_tickers(args)
+    assert tickers == ["AAPL", "MSFT"]
+    assert source == "inline --tickers"
+
+
 def test_load_tickers_from_file(cli_module, tmp_path: Path) -> None:
     tickers_file = tmp_path / "tickers.csv"
     _write_tickers_file(tickers_file, ["QQQ", "SPY"])
@@ -323,6 +330,114 @@ def test_load_tickers_from_file(cli_module, tmp_path: Path) -> None:
     tickers, source = cli_module.load_tickers(args)
     assert tickers == ["QQQ", "SPY"]
     assert source == str(tickers_file)
+
+
+def test_load_tickers_from_file_normalizes(cli_module, tmp_path: Path) -> None:
+    tickers_file = tmp_path / "tickers.csv"
+    tickers_file.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"Ticker": ["aapl", " AAPL ", "msft", "", None]}).to_csv(
+        tickers_file, index=False
+    )
+    args = cli_module.parse_args(["--tickers-file", str(tickers_file)])
+    tickers, source = cli_module.load_tickers(args)
+    assert tickers == ["AAPL", "MSFT"]
+    assert source == str(tickers_file)
+
+
+def test_normalize_tickers_empty_raises(cli_module) -> None:
+    with pytest.raises(ValueError, match="empty after normalization"):
+        cli_module.normalize_tickers([])
+
+    with pytest.raises(ValueError, match="empty after normalization"):
+        cli_module.normalize_tickers(["", "   ", None, float("nan")])
+
+
+def test_load_tickers_empty_inline_fails(cli_module, data_root: Path, tmp_path: Path) -> None:
+    output_root = tmp_path / "out"
+    spot_db = tmp_path / "spot.parquet"
+    spot_db.write_bytes(b"spot")
+
+    code = cli_module.main(
+        _argv(
+            data_root=data_root,
+            output_root=output_root,
+            spot_db=spot_db,
+            extra=["--tickers", "  ", "", "--dry-run"],
+        )
+    )
+    assert code == 2
+
+
+def test_load_tickers_empty_file_fails(cli_module, data_root: Path, tmp_path: Path) -> None:
+    output_root = tmp_path / "out"
+    spot_db = tmp_path / "spot.parquet"
+    spot_db.write_bytes(b"spot")
+    tickers_file = tmp_path / "tickers.csv"
+    pd.DataFrame({"Ticker": ["", "   ", None]}).to_csv(tickers_file, index=False)
+
+    code = cli_module.main(
+        _argv(
+            data_root=data_root,
+            output_root=output_root,
+            spot_db=spot_db,
+            extra=["--tickers-file", str(tickers_file), "--dry-run"],
+        )
+    )
+    assert code == 2
+
+
+def test_dry_run_ticker_count_reflects_normalized_unique(
+    cli_module,
+    data_root: Path,
+    seed_orats_day,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    seed_orats_day(date(2024, 1, 5))
+
+    output_root = tmp_path / "out"
+    spot_db = tmp_path / "spot.parquet"
+    spot_db.write_bytes(b"spot")
+
+    code = cli_module.main(
+        _argv(
+            data_root=data_root,
+            output_root=output_root,
+            spot_db=spot_db,
+            extra=["--tickers", "aapl", "AAPL", "msft", "--dry-run"],
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "ticker_count: 2" in captured.out
+    assert "tickers: AAPL, MSFT" in captured.out
+
+
+def test_dry_run_does_not_call_parallel(
+    cli_module,
+    data_root: Path,
+    seed_orats_day,
+    tmp_path: Path,
+) -> None:
+    seed_orats_day(date(2024, 1, 5))
+
+    output_root = tmp_path / "out"
+    spot_db = tmp_path / "spot.parquet"
+    spot_db.write_bytes(b"spot")
+
+    with patch.object(cli_module, "Parallel") as parallel_mock:
+        code = cli_module.main(
+            _argv(
+                data_root=data_root,
+                output_root=output_root,
+                spot_db=spot_db,
+                extra=["--tickers", "AAPL", "--dry-run"],
+            )
+        )
+
+    assert code == 0
+    parallel_mock.assert_not_called()
 
 
 def test_resolve_date_bounds_default_full_year(cli_module) -> None:
