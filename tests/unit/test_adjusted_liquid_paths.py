@@ -9,6 +9,9 @@ from src.backtest.config import DEFAULT_CONFIG
 from src.data.orats_provider import ORATSDataProvider
 from src.data.paths import (
     DEFAULT_ADJUSTED_LIQUID_ROOT,
+    DEFAULT_CACHE_ROOT,
+    DEFAULT_LIQUID_TICKERS_PATH,
+    DEFAULT_SPOT_PRICES_PATH,
     LEGACY_ORATS_ADJUSTED_ROOT,
     RAW_ORATS_ROOT,
 )
@@ -20,6 +23,11 @@ def test_central_path_constants_exist() -> None:
     )
     assert LEGACY_ORATS_ADJUSTED_ROOT == Path("C:/ORATS/data/ORATS_Adjusted")
     assert RAW_ORATS_ROOT == Path("C:/ORATS/data/ORATS_Data")
+    assert DEFAULT_CACHE_ROOT == Path("C:/MomentumCVG_env/cache")
+    assert DEFAULT_SPOT_PRICES_PATH == DEFAULT_CACHE_ROOT / "spot_prices_adjusted.parquet"
+    assert DEFAULT_LIQUID_TICKERS_PATH == Path(
+        "C:/MomentumCVG_env/input/liquidity/liquid_tickers.csv"
+    )
 
 
 def test_orats_provider_default_data_root() -> None:

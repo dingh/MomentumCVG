@@ -27,6 +27,11 @@ Usage
     # Weekly 7-DTE surface for a single year
     python scripts/precompute_option_surface.py --frequency weekly --start-year 2024 --end-year 2024
 
+    # Safe bounded smoke (isolated output root, dry-run first)
+    python scripts/precompute_option_surface.py --frequency weekly \\
+        --start-year 2024 --end-year 2024 --start-date 2024-01-01 --end-date 2024-03-31 \\
+        --tickers AAPL MSFT NVDA --output-root C:/MomentumCVG_env/cache/c6_smoke --dry-run
+
     # Narrow the delta window and keep zero-bid quotes for coverage audit
     python scripts/precompute_option_surface.py --min-abs-delta 0.05 --max-abs-delta 0.35 --keep-zero-bid-quotes
 
@@ -38,8 +43,8 @@ from __future__ import annotations
 import sys
 import logging
 import argparse
+from datetime import date, datetime
 from pathlib import Path
-from datetime import datetime, timedelta
 from typing import Dict, List, Sequence, Tuple
 
 import pandas as pd
@@ -48,7 +53,14 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT
+from src.data.paths import (
+    DEFAULT_ADJUSTED_LIQUID_ROOT,
+    DEFAULT_CACHE_ROOT,
+    DEFAULT_LIQUID_TICKERS_PATH,
+    DEFAULT_PRECOMPUTE_OPTION_SURFACE_LOG,
+    DEFAULT_SPOT_PRICES_PATH,
+)
+from src.data.trading_day import weekly_trade_dates_in_range
 from src.features.option_surface_analyzer import OptionSurfaceBuilder
 from src.data.spot_price_db import SpotPriceDB
 
@@ -57,109 +69,71 @@ from src.data.spot_price_db import SpotPriceDB
 # Constants (overridable via argparse)
 # =============================================================================
 
-N_WORKERS    = 26
-SP500_FILE   = Path('C:/MomentumCVG_env/cache/liquid_tickers.csv')
-SPOT_DB_PATH = 'C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet'
+N_WORKERS = 26
 
 
 # =============================================================================
 # Logging
 # =============================================================================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('C:/MomentumCVG_env/log/precompute_option_surface.log'),
-        logging.StreamHandler(),
-    ]
-)
 logger = logging.getLogger(__name__)
+
+
+def configure_logging(log_file: Path | None) -> None:
+    """Attach stream and optional file handlers for this script."""
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    root.addHandler(stream_handler)
+
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
 
 
 # =============================================================================
 # Date helpers
 # =============================================================================
 
-def get_trading_fridays(
-    start_date: datetime,
-    end_date: datetime,
-    data_root: str,
-) -> List[datetime]:
-    """Return all Fridays in [start_date, end_date] that are actual trading days.
-
-    Confirms each Friday by checking whether an ORATS parquet file exists for
-    that date.  If a Friday is a market holiday, falls back to Thursday →
-    Wednesday → Tuesday → Monday of the same week.  Weeks with no data file
-    on any of the five days are silently dropped.
-    """
-    data_path = Path(data_root)
-
-    # Collect every calendar Friday in the date range
-    all_fridays: List[datetime] = []
-    current = start_date
-    while current <= end_date:
-        if current.weekday() == 4:      # Friday = 4
-            all_fridays.append(current)
-        current += timedelta(days=1)
-
-    logger.info(f"Found {len(all_fridays)} Fridays in date range")
-
-    # Resolve each Friday to the latest trading day in that week with data
-    trading_fridays: List[datetime] = []
-    for friday in all_fridays:
-        for days_back in range(5):      # Fri → Thu → Wed → Tue → Mon
-            candidate = friday - timedelta(days=days_back)
-            year_str  = candidate.strftime('%Y')
-            date_str  = candidate.strftime('%Y%m%d')
-            data_file = data_path / year_str / f"ORATS_SMV_Strikes_{date_str}.parquet"
-            if data_file.exists():
-                trading_fridays.append(candidate)
-                if days_back > 0:
-                    logger.info(
-                        f"  {friday.date()} (Fri) is holiday "
-                        f"-> using {candidate.date()} ({candidate.strftime('%a')})"
-                    )
-                break
-        else:
-            logger.warning(f"  {friday.date()} -- no trading day found in week, skipping")
-
-    logger.info(f"Result: {len(trading_fridays)} trading days from {len(all_fridays)} Fridays")
-    return trading_fridays
-
-
 def sample_fridays_by_frequency(
-    all_fridays: Sequence[datetime],
+    entry_dates: Sequence[date],
     frequency: str,
-) -> List[datetime]:
-    """Filter the resolved Friday list to the desired sampling frequency.
+) -> List[date]:
+    """Filter weekly entry dates to the desired sampling frequency.
 
-    - ``'weekly'``  : all Fridays returned as-is
-    - ``'monthly'`` : first Friday of each calendar month only
+    - ``'weekly'``  : all entry dates returned as-is
+    - ``'monthly'`` : first entry date of each calendar month only
     """
-    if frequency == 'weekly':
-        return list(all_fridays)
-    if frequency == 'monthly':
-        # Group by (year, month) and take the earliest Friday in each group
-        grouped: Dict[Tuple[int, int], List[datetime]] = {}
-        for friday in all_fridays:
-            grouped.setdefault((friday.year, friday.month), []).append(friday)
-        return sorted(fridays[0] for fridays in grouped.values())
+    if frequency == "weekly":
+        return list(entry_dates)
+    if frequency == "monthly":
+        grouped: Dict[Tuple[int, int], List[date]] = {}
+        for entry_day in entry_dates:
+            grouped.setdefault((entry_day.year, entry_day.month), []).append(entry_day)
+        return sorted(days[0] for days in grouped.values())
     raise ValueError(f"Unknown frequency: {frequency!r}. Must be 'weekly' or 'monthly'.")
 
 
 def generate_trade_dates(
-    start_date: datetime,
-    end_date: datetime,
+    start_date: date,
+    end_date: date,
     frequency: str,
-    data_root: str,
-) -> List[datetime]:
+    data_root: str | Path,
+) -> List[date]:
     """Generate trade entry dates for the given range, frequency, and data root."""
-    all_trading_fridays = get_trading_fridays(start_date, end_date, data_root)
-    trade_dates = sample_fridays_by_frequency(all_trading_fridays, frequency)
+    weekly_entries = weekly_trade_dates_in_range(start_date, end_date, data_root)
+    trade_dates = sample_fridays_by_frequency(weekly_entries, frequency)
     logger.info(
-        f"Generated {len(trade_dates)} {frequency} trade dates "
-        f"from {len(all_trading_fridays)} trading Fridays"
+        "Generated %s %s trade dates from %s weekly entry dates",
+        len(trade_dates),
+        frequency,
+        len(weekly_entries),
     )
     return trade_dates
 
@@ -171,7 +145,7 @@ def generate_trade_dates(
 def process_date_batch(
     data_root: str,
     spot_db_path: str,
-    trade_date,             # date object
+    trade_date: date,
     tickers: List[str],
     frequency: str,
     dte_target: int,
@@ -203,9 +177,6 @@ def process_date_batch(
         delta_buckets=delta_buckets,
         keep_zero_bid_quotes=keep_zero_bid_quotes,
     )
-    # Initialise the provider once — all tickers in this batch share the same
-    # cached parquet reads, which is the primary performance benefit of
-    # date-batched parallelism.
     builder._init_worker_components()
 
     meta_rows: List[Dict] = []
@@ -222,117 +193,338 @@ def process_date_batch(
 # =============================================================================
 
 def _parse_delta_buckets(raw: str) -> List[float]:
-    """Parse a comma-separated delta-bucket string into a sorted float list.
-
-    Returns the default bucket grid when *raw* is empty or whitespace-only.
-    """
+    """Parse a comma-separated delta-bucket string into a sorted float list."""
     if not raw or not raw.strip():
         return [0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.25, 0.30, 0.35, 0.40]
-    return sorted(float(x.strip()) for x in raw.split(',') if x.strip())
+    return sorted(float(x.strip()) for x in raw.split(",") if x.strip())
+
+
+def _parse_iso_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid ISO date: {value!r}") from exc
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Precompute an expiry-level option quote surface for fly / condor backtests.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=DEFAULT_ADJUSTED_LIQUID_ROOT,
+        help="Path to split-adjusted daily parquet root",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=DEFAULT_CACHE_ROOT,
+        help="Directory for option surface meta/quotes parquets",
+    )
+    parser.add_argument(
+        "--spot-db-path",
+        type=Path,
+        default=DEFAULT_SPOT_PRICES_PATH,
+        help="Spot price parquet used by SpotPriceDB",
+    )
+    parser.add_argument(
+        "--start-year",
+        type=int,
+        default=2018,
+        help="Start year inclusive (used for output filenames and default date bounds)",
+    )
+    parser.add_argument(
+        "--end-year",
+        type=int,
+        default=2026,
+        help="End year inclusive (used for output filenames and default date bounds)",
+    )
+    parser.add_argument(
+        "--start-date",
+        type=_parse_iso_date,
+        default=None,
+        help="Inclusive start date (ISO). Default: Jan 1 of --start-year",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=_parse_iso_date,
+        default=None,
+        help="Inclusive end date (ISO). Default: Dec 31 of --end-year",
+    )
+    ticker_group = parser.add_mutually_exclusive_group()
+    ticker_group.add_argument(
+        "--tickers",
+        nargs="+",
+        default=None,
+        metavar="TICKER",
+        help="Process only these tickers (space-separated)",
+    )
+    ticker_group.add_argument(
+        "--tickers-file",
+        type=Path,
+        default=None,
+        help="CSV with Ticker column; default when --tickers omitted",
+    )
+    parser.add_argument(
+        "--frequency",
+        choices=["monthly", "weekly"],
+        default="monthly",
+        help="Sampling frequency: monthly (first Friday, ~30 DTE) or weekly (~7 DTE)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=N_WORKERS,
+        help="Number of parallel workers",
+    )
+    parser.add_argument(
+        "--min-abs-delta",
+        type=float,
+        default=0.03,
+        help="Min abs delta for OTM wing quotes",
+    )
+    parser.add_argument(
+        "--max-abs-delta",
+        type=float,
+        default=0.45,
+        help="Max abs delta for OTM wing quotes",
+    )
+    parser.add_argument(
+        "--delta-buckets",
+        type=str,
+        default="0.05,0.075,0.10,0.125,0.15,0.175,0.20,0.25,0.30,0.35,0.40",
+        help="Comma-separated reference delta levels stored on each quote row",
+    )
+    parser.add_argument(
+        "--keep-zero-bid-quotes",
+        action="store_true",
+        help="Retain quotes with non-positive bid/ask/mid (coverage audits)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print planned run summary and exit without joblib or parquet writes",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Allow replacing existing output parquets",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Per-run log path; use '-' for stderr only; default shared log file",
+    )
+    return parser.parse_args(argv)
+
+
+def resolve_date_bounds(args: argparse.Namespace) -> tuple[date, date]:
+    start = args.start_date or date(args.start_year, 1, 1)
+    end = args.end_date or date(args.end_year, 12, 31)
+    if start > end:
+        raise ValueError(
+            f"start must be on or before end; got {start.isoformat()} > {end.isoformat()}"
+        )
+    return start, end
+
+
+def resolve_log_file(raw: str | None) -> Path | None:
+    if raw == "-":
+        return None
+    if raw is None:
+        return DEFAULT_PRECOMPUTE_OPTION_SURFACE_LOG
+    return Path(raw)
+
+
+def load_tickers(args: argparse.Namespace) -> tuple[list[str], str]:
+    if args.tickers is not None:
+        return list(args.tickers), "inline --tickers"
+
+    tickers_path = args.tickers_file or DEFAULT_LIQUID_TICKERS_PATH
+    if not tickers_path.exists():
+        raise FileNotFoundError(f"Ticker universe file not found: {tickers_path}")
+
+    df_tickers = pd.read_csv(tickers_path)
+    if "Ticker" not in df_tickers.columns:
+        raise ValueError(f"Ticker column not found in {tickers_path}")
+    tickers = df_tickers["Ticker"].tolist()
+    return tickers, str(tickers_path)
+
+
+def output_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    output_root = Path(args.output_root)
+    meta_name = (
+        f"option_surface_meta_{args.frequency}_{args.start_year}_{args.end_year}.parquet"
+    )
+    quotes_name = (
+        f"option_surface_quotes_{args.frequency}_{args.start_year}_{args.end_year}.parquet"
+    )
+    return output_root / meta_name, output_root / quotes_name
+
+
+def render_dry_run_summary(
+    *,
+    requested_start: date,
+    requested_end: date,
+    trade_dates: list[date],
+    tickers: list[str],
+    ticker_source: str,
+    data_root: Path,
+    output_root: Path,
+    spot_db_path: Path,
+    meta_path: Path,
+    quotes_path: Path,
+    overwrite: bool,
+) -> str:
+    meta_exists = meta_path.exists()
+    quotes_exists = quotes_path.exists()
+    outputs_exist = meta_exists or quotes_exists
+    overwrite_required = outputs_exist and not overwrite
+
+    schedule_min = trade_dates[0].isoformat() if trade_dates else "(none)"
+    schedule_max = trade_dates[-1].isoformat() if trade_dates else "(none)"
+
+    lines = [
+        "Option surface precompute — dry run",
+        f"requested_start_date: {requested_start.isoformat()}",
+        f"requested_end_date: {requested_end.isoformat()}",
+        f"resolved_schedule_min: {schedule_min}",
+        f"resolved_schedule_max: {schedule_max}",
+        f"resolved_entry_date_count: {len(trade_dates)}",
+        f"ticker_source: {ticker_source}",
+        f"ticker_count: {len(tickers)}",
+        f"data_root: {data_root}",
+        f"output_root: {output_root}",
+        f"spot_db_path: {spot_db_path}",
+        f"meta_output_path: {meta_path}",
+        f"quotes_output_path: {quotes_path}",
+        f"meta_exists: {meta_exists}",
+        f"quotes_exists: {quotes_exists}",
+        f"overwrite_required_without_flag: {overwrite_required}",
+    ]
+    if tickers and len(tickers) <= 20:
+        lines.append(f"tickers: {', '.join(tickers)}")
+    return "\n".join(lines)
+
+
+def check_overwrite_guard(
+    meta_path: Path,
+    quotes_path: Path,
+    *,
+    overwrite: bool,
+    dry_run: bool,
+) -> int | None:
+    """Return exit code 2 when outputs exist and overwrite was not requested."""
+    outputs_exist = meta_path.exists() or quotes_path.exists()
+    if outputs_exist and not overwrite:
+        message = (
+            f"Output already exists: {meta_path} and/or {quotes_path}. "
+            "Pass --overwrite to replace."
+        )
+        if dry_run:
+            logger.warning(message)
+            return None
+        logger.error(message)
+        return 2
+    return None
 
 
 # =============================================================================
 # Main
 # =============================================================================
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Precompute an expiry-level option quote surface for fly / condor backtests."
-    )
-    parser.add_argument(
-        '--data-root', type=str, default=str(DEFAULT_ADJUSTED_LIQUID_ROOT),
-        help=f'Path to split-adjusted daily parquet root (default: {DEFAULT_ADJUSTED_LIQUID_ROOT})',
-    )
-    parser.add_argument(
-        '--start-year', type=int, default=2018,
-        help='Start year inclusive (default: 2018)',
-    )
-    parser.add_argument(
-        '--end-year', type=int, default=2026,
-        help='End year inclusive (default: 2026)',
-    )
-    parser.add_argument(
-        '--frequency', choices=['monthly', 'weekly'], default='monthly',
-        help="Sampling frequency: 'monthly' (first Friday, ~30 DTE) or 'weekly' (every Friday, ~7 DTE). Default: monthly",
-    )
-    parser.add_argument(
-        '--workers', type=int, default=N_WORKERS,
-        help=f'Number of parallel workers (default: {N_WORKERS})',
-    )
-    parser.add_argument(
-        '--min-abs-delta', type=float, default=0.03,
-        help='Min abs delta for OTM wing quotes (default: 0.03)',
-    )
-    parser.add_argument(
-        '--max-abs-delta', type=float, default=0.45,
-        help='Max abs delta for OTM wing quotes (default: 0.45)',
-    )
-    parser.add_argument(
-        '--delta-buckets',
-        type=str,
-        default='0.05,0.075,0.10,0.125,0.15,0.175,0.20,0.25,0.30,0.35,0.40',
-        help='Comma-separated reference delta levels stored on each quote row for bucketing.',
-    )
-    parser.add_argument(
-        '--keep-zero-bid-quotes',
-        action='store_true',
-        help='Retain quotes with non-positive bid/ask/mid (useful for coverage audits).',
-    )
-    args = parser.parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    configure_logging(resolve_log_file(args.log_file))
 
-    # DTE target follows frequency — keep these two in sync
-    dte_target    = 30 if args.frequency == 'monthly' else 7
+    try:
+        requested_start, requested_end = resolve_date_bounds(args)
+        tickers, ticker_source = load_tickers(args)
+    except (ValueError, FileNotFoundError) as exc:
+        logger.error("%s", exc)
+        return 2
+
     delta_buckets = _parse_delta_buckets(args.delta_buckets)
+    dte_target = 30 if args.frequency == "monthly" else 7
+    meta_path, quotes_path = output_paths(args)
+    data_root = Path(args.data_root)
+    output_root = Path(args.output_root)
+    spot_db_path = Path(args.spot_db_path)
 
-    if not Path(SPOT_DB_PATH).exists():
-        logger.error(f"SpotPriceDB not found: {SPOT_DB_PATH}")
+    trade_dates = generate_trade_dates(
+        requested_start, requested_end, args.frequency, data_root
+    )
+
+    summary = render_dry_run_summary(
+        requested_start=requested_start,
+        requested_end=requested_end,
+        trade_dates=trade_dates,
+        tickers=tickers,
+        ticker_source=ticker_source,
+        data_root=data_root,
+        output_root=output_root,
+        spot_db_path=spot_db_path,
+        meta_path=meta_path,
+        quotes_path=quotes_path,
+        overwrite=args.overwrite,
+    )
+
+    if args.dry_run:
+        print(summary)
+        return 0
+
+    guard_code = check_overwrite_guard(
+        meta_path, quotes_path, overwrite=args.overwrite, dry_run=False
+    )
+    if guard_code is not None:
+        return guard_code
+
+    if not spot_db_path.exists():
+        logger.error("SpotPriceDB not found: %s", spot_db_path)
         logger.error("Run scripts/extract_spot_prices.py first.")
-        return
+        return 2
 
-    if not SP500_FILE.exists():
-        logger.error(f"Ticker universe file not found: {SP500_FILE}")
-        return
-
-    Path('C:/MomentumCVG_env/cache').mkdir(parents=True, exist_ok=True)
-    Path('C:/MomentumCVG_env/log').mkdir(parents=True, exist_ok=True)
-
-    df_tickers = pd.read_csv(SP500_FILE)
-    tickers = df_tickers['Ticker'].tolist()
-
-    start_dt = datetime(args.start_year, 1, 1)
-    end_dt = datetime(args.end_year, 2, 20)
-    trade_dates = generate_trade_dates(start_dt, end_dt, args.frequency, args.data_root)
     if not trade_dates:
         logger.error("No trade dates generated; aborting.")
-        return
+        return 2
+
+    output_root.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 80)
     logger.info("Option Surface Precomputation")
     logger.info("=" * 80)
-    logger.info(f"Frequency        : {args.frequency}")
-    logger.info(f"DTE target       : {dte_target}")
-    logger.info(f"Date range       : {trade_dates[0].date()} -> {trade_dates[-1].date()}")
-    logger.info(f"Trade dates      : {len(trade_dates)}")
-    logger.info(f"Tickers          : {len(tickers)}")
-    logger.info(f"min_abs_delta    : {args.min_abs_delta}")
-    logger.info(f"max_abs_delta    : {args.max_abs_delta}")
-    logger.info(f"delta_buckets    : {delta_buckets}")
-    logger.info(f"keep_zero_bid    : {args.keep_zero_bid_quotes}")
-    logger.info(f"Workers          : {args.workers}")
-    logger.info(f"SpotPriceDB      : {SPOT_DB_PATH}")
+    logger.info("Frequency        : %s", args.frequency)
+    logger.info("DTE target       : %s", dte_target)
     logger.info(
-        f"Expected input   : {len(tickers)} tickers x {len(trade_dates)} dates "
-        f"= {len(tickers) * len(trade_dates):,} (ticker, date) pairs"
+        "Date range       : %s -> %s",
+        trade_dates[0].isoformat(),
+        trade_dates[-1].isoformat(),
+    )
+    logger.info("Trade dates      : %s", len(trade_dates))
+    logger.info("Tickers          : %s", len(tickers))
+    logger.info("min_abs_delta    : %s", args.min_abs_delta)
+    logger.info("max_abs_delta    : %s", args.max_abs_delta)
+    logger.info("delta_buckets    : %s", delta_buckets)
+    logger.info("keep_zero_bid    : %s", args.keep_zero_bid_quotes)
+    logger.info("Workers          : %s", args.workers)
+    logger.info("SpotPriceDB      : %s", spot_db_path)
+    logger.info(
+        "Expected input   : %s tickers x %s dates = %s (ticker, date) pairs",
+        len(tickers),
+        len(trade_dates),
+        len(tickers) * len(trade_dates),
     )
     logger.info("=" * 80)
 
-    # -- Parallel processing (one job per date, all tickers per job) ----------
     started = datetime.now()
-    results = Parallel(n_jobs=args.workers, backend='loky', verbose=0)(
+    results = Parallel(n_jobs=args.workers, backend="loky", verbose=0)(
         delayed(process_date_batch)(
-            args.data_root,
-            SPOT_DB_PATH,
-            td.date(),
+            str(data_root),
+            str(spot_db_path),
+            trade_day,
             tickers,
             args.frequency,
             dte_target,
@@ -341,10 +533,9 @@ def main() -> None:
             delta_buckets,
             args.keep_zero_bid_quotes,
         )
-        for td in tqdm(trade_dates, desc='Processing dates')
+        for trade_day in tqdm(trade_dates, desc="Processing dates")
     )
 
-    # -- Flatten list-of-(meta_list, quote_list) tuples -----------------------
     meta_rows: List[Dict] = []
     quote_rows: List[Dict] = []
     for batch_meta, batch_quotes in results:
@@ -353,46 +544,60 @@ def main() -> None:
 
     elapsed = (datetime.now() - started).total_seconds()
 
-    # -- Build final DataFrames -----------------------------------------------
-    meta_df   = pd.DataFrame(meta_rows)
+    meta_df = pd.DataFrame(meta_rows)
     quotes_df = pd.DataFrame(quote_rows)
 
     logger.info(
-        f"\nProcessed {len(meta_df):,} metadata rows and {len(quotes_df):,} quote rows "
-        f"in {elapsed:.1f}s ({(len(meta_df) + len(quotes_df)) / elapsed:.0f} rows/sec)"
+        "\nProcessed %s metadata rows and %s quote rows in %.1fs (%.0f rows/sec)",
+        f"{len(meta_df):,}",
+        f"{len(quotes_df):,}",
+        elapsed,
+        (len(meta_df) + len(quotes_df)) / elapsed if elapsed > 0 else 0,
     )
 
-    # -- Data quality summary -------------------------------------------------
     if not meta_df.empty:
-        n_valid = int(meta_df['surface_valid'].sum())
-        n_fail  = int((~meta_df['surface_valid']).sum())
-        logger.info(f"Valid surfaces    : {n_valid:,}  ({n_valid/len(meta_df):.1%})")
-        logger.info(f"Failure rows      : {n_fail:,}  ({n_fail/len(meta_df):.1%})")
-        if (meta_df['failure_reason'].notna()).any():
+        n_valid = int(meta_df["surface_valid"].sum())
+        n_fail = int((~meta_df["surface_valid"]).sum())
+        logger.info(
+            "Valid surfaces    : %s  (%.1f%%)",
+            f"{n_valid:,}",
+            100.0 * n_valid / len(meta_df),
+        )
+        logger.info(
+            "Failure rows      : %s  (%.1f%%)",
+            f"{n_fail:,}",
+            100.0 * n_fail / len(meta_df),
+        )
+        if meta_df["failure_reason"].notna().any():
             logger.info("Failure breakdown:")
-            for reason, count in meta_df['failure_reason'].value_counts(dropna=True).items():
-                logger.info(f"  {reason}: {count:,}")
+            for reason, count in meta_df["failure_reason"].value_counts(dropna=True).items():
+                logger.info("  %s: %s", reason, f"{count:,}")
 
     if not quotes_df.empty:
         logger.info(
-            f"Quote rows: {len(quotes_df['ticker'].unique())} unique tickers, "
-            f"{len(quotes_df[quotes_df['is_body']])} body rows, "
-            f"{len(quotes_df[quotes_df['is_otm']])} OTM wing rows"
+            "Quote rows: %s unique tickers, %s body rows, %s OTM wing rows",
+            len(quotes_df["ticker"].unique()),
+            len(quotes_df[quotes_df["is_body"]]),
+            len(quotes_df[quotes_df["is_otm"]]),
         )
 
-    # -- Save outputs ---------------------------------------------------------
-    output_root = Path('C:/MomentumCVG_env/cache')
-    meta_path   = output_root / f"option_surface_meta_{args.frequency}_{args.start_year}_{args.end_year}.parquet"
-    quotes_path = output_root / f"option_surface_quotes_{args.frequency}_{args.start_year}_{args.end_year}.parquet"
+    meta_df.to_parquet(meta_path, compression="gzip", index=False)
+    quotes_df.to_parquet(quotes_path, compression="gzip", index=False)
 
-    meta_df.to_parquet(meta_path,   compression='gzip', index=False)
-    quotes_df.to_parquet(quotes_path, compression='gzip', index=False)
-
-    logger.info(f"Saved metadata parquet : {meta_path}  ({meta_path.stat().st_size / 1024 / 1024:.2f} MB)")
-    logger.info(f"Saved quote parquet    : {quotes_path}  ({quotes_path.stat().st_size / 1024 / 1024:.2f} MB)")
+    logger.info(
+        "Saved metadata parquet : %s  (%.2f MB)",
+        meta_path,
+        meta_path.stat().st_size / 1024 / 1024,
+    )
+    logger.info(
+        "Saved quote parquet    : %s  (%.2f MB)",
+        quotes_path,
+        quotes_path.stat().st_size / 1024 / 1024,
+    )
     logger.info("=" * 80)
     logger.info("Done!")
+    return 0
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    raise SystemExit(main())

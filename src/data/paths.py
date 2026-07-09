@@ -1,4 +1,4 @@
-"""Canonical on-disk paths for ORATS raw and adjusted data stores (Sprint 004 C5.11A)."""
+"""Canonical on-disk paths for ORATS raw and adjusted data stores (Sprint 004 C5.11A / C6.1A)."""
 
 from __future__ import annotations
 
@@ -7,3 +7,11 @@ from pathlib import Path
 DEFAULT_ADJUSTED_LIQUID_ROOT = Path("C:/MomentumCVG_env/input/adjusted_liquid")
 LEGACY_ORATS_ADJUSTED_ROOT = Path("C:/ORATS/data/ORATS_Adjusted")
 RAW_ORATS_ROOT = Path("C:/ORATS/data/ORATS_Data")
+
+# Stage A output cache (C6.1A)
+DEFAULT_CACHE_ROOT = Path("C:/MomentumCVG_env/cache")
+DEFAULT_SPOT_PRICES_PATH = DEFAULT_CACHE_ROOT / "spot_prices_adjusted.parquet"
+DEFAULT_LIQUID_TICKERS_PATH = Path("C:/MomentumCVG_env/input/liquidity/liquid_tickers.csv")
+DEFAULT_PRECOMPUTE_OPTION_SURFACE_LOG = Path(
+    "C:/MomentumCVG_env/log/precompute_option_surface.log"
+)

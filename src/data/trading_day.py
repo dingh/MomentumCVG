@@ -18,7 +18,7 @@ Contract (HD-004-2)
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -110,3 +110,90 @@ def _parse_as_of(as_of: date | str) -> date:
         except ValueError as exc:
             raise ValueError(f"Invalid ISO date for as_of: {as_of!r}") from exc
     raise ValueError(f"Invalid as_of value: {as_of!r}")
+
+
+def _to_date(day: date | datetime) -> date:
+    """Coerce ``datetime`` to ``date``; pass plain ``date`` through."""
+    if isinstance(day, datetime):
+        return day.date()
+    if isinstance(day, date):
+        return day
+    raise ValueError(f"Expected date or datetime, got {day!r}")
+
+
+def resolve_weekly_entry_date(
+    friday: date,
+    orats_adj_root: Path | str,
+    *,
+    exists_fn: Callable[[Path], bool] | None = None,
+) -> date | None:
+    """Resolve a calendar Friday to the week's last available ORATS trading day.
+
+    Walks back Friday → Monday (``max_lookback_days=5``) and returns the first
+    day whose daily parquet exists. Returns ``None`` when no file exists for
+    any weekday in that week (data-gap week).
+    """
+    if friday.weekday() != 4:
+        raise ValueError(f"Expected a Friday anchor date, got {friday.isoformat()}")
+
+    checker = exists_fn if exists_fn is not None else Path.is_file
+    for offset in range(5):
+        candidate = friday - timedelta(days=offset)
+        path = orats_daily_parquet_path(orats_adj_root, candidate)
+        if checker(path):
+            return candidate
+    return None
+
+
+def weekly_trade_dates_in_range(
+    start: date | datetime,
+    end: date | datetime,
+    orats_adj_root: Path | str,
+    *,
+    exists_fn: Callable[[Path], bool] | None = None,
+) -> list[date]:
+    """Return sorted weekly entry dates for ``[start, end]`` inclusive.
+
+    One date per calendar week: the last available trading day of that week
+    (Friday when the Friday file exists; otherwise walk back Thu → Mon). Weeks
+    with no chain file on any weekday Mon–Fri are omitted.
+    """
+    start_day = _to_date(start)
+    end_day = _to_date(end)
+    if start_day > end_day:
+        raise ValueError(
+            f"start must be on or before end; got {start_day.isoformat()} > {end_day.isoformat()}"
+        )
+
+    fridays: list[date] = []
+    current = start_day
+    while current <= end_day:
+        if current.weekday() == 4:
+            fridays.append(current)
+        current += timedelta(days=1)
+
+    entry_dates: list[date] = []
+    for friday in fridays:
+        resolved = resolve_weekly_entry_date(
+            friday, orats_adj_root, exists_fn=exists_fn
+        )
+        if resolved is not None and start_day <= resolved <= end_day:
+            entry_dates.append(resolved)
+    return entry_dates
+
+
+def target_weekly_expiry_from_schedule(
+    entry_date: date,
+    schedule: Sequence[date],
+) -> date | None:
+    """Return the next schedule entry after ``entry_date`` (diagnostic helper).
+
+    Used by C6.1B weekly-expiry diagnostics. Does not affect producer expiry
+    selection until C6.1C.
+    """
+    for index, scheduled_day in enumerate(schedule):
+        if scheduled_day == entry_date:
+            if index + 1 < len(schedule):
+                return schedule[index + 1]
+            return None
+    return None
