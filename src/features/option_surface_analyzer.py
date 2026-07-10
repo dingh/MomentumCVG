@@ -20,9 +20,10 @@ from datetime import datetime, date
 from decimal import Decimal
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from ..core.models import OptionQuote
 from ..data.orats_provider import ORATSDataProvider
 from ..data.spot_price_db import SpotPriceDB
-from ..core.models import OptionQuote
+from ..data.trading_day import target_weekly_expiry_from_schedule
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ def _metadata_success_row(
     has_body_put: bool,
     n_surface_quotes: int,
     processing_time: float,
+    failure_reason: Optional[str] = None,
 ) -> Dict:
     """Build a metadata row for a successfully built option surface.
 
@@ -121,7 +123,7 @@ def _metadata_success_row(
         "has_body_put": bool(has_body_put),
         "n_surface_quotes": int(n_surface_quotes),
         "surface_valid": bool(has_body_call and has_body_put and n_surface_quotes > 0),
-        "failure_reason": None,
+        "failure_reason": failure_reason,
         "processing_time": processing_time,
     }
 
@@ -139,6 +141,7 @@ class OptionSurfaceBuilder:
         max_abs_delta: float = 0.45,
         delta_buckets: Optional[Sequence[float]] = None,
         keep_zero_bid_quotes: bool = False,
+        weekly_schedule: Optional[Sequence[date]] = None,
     ):
         """Initialise the surface builder.
 
@@ -154,9 +157,9 @@ class OptionSurfaceBuilder:
             selection path; smaller values use the weekly path.  Keep this
             in sync with *frequency*.
         frequency:
-            ``'monthly'`` or ``'weekly'``.  Stored for output metadata
-            labelling; actual expiry selection logic is driven by *dte_target*,
-            so the two parameters must be kept consistent.
+            ``'monthly'`` or ``'weekly'``.  Weekly mode uses strict
+            calendar-paired expiry via *weekly_schedule* (C6.1C).  Monthly
+            mode continues to use ``_find_best_expiry``.
         min_abs_delta / max_abs_delta:
             Absolute-delta range filter for OTM wing quotes.  Body quotes at
             *body_strike* are always included regardless of delta.
@@ -168,6 +171,10 @@ class OptionSurfaceBuilder:
             When ``True``, retains quotes with zero bid/ask/mid.  Useful for
             coverage audits on illiquid names, but these quotes must be excluded
             before live strategy assembly.
+        weekly_schedule:
+            Sorted weekly entry dates used by strict weekly expiry resolution
+            (``target_weekly_expiry_from_schedule``).  Required for
+            ``frequency='weekly'``.
         """
         if frequency not in ("monthly", "weekly"):
             raise ValueError(f"frequency must be 'monthly' or 'weekly', got {frequency!r}")
@@ -187,6 +194,7 @@ class OptionSurfaceBuilder:
             0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.25, 0.30, 0.35, 0.40
         ]
         self.keep_zero_bid_quotes = keep_zero_bid_quotes
+        self.weekly_schedule = list(weekly_schedule) if weekly_schedule is not None else None
 
         self.provider: Optional[ORATSDataProvider] = None
 
@@ -304,6 +312,56 @@ class OptionSurfaceBuilder:
             logger.error(f"Error finding expiry for {ticker} on {trade_date}: {exc}")
             return None
 
+    def _resolve_strict_weekly_expiry(
+        self,
+        ticker: str,
+        entry_date: date,
+    ) -> Tuple[Optional[date], Optional[str]]:
+        """Resolve exact calendar-paired weekly expiry (C6.1C).
+
+        Returns ``(expiry_date, None)`` on success, or ``(None, failure_reason)``
+        when the ticker-week is not weekly-tradable.  Never falls back to a
+        nearby listed expiry.
+        """
+        schedule = self.weekly_schedule or []
+        target = target_weekly_expiry_from_schedule(entry_date, schedule)
+        if target is None:
+            return None, "no_target_weekly_expiry"
+
+        try:
+            expiries = self.provider.get_available_expiries(ticker, entry_date)
+        except Exception as exc:
+            logger.error(
+                "Error loading expiries for %s on %s: %s", ticker, entry_date, exc
+            )
+            return None, "no_expiries_on_entry_chain"
+
+        if not expiries:
+            return None, "no_expiries_on_entry_chain"
+
+        if target not in expiries:
+            return None, "target_weekly_expiry_not_listed"
+
+        return target, None
+
+    def _resolve_expiry_for_entry(
+        self,
+        ticker: str,
+        entry_date: date,
+    ) -> Tuple[Optional[date], Optional[str]]:
+        """Select expiry for one entry using frequency-specific policy.
+
+        Weekly mode uses strict calendar-paired target expiry (C6.1C).
+        Monthly mode keeps permissive ``_find_best_expiry``.
+        """
+        if self.frequency == "weekly":
+            return self._resolve_strict_weekly_expiry(ticker, entry_date)
+
+        expiry_date = self._find_best_expiry(ticker, entry_date, self.dte_target)
+        if expiry_date is None:
+            return None, "no_expiry_found"
+        return expiry_date, None
+
     def _quote_rows(
         self,
         ticker: str,
@@ -414,7 +472,9 @@ class OptionSurfaceBuilder:
         Pipeline stages
         ---------------
         1. Resolve entry spot price.
-        2. Find the best-matching expiry for the configured DTE target.
+        2. Resolve expiry:
+           - weekly → strict calendar-paired target (C6.1C; no nearest-DTE fallback)
+           - monthly → existing ``_find_best_expiry`` path
         3. Load the full option chain for (ticker, entry_date, expiry_date).
         4. Identify the ATM body strike (nearest strike to entry spot;
            ties broken by choosing the lower strike).
@@ -447,14 +507,14 @@ class OptionSurfaceBuilder:
             ), []
 
         # ── Stage 2: expiry selection ──────────────────────────────────────────
-        expiry_date = self._find_best_expiry(ticker, entry_date, self.dte_target)
+        expiry_date, expiry_failure = self._resolve_expiry_for_entry(ticker, entry_date)
         if expiry_date is None:
             return _metadata_failure_row(
                 ticker=ticker,
                 entry_date=entry_date,
                 dte_target=self.dte_target,
                 frequency=self.frequency,
-                failure_reason="no_expiry_found",
+                failure_reason=expiry_failure or "no_expiry_found",
                 processing_time=elapsed(),
             ), []
 
@@ -519,6 +579,22 @@ class OptionSurfaceBuilder:
             chain=chain,
         )
 
+        has_body_call = (
+            body_call is not None
+            and body_call.bid > 0
+            and body_call.ask > 0
+            and body_call.mid > 0
+        )
+        has_body_put = (
+            body_put is not None
+            and body_put.bid > 0
+            and body_put.ask > 0
+            and body_put.mid > 0
+        )
+        soft_failure: Optional[str] = None
+        if self.frequency == "weekly" and not (has_body_call and has_body_put):
+            soft_failure = "target_weekly_body_not_quotable"
+
         # ── Stage 7: metadata row ──────────────────────────────────────────────
         metadata = _metadata_success_row(
             ticker=ticker,
@@ -531,9 +607,10 @@ class OptionSurfaceBuilder:
             body_strike=body_strike,
             spot_move_pct=self.spot_db.calculate_spot_move_pct(ticker, entry_date, expiry_date),
             realized_volatility=self.spot_db.calculate_realized_volatility(ticker, entry_date, expiry_date),
-            has_body_call=body_call is not None and body_call.bid > 0 and body_call.ask > 0 and body_call.mid > 0,
-            has_body_put=body_put is not None and body_put.bid > 0 and body_put.ask > 0 and body_put.mid > 0,
+            has_body_call=has_body_call,
+            has_body_put=has_body_put,
             n_surface_quotes=len(quote_rows),
             processing_time=elapsed(),
+            failure_reason=soft_failure,
         )
         return metadata, quote_rows

@@ -43,7 +43,7 @@ from __future__ import annotations
 import sys
 import logging
 import argparse
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
@@ -70,6 +70,9 @@ from src.data.spot_price_db import SpotPriceDB
 # =============================================================================
 
 N_WORKERS = 26
+# Extra calendar days beyond --end-date so the last weekly entry has schedule[i+1]
+# for strict calendar-paired expiry (C6.1C).
+WEEKLY_SCHEDULE_TAIL_DAYS = 21
 
 
 # =============================================================================
@@ -125,8 +128,31 @@ def generate_trade_dates(
     end_date: date,
     frequency: str,
     data_root: str | Path,
-) -> List[date]:
-    """Generate trade entry dates for the given range, frequency, and data root."""
+) -> tuple[list[date], list[date] | None]:
+    """Generate trade entry dates and optional weekly schedule for strict expiry.
+
+    Returns
+    -------
+    (trade_dates, weekly_schedule)
+        *trade_dates* — entry dates inside ``[start_date, end_date]`` after
+        frequency sampling.
+        *weekly_schedule* — full weekly entry schedule with a short tail beyond
+        ``end_date`` (weekly mode only) so ``target_weekly_expiry_from_schedule``
+        can resolve the last sample week.  ``None`` for monthly mode.
+    """
+    if frequency == "weekly":
+        schedule_end = end_date + timedelta(days=WEEKLY_SCHEDULE_TAIL_DAYS)
+        weekly_schedule = weekly_trade_dates_in_range(start_date, schedule_end, data_root)
+        trade_dates = [day for day in weekly_schedule if start_date <= day <= end_date]
+        logger.info(
+            "Generated %s weekly trade dates from %s schedule entries "
+            "(including %s-day successor tail)",
+            len(trade_dates),
+            len(weekly_schedule),
+            WEEKLY_SCHEDULE_TAIL_DAYS,
+        )
+        return trade_dates, weekly_schedule
+
     weekly_entries = weekly_trade_dates_in_range(start_date, end_date, data_root)
     trade_dates = sample_fridays_by_frequency(weekly_entries, frequency)
     logger.info(
@@ -135,7 +161,7 @@ def generate_trade_dates(
         frequency,
         len(weekly_entries),
     )
-    return trade_dates
+    return trade_dates, None
 
 
 # =============================================================================
@@ -153,6 +179,7 @@ def process_date_batch(
     max_abs_delta: float,
     delta_buckets: Sequence[float],
     keep_zero_bid_quotes: bool,
+    weekly_schedule: Sequence[date] | None = None,
 ) -> Tuple[List[Dict], List[Dict]]:
     """Process all tickers for ONE date inside one worker process.
 
@@ -176,6 +203,7 @@ def process_date_batch(
         max_abs_delta=max_abs_delta,
         delta_buckets=delta_buckets,
         keep_zero_bid_quotes=keep_zero_bid_quotes,
+        weekly_schedule=weekly_schedule,
     )
     builder._init_worker_components()
 
@@ -472,7 +500,7 @@ def main(argv: list[str] | None = None) -> int:
     output_root = Path(args.output_root)
     spot_db_path = Path(args.spot_db_path)
 
-    trade_dates = generate_trade_dates(
+    trade_dates, weekly_schedule = generate_trade_dates(
         requested_start, requested_end, args.frequency, data_root
     )
 
@@ -550,6 +578,7 @@ def main(argv: list[str] | None = None) -> int:
             args.max_abs_delta,
             delta_buckets,
             args.keep_zero_bid_quotes,
+            weekly_schedule,
         )
         for trade_day in tqdm(trade_dates, desc="Processing dates")
     )
