@@ -3,6 +3,10 @@
 Compares current chain-scanned expiry selection against calendar-paired weekly
 target expiry semantics. Writes a markdown report only; does not mutate producer
 artifacts, cache, or parquet files.
+
+C6.1B decides policy for C6.1C: strict calendar-paired weekly expiry with no
+nearest-DTE fallback. Sample A (known-weekly) is the mechanical gate; Sample B
+(broad C4 coverage) is informational only.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data.orats_provider import ORATSDataProvider, OptionQuote
-from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT
+from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT, DEFAULT_LIQUID_TICKERS_PATH
 from src.data.trading_day import (
     orats_daily_parquet_path,
     target_weekly_expiry_from_schedule,
@@ -38,12 +42,18 @@ DEFAULT_TICKERS = ("AAPL", "MSFT", "NVDA", "SPY", "QQQ")
 DEFAULT_START_DATE = date(2024, 1, 1)
 DEFAULT_END_DATE = date(2024, 3, 31)
 DEFAULT_MAX_ENTRY_DATES = 12
+DEFAULT_COVERAGE_MAX_TICKERS = 50
 DEFAULT_OUTPUT_REPORT = Path("docs/tmp/c6_1b_weekly_expiry_diagnostic.md")
 WEEKLY_DTE_TARGET = 7
-C6_1C_READINESS_THRESHOLD = 0.90
+SAMPLE_A_SANITY_THRESHOLD = 0.90
 SCHEDULE_TAIL_DAYS = 21
+VERDICT_PASS_POLICY = "PASS WITH POLICY CLARIFICATION"
 NO_PRODUCER_CHANGE_STATEMENT = (
     "No producer expiry behavior was changed in C6.1B."
+)
+NO_FALLBACK_STATEMENT = (
+    "C6.1C must not silently substitute a nearby expiry. "
+    "No fallback to nearest-DTE expiry is allowed."
 )
 PARQUET_COLUMNS = (
     "ticker",
@@ -83,12 +93,28 @@ class DiagnosedObservation:
     dte_delta: int | None
     expiries_match: bool
 
+    @property
+    def weekly_tradable(self) -> bool:
+        """Exact target listed and body call/put quotable (strict weekly rule)."""
+        return self.target_listed_on_chain and self.target_body_pair_quotable
+
 
 @dataclass(frozen=True)
 class SkippedObservation:
     ticker: str
     entry_date: date
     reason: str
+
+
+@dataclass(frozen=True)
+class SampleResult:
+    label: str
+    tickers: list[str]
+    entry_dates: list[date]
+    diagnosed: list[DiagnosedObservation]
+    skipped: list[SkippedObservation]
+    metrics: dict[str, Any]
+    sampling_method: str
 
 
 def normalize_tickers(raw_tickers: Sequence[object]) -> list[str]:
@@ -200,10 +226,7 @@ def evaluate_target_body_from_snapshot(
     if expiry_rows is None or expiry_rows.empty:
         return False, False, False
 
-    strikes = [
-        Decimal(str(value))
-        for value in expiry_rows["adj_strike"].tolist()
-    ]
+    strikes = [Decimal(str(value)) for value in expiry_rows["adj_strike"].tolist()]
     body_strike = select_body_strike_from_strikes(strikes, snapshot.spot)
     if body_strike is None:
         return False, False, False
@@ -308,6 +331,61 @@ def select_entry_dates(
     if max_entry_dates is not None and len(entry_dates) > max_entry_dates:
         return entry_dates[:max_entry_dates]
     return entry_dates
+
+
+def sample_coverage_tickers(
+    ranked_tickers: Sequence[str],
+    max_tickers: int,
+) -> list[str]:
+    """Deterministic stratified sample: top / middle / lower by liquidity rank order.
+
+    ``ranked_tickers`` should already be sorted most-liquid → least-liquid.
+    """
+    if max_tickers <= 0:
+        raise ValueError("max_tickers must be positive")
+    universe = list(ranked_tickers)
+    if not universe:
+        raise ValueError("Coverage ticker universe is empty")
+    if len(universe) <= max_tickers:
+        return universe
+
+    n_top = max_tickers // 3
+    n_mid = max_tickers // 3
+    n_low = max_tickers - n_top - n_mid
+    mid_start = max(0, (len(universe) - n_mid) // 2)
+
+    selected: list[str] = []
+    seen: set[str] = set()
+
+    def _extend(candidates: Sequence[str], limit: int) -> None:
+        added = 0
+        for symbol in candidates:
+            if added >= limit or len(selected) >= max_tickers:
+                return
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            selected.append(symbol)
+            added += 1
+
+    _extend(universe[:n_top], n_top)
+    _extend(universe[mid_start : mid_start + n_mid], n_mid)
+    _extend(list(reversed(universe)), n_low)
+    if len(selected) < max_tickers:
+        _extend(universe, max_tickers - len(selected))
+    return selected
+
+
+def load_ranked_coverage_tickers(tickers_path: Path) -> list[str]:
+    """Load C4 liquid tickers ranked by ``snapshots_qualified`` descending."""
+    if not tickers_path.exists():
+        raise FileNotFoundError(f"Coverage ticker file not found: {tickers_path}")
+    df = pd.read_csv(tickers_path)
+    if "Ticker" not in df.columns:
+        raise ValueError(f"Ticker column not found in {tickers_path}")
+    if "snapshots_qualified" in df.columns:
+        df = df.sort_values("snapshots_qualified", ascending=False, kind="mergesort")
+    return normalize_tickers(df["Ticker"].tolist())
 
 
 def diagnose_observation(
@@ -468,10 +546,12 @@ def aggregate_metrics(
     call_count = sum(1 for item in diagnosed if item.target_body_call_quotable)
     put_count = sum(1 for item in diagnosed if item.target_body_put_quotable)
     pair_count = sum(1 for item in diagnosed if item.target_body_pair_quotable)
-    readiness_count = sum(
+    weekly_tradable_count = sum(1 for item in diagnosed if item.weekly_tradable)
+    missing_target_count = sum(1 for item in diagnosed if not item.target_listed_on_chain)
+    body_not_quotable_count = sum(
         1
         for item in diagnosed
-        if item.target_listed_on_chain and item.target_body_pair_quotable
+        if item.target_listed_on_chain and not item.target_body_pair_quotable
     )
 
     dte_deltas = [item.dte_delta for item in diagnosed if item.dte_delta is not None]
@@ -501,8 +581,16 @@ def aggregate_metrics(
         "call_rate": _rate(call_count, diagnosed_count),
         "put_rate": _rate(put_count, diagnosed_count),
         "pair_rate": _rate(pair_count, diagnosed_count),
-        "readiness_rate": _rate(readiness_count, diagnosed_count),
-        "readiness_count": readiness_count,
+        "weekly_tradable_count": weekly_tradable_count,
+        "weekly_tradable_rate": _rate(weekly_tradable_count, diagnosed_count),
+        "weekly_tradable_rate_of_attempted": _rate(weekly_tradable_count, attempted),
+        "missing_target_count": missing_target_count,
+        "missing_target_rate": _rate(missing_target_count, diagnosed_count),
+        "body_not_quotable_count": body_not_quotable_count,
+        "body_not_quotable_rate": _rate(body_not_quotable_count, diagnosed_count),
+        # Back-compat alias used by older tests / logs
+        "readiness_rate": _rate(weekly_tradable_count, diagnosed_count),
+        "readiness_count": weekly_tradable_count,
         "dte_delta_hist": dte_delta_hist,
         "mismatches": mismatches,
         "missing_target": missing_target,
@@ -510,51 +598,75 @@ def aggregate_metrics(
     }
 
 
-def classify_verdict(metrics: dict[str, Any]) -> str:
-    """Return PASS / CAUTION / FAIL per C6.1B interpretation."""
+def classify_sample_a_verdict(metrics: dict[str, Any]) -> str:
+    """Classify known-weekly Sample A as PASS / CAUTION / FAIL (mechanical gate)."""
     diagnosed_count = metrics["diagnosed_count"]
-    skipped_count = metrics["skipped_count"]
     attempted = metrics["attempted"]
-    readiness_rate = metrics["readiness_rate"]
+    weekly_tradable_rate = metrics["weekly_tradable_rate"]
 
     if attempted == 0 or diagnosed_count == 0:
         return "FAIL"
-    if readiness_rate is None:
+    if weekly_tradable_rate is None:
         return "FAIL"
 
-    skip_share = skipped_count / attempted
     match_rate = metrics["match_rate"] or 0.0
-
-    if readiness_rate >= C6_1C_READINESS_THRESHOLD:
-        if skipped_count == 0 and match_rate >= C6_1C_READINESS_THRESHOLD:
+    if weekly_tradable_rate >= SAMPLE_A_SANITY_THRESHOLD:
+        if metrics["skipped_count"] == 0 and match_rate >= SAMPLE_A_SANITY_THRESHOLD:
             return "PASS"
         return "CAUTION"
-
-    if readiness_rate >= 0.80 or skip_share >= 0.10:
+    if weekly_tradable_rate >= 0.80:
         return "CAUTION"
-
     return "FAIL"
 
 
-def recommendation_text(verdict: str, metrics: dict[str, Any]) -> str:
-    readiness_rate = metrics["readiness_rate"]
-    readiness_pct = f"{100.0 * readiness_rate:.1f}%" if readiness_rate is not None else "n/a"
+def classify_verdict(
+    sample_a_metrics: dict[str, Any],
+    *,
+    sample_b_metrics: dict[str, Any] | None = None,
+) -> str:
+    """Overall C6.1B verdict: Sample A gates C6.1C; Sample B never blocks."""
+    sample_a = classify_sample_a_verdict(sample_a_metrics)
+    if sample_a == "FAIL":
+        return "FAIL"
+    if sample_a == "CAUTION":
+        return "CAUTION"
+    # Sample B coverage is informational — low coverage does not block C6.1C.
+    _ = sample_b_metrics
+    return VERDICT_PASS_POLICY
 
-    if verdict == "PASS":
+
+def recommendation_text(
+    verdict: str,
+    sample_a_metrics: dict[str, Any],
+    sample_b_metrics: dict[str, Any] | None = None,
+) -> str:
+    a_rate = sample_a_metrics.get("weekly_tradable_rate")
+    a_pct = f"{100.0 * a_rate:.1f}%" if a_rate is not None else "n/a"
+    b_note = ""
+    if sample_b_metrics is not None:
+        b_rate = sample_b_metrics.get("weekly_tradable_rate")
+        b_pct = f"{100.0 * b_rate:.1f}%" if b_rate is not None else "n/a"
+        b_note = (
+            f" Sample B weekly-tradable rate is {b_pct} (informational coverage only; "
+            "does not block C6.1C)."
+        )
+
+    if verdict == VERDICT_PASS_POLICY:
         return (
-            "Proceed to C6.1C calendar-paired weekly expiry implementation. "
-            f"Target listed + body-pair quotable coverage is {readiness_pct} "
-            f"(>= {100 * C6_1C_READINESS_THRESHOLD:.0f}% threshold) on diagnosed observations."
+            "Proceed to C6.1C with strict calendar-paired weekly expiry. "
+            f"Sample A known-weekly sanity weekly-tradable rate is {a_pct}. "
+            "Ticker-weeks without the exact next-week target expiry are skipped / "
+            "not weekly-ready. No fallback to nearest-DTE expiry is allowed."
+            f"{b_note}"
         )
     if verdict == "CAUTION":
         return (
-            "HD review required before deciding. Coverage or mismatch/skips need human review "
-            f"before C6.1C. Target readiness on diagnosed observations: {readiness_pct}."
+            "HD review required before deciding. Sample A known-weekly sanity is not clean. "
+            f"Sample A weekly-tradable rate: {a_pct}.{b_note}"
         )
     return (
-        "Do not proceed to C6.1C yet; keep chain-scanned expiry for now. "
-        "Document the semantic gap and revisit after C6 closeout. "
-        f"Target readiness on diagnosed observations: {readiness_pct}."
+        "Do not proceed to C6.1C yet. Sample A known-weekly sanity failed. "
+        f"Sample A weekly-tradable rate: {a_pct}.{b_note}"
     )
 
 
@@ -581,30 +693,121 @@ def _example_rows(
     return lines
 
 
-def render_markdown_report(
-    *,
-    repo_commit: str,
-    input_root: Path,
-    tickers: Sequence[str],
-    sample_start: date,
-    sample_end: date,
-    entry_dates: Sequence[date],
-    diagnosed: Sequence[DiagnosedObservation],
-    skipped: Sequence[SkippedObservation],
-    metrics: dict[str, Any],
-    verdict: str,
-) -> str:
-    """Render the C6.1B markdown acceptance artifact."""
-    recommendation = recommendation_text(verdict, metrics)
+def _render_sample_section(sample: SampleResult, *, is_sample_a: bool) -> list[str]:
+    metrics = sample.metrics
     skip_lines = [
         f"- `{reason}`: {count}"
         for reason, count in sorted(metrics["skip_reasons"].items())
     ] or ["- (none)"]
-
     dte_lines = [
         f"- `{delta}`: {count}"
         for delta, count in sorted(metrics["dte_delta_hist"].items())
-    ] or ["- (none — all observations matched or missing DTE fields)"]
+    ] or ["- (none)"]
+
+    title = (
+        "## Sample A — known-weekly sanity check"
+        if is_sample_a
+        else "## Sample B — broad-universe coverage check"
+    )
+    purpose = (
+        "The AAPL/MSFT/NVDA/SPY/QQQ sample is a known-weekly sanity sample. "
+        "The result confirms mechanical viability on known weekly-option names. "
+        "This is the main C6.1C mechanical gate."
+        if is_sample_a
+        else (
+            "The broader C4 liquid-universe sample estimates how much of the universe "
+            "is actually weekly-tradable. This is informational coverage, not a C6.1C "
+            "correctness blocker. Missing exact target weekly expiry should be counted "
+            "as expected no-trade skip behavior."
+        )
+    )
+
+    lines = [
+        title,
+        "",
+        purpose,
+        "",
+        f"- **Tickers ({len(sample.tickers)}):** {', '.join(sample.tickers)}",
+        f"- **Sampling method:** {sample.sampling_method}",
+        f"- **Observations attempted:** {metrics['attempted']}",
+        f"- **Successfully diagnosed:** {metrics['diagnosed_count']}",
+        f"- **Skipped (data/load errors):** {metrics['skipped_count']}",
+        "",
+        "**Skip reasons (data/load):**",
+        *skip_lines,
+        "",
+        "**Resolved entry dates:**",
+        f"- {', '.join(day.isoformat() for day in sample.entry_dates) if sample.entry_dates else '(none)'}",
+        "",
+        "### Metrics",
+        "",
+        f"- **`expiry_chain_scanned == expiry_target_weekly` rate:** {_format_pct(metrics['match_rate'])}",
+        f"- **`target_listed_on_chain` rate:** {_format_pct(metrics['listed_rate'])}",
+        f"- **Target body call quotable rate:** {_format_pct(metrics['call_rate'])}",
+        f"- **Target body put quotable rate:** {_format_pct(metrics['put_rate'])}",
+        f"- **Target body pair quotable rate:** {_format_pct(metrics['pair_rate'])}",
+        f"- **Weekly-tradable ticker-week rate (listed + body pair):** "
+        f"{_format_pct(metrics['weekly_tradable_rate'])} "
+        f"({metrics['weekly_tradable_count']}/{metrics['diagnosed_count']} diagnosed)",
+        f"- **Missing exact target expiry rate (among diagnosed):** "
+        f"{_format_pct(metrics['missing_target_rate'])} "
+        f"({metrics['missing_target_count']}/{metrics['diagnosed_count']})",
+        f"- **Target listed but body pair not quotable rate:** "
+        f"{_format_pct(metrics['body_not_quotable_rate'])} "
+        f"({metrics['body_not_quotable_count']}/{metrics['diagnosed_count']})",
+        "",
+    ]
+
+    if not is_sample_a:
+        lines.extend(
+            [
+                "**Coverage interpretation:** Missing exact target weekly expiry means no "
+                "weekly trade. Missing exact target weekly expiry is expected for "
+                "non-weekly-option names. Broad coverage affects opportunity count/capacity, "
+                "not correctness.",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "### Mismatch / skip examples",
+            "",
+            "#### Expiry mismatches (chain-scanned vs target weekly)",
+            "",
+            *(_example_rows(metrics["mismatches"]) or ["- (none)"]),
+            "",
+            "#### Missing target expiry on entry chain",
+            "",
+            *(_example_rows(metrics["missing_target"]) or ["- (none)"]),
+            "",
+            "#### Target listed but body pair not quotable",
+            "",
+            *(_example_rows(metrics["unquotable_target_body"]) or ["- (none)"]),
+            "",
+            "#### DTE delta distribution (`DTE_delta = DTE_chain - DTE_target`)",
+            "",
+            *dte_lines,
+            "",
+        ]
+    )
+    return lines
+
+
+def render_markdown_report(
+    *,
+    repo_commit: str,
+    input_root: Path,
+    sample_start: date,
+    sample_end: date,
+    sample_a: SampleResult,
+    sample_b: SampleResult | None,
+    verdict: str,
+) -> str:
+    """Render the C6.1B markdown acceptance artifact with Sample A/B sections."""
+    recommendation = recommendation_text(
+        verdict, sample_a.metrics, sample_b.metrics if sample_b else None
+    )
 
     lines = [
         "# C6.1B — Weekly Expiry Policy Diagnostic",
@@ -613,6 +816,8 @@ def render_markdown_report(
         "",
         NO_PRODUCER_CHANGE_STATEMENT,
         "",
+        NO_FALLBACK_STATEMENT,
+        "",
         "---",
         "",
         "## 1. Scope",
@@ -620,76 +825,87 @@ def render_markdown_report(
         "- **Task:** C6.1B — weekly expiry policy diagnostic (read-only)",
         f"- **Repo commit reviewed:** `{repo_commit}`",
         f"- **Data root:** `{input_root}`",
-        f"- **Sample tickers:** {', '.join(tickers)}",
         f"- **Sample date range:** `{sample_start.isoformat()}` … `{sample_end.isoformat()}`",
         "- **Entry date generation:** `weekly_trade_dates_in_range` on adjusted-liquid parquet "
-        f"presence (Friday anchor with Mon–Fri walk-back); bounded to {len(entry_dates)} entry dates",
+        "presence (Friday anchor with Mon–Fri walk-back)",
         "- **Non-goal:** C6.1B is read-only — no producer expiry behavior changes, no parquet/cache writes",
+        "- **Policy role:** C6.1B is deciding policy semantics, not proving broad weekly-option coverage.",
         "",
-        "## 2. Sample summary",
+        "## Policy decision for C6.1C",
         "",
-        f"- **Observations attempted:** {metrics['attempted']}",
-        f"- **Successfully diagnosed:** {metrics['diagnosed_count']}",
-        f"- **Skipped:** {metrics['skipped_count']}",
+        "Proceed to C6.1C with strict calendar-paired weekly expiry.",
         "",
-        "**Skip reasons:**",
-        *skip_lines,
+        "For weekly strategy semantics, ticker-weeks without the exact next-week target expiry "
+        "are skipped / not weekly-ready.",
         "",
-        "**Resolved entry dates:**",
-        f"- {', '.join(day.isoformat() for day in entry_dates) if entry_dates else '(none)'}",
+        "No fallback to nearest-DTE expiry is allowed.",
         "",
-        "## 3. Core metrics",
+        "Missing exact target weekly expiry means no weekly trade.",
         "",
-        f"- **`expiry_chain_scanned == expiry_target_weekly` rate:** {_format_pct(metrics['match_rate'])}",
-        f"- **`target_listed_on_chain` rate:** {_format_pct(metrics['listed_rate'])}",
-        f"- **Target body call quotable rate:** {_format_pct(metrics['call_rate'])}",
-        f"- **Target body put quotable rate:** {_format_pct(metrics['put_rate'])}",
-        f"- **Target body pair quotable rate:** {_format_pct(metrics['pair_rate'])}",
-        f"- **C6.1C readiness (listed + body pair quotable):** "
-        f"{_format_pct(metrics['readiness_rate'])} "
-        f"({metrics['readiness_count']}/{metrics['diagnosed_count']} diagnosed; "
-        f"threshold >= {100 * C6_1C_READINESS_THRESHOLD:.0f}%)",
+        "Missing exact target weekly expiry is expected for non-weekly-option names.",
         "",
-        "## 4. Mismatch diagnostics",
+        "C6.1C must not silently substitute a nearby expiry.",
         "",
-        "### Expiry mismatches (chain-scanned vs target weekly)",
+        "The old chain-scanned `_find_best_expiry` behavior is permissive and should not "
+        "define weekly strategy semantics.",
         "",
-        *(_example_rows(metrics["mismatches"]) or ["- (none)"]),
-        "",
-        "### Missing target expiry on entry chain",
-        "",
-        *(_example_rows(metrics["missing_target"]) or ["- (none)"]),
-        "",
-        "### Target listed but body pair not quotable",
-        "",
-        *(_example_rows(metrics["unquotable_target_body"]) or ["- (none)"]),
-        "",
-        "### DTE delta distribution (`DTE_delta = DTE_chain - DTE_target`)",
-        "",
-        *dte_lines,
-        "",
-        "## 5. Recommendation",
-        "",
-        recommendation,
-        "",
-        "---",
-        "",
-        "## Method notes",
-        "",
-        "- `expiry_chain_scanned` uses current `OptionSurfaceBuilder._find_best_expiry` "
-        f"with `dte_target={WEEKLY_DTE_TARGET}` (weekly chain-scanned path).",
-        "- `expiry_target_weekly` uses `target_weekly_expiry_from_schedule(entry_date, schedule)` only.",
-        "- Target body quotability matches producer rules: ATM strike nearest spot (ties -> lower); "
-        "`bid > 0`, `ask > 0`, `mid > 0` on body call/put.",
-        "- Entry-date parquets are read once per sample date with ticker-column pruning.",
-        "- `expiry_chain_scanned` still uses `OptionSurfaceBuilder._find_best_expiry` on "
-        "in-memory available-expiry lists (no producer code changes).",
+        "Broad coverage affects opportunity count/capacity, not correctness.",
         "",
     ]
+
+    lines.extend(_render_sample_section(sample_a, is_sample_a=True))
+
+    if sample_b is not None:
+        lines.extend(_render_sample_section(sample_b, is_sample_a=False))
+    else:
+        lines.extend(
+            [
+                "## Sample B — broad-universe coverage check",
+                "",
+                "Sample B was not run in this invocation "
+                "(pass `--include-coverage-sample` to enable).",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "## Correct C6.1C gate",
+            "",
+            "C6.1C may proceed if:",
+            "",
+            "1. The strict weekly expiry policy is explicitly defined.",
+            "2. Known-weekly sanity sample (Sample A) passes.",
+            "3. C6.1C is required to skip ticker-weeks when exact target expiry is missing.",
+            "4. C6.1C is forbidden from falling back to nearest-DTE expiry.",
+            "5. Missing weekly expiry is treated as expected no-trade behavior, not as a producer bug.",
+            "",
+            "Broad-universe coverage metrics may still be reported, but they should not block "
+            "C6.1C unless the diagnostic cannot reliably distinguish missing target expiry "
+            "from data errors.",
+            "",
+            "## Recommendation",
+            "",
+            recommendation,
+            "",
+            "---",
+            "",
+            "## Method notes",
+            "",
+            "- `expiry_chain_scanned` uses current `OptionSurfaceBuilder._find_best_expiry` "
+            f"with `dte_target={WEEKLY_DTE_TARGET}` for comparison only.",
+            "- `expiry_target_weekly` uses `target_weekly_expiry_from_schedule(entry_date, schedule)` only.",
+            "- Target body quotability matches producer rules: ATM strike nearest spot (ties -> lower); "
+            "`bid > 0`, `ask > 0`, `mid > 0` on body call/put.",
+            "- Entry-date parquets are read once per sample date with ticker-column pruning.",
+            "- Weekly-tradable = exact target listed AND body pair quotable. Otherwise not weekly-tradable.",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 
-def resolve_tickers(args: argparse.Namespace) -> list[str]:
+def resolve_sample_a_tickers(args: argparse.Namespace) -> list[str]:
     if args.tickers is not None:
         return normalize_tickers(args.tickers)
 
@@ -697,13 +913,17 @@ def resolve_tickers(args: argparse.Namespace) -> list[str]:
         tickers_path = args.tickers_file
         if not tickers_path.exists():
             raise FileNotFoundError(f"Ticker universe file not found: {tickers_path}")
-
         df_tickers = pd.read_csv(tickers_path)
         if "Ticker" not in df_tickers.columns:
             raise ValueError(f"Ticker column not found in {tickers_path}")
         return normalize_tickers(df_tickers["Ticker"].tolist())
 
     return list(DEFAULT_TICKERS)
+
+
+# Back-compat alias for existing unit tests
+def resolve_tickers(args: argparse.Namespace) -> list[str]:
+    return resolve_sample_a_tickers(args)
 
 
 def _parse_iso_date(value: str) -> date:
@@ -729,15 +949,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         nargs="+",
         default=None,
         help=(
-            "Inline ticker scope (normalized: strip, uppercase, dedupe). "
-            f"Default sample: {', '.join(DEFAULT_TICKERS)}"
+            "Sample A inline ticker scope (normalized). "
+            f"Default known-weekly sample: {', '.join(DEFAULT_TICKERS)}"
         ),
     )
     parser.add_argument(
         "--tickers-file",
         type=Path,
         default=None,
-        help="CSV with Ticker column (mutually exclusive with --tickers)",
+        help="Sample A CSV with Ticker column (mutually exclusive with --tickers)",
+    )
+    parser.add_argument(
+        "--include-coverage-sample",
+        action="store_true",
+        help="Also run Sample B broad C4 coverage sample (bounded)",
+    )
+    parser.add_argument(
+        "--coverage-tickers-file",
+        type=Path,
+        default=DEFAULT_LIQUID_TICKERS_PATH,
+        help="C4 liquid tickers CSV for Sample B",
+    )
+    parser.add_argument(
+        "--coverage-max-tickers",
+        type=int,
+        default=DEFAULT_COVERAGE_MAX_TICKERS,
+        help="Max tickers in Sample B stratified sample",
     )
     parser.add_argument(
         "--start-date",
@@ -777,6 +1014,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("start-date must be on or before end-date")
     if args.max_entry_dates is not None and args.max_entry_dates <= 0:
         parser.error("max-entry-dates must be positive")
+    if args.coverage_max_tickers <= 0:
+        parser.error("coverage-max-tickers must be positive")
     return args
 
 
@@ -796,6 +1035,28 @@ def resolve_repo_commit(explicit: str | None) -> str:
         return "unknown"
 
 
+def _build_sample_result(
+    *,
+    label: str,
+    tickers: Sequence[str],
+    entry_dates: Sequence[date],
+    diagnosed: Sequence[DiagnosedObservation],
+    skipped: Sequence[SkippedObservation],
+    sampling_method: str,
+) -> SampleResult:
+    attempted = len(tickers) * len(entry_dates)
+    metrics = aggregate_metrics(diagnosed, skipped, attempted)
+    return SampleResult(
+        label=label,
+        tickers=list(tickers),
+        entry_dates=list(entry_dates),
+        diagnosed=list(diagnosed),
+        skipped=list(skipped),
+        metrics=metrics,
+        sampling_method=sampling_method,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(
@@ -804,7 +1065,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     try:
-        tickers = resolve_tickers(args)
+        sample_a_tickers = resolve_sample_a_tickers(args)
     except (ValueError, FileNotFoundError) as exc:
         logger.error("%s", exc)
         return 2
@@ -814,26 +1075,69 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Input root does not exist: %s", input_root)
         return 2
 
-    entry_dates, diagnosed, skipped = run_diagnostic(
+    logger.info("Running Sample A (known-weekly sanity): %s", ", ".join(sample_a_tickers))
+    entry_dates_a, diagnosed_a, skipped_a = run_diagnostic(
         input_root=input_root,
-        tickers=tickers,
+        tickers=sample_a_tickers,
         sample_start=args.start_date,
         sample_end=args.end_date,
         max_entry_dates=args.max_entry_dates,
     )
-    attempted = len(tickers) * len(entry_dates)
-    metrics = aggregate_metrics(diagnosed, skipped, attempted)
-    verdict = classify_verdict(metrics)
+    sample_a = _build_sample_result(
+        label="sample_a",
+        tickers=sample_a_tickers,
+        entry_dates=entry_dates_a,
+        diagnosed=diagnosed_a,
+        skipped=skipped_a,
+        sampling_method="fixed known-weekly defaults (AAPL/MSFT/NVDA/SPY/QQQ) or CLI override",
+    )
+
+    sample_b: SampleResult | None = None
+    if args.include_coverage_sample:
+        try:
+            ranked = load_ranked_coverage_tickers(args.coverage_tickers_file)
+            coverage_tickers = sample_coverage_tickers(
+                ranked, args.coverage_max_tickers
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            logger.error("%s", exc)
+            return 2
+
+        logger.info(
+            "Running Sample B (broad coverage): %s tickers from %s",
+            len(coverage_tickers),
+            args.coverage_tickers_file,
+        )
+        entry_dates_b, diagnosed_b, skipped_b = run_diagnostic(
+            input_root=input_root,
+            tickers=coverage_tickers,
+            sample_start=args.start_date,
+            sample_end=args.end_date,
+            max_entry_dates=args.max_entry_dates,
+        )
+        sample_b = _build_sample_result(
+            label="sample_b",
+            tickers=coverage_tickers,
+            entry_dates=entry_dates_b,
+            diagnosed=diagnosed_b,
+            skipped=skipped_b,
+            sampling_method=(
+                f"stratified top/middle/lower by snapshots_qualified from "
+                f"{args.coverage_tickers_file} (max={args.coverage_max_tickers})"
+            ),
+        )
+
+    verdict = classify_verdict(
+        sample_a.metrics,
+        sample_b_metrics=sample_b.metrics if sample_b else None,
+    )
     report = render_markdown_report(
         repo_commit=resolve_repo_commit(args.commit),
         input_root=input_root,
-        tickers=tickers,
         sample_start=args.start_date,
         sample_end=args.end_date,
-        entry_dates=entry_dates,
-        diagnosed=diagnosed,
-        skipped=skipped,
-        metrics=metrics,
+        sample_a=sample_a,
+        sample_b=sample_b,
         verdict=verdict,
     )
 
@@ -844,11 +1148,18 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("C6.1B verdict: %s", verdict)
     logger.info("Wrote markdown report: %s", output_report)
     logger.info(
-        "Diagnosed %s/%s observations; readiness %s",
-        metrics["diagnosed_count"],
-        attempted,
-        _format_pct(metrics["readiness_rate"]),
+        "Sample A weekly-tradable %s (%s/%s diagnosed)",
+        _format_pct(sample_a.metrics["weekly_tradable_rate"]),
+        sample_a.metrics["weekly_tradable_count"],
+        sample_a.metrics["diagnosed_count"],
     )
+    if sample_b is not None:
+        logger.info(
+            "Sample B weekly-tradable %s (%s/%s diagnosed; informational)",
+            _format_pct(sample_b.metrics["weekly_tradable_rate"]),
+            sample_b.metrics["weekly_tradable_count"],
+            sample_b.metrics["diagnosed_count"],
+        )
     return 0
 
 
