@@ -2,9 +2,16 @@
 
 **Status:** Closed — **C6 accepted**  
 **Closed:** 2026-07-11  
-**Design memo:** [docs/tmp/c6_1_option_surface_design_memo.md](../tmp/c6_1_option_surface_design_memo.md)  
-**Accepted evidence head:** `70527cade605a0f1ee2f90f600f6ae9884018eda`  
-**Current producer implementation:** `af9d9a08772b6e8c82c32acc39cbc84b32bb4326`
+**Design memo:** [docs/tmp/c6_1_option_surface_design_memo.md](../tmp/c6_1_option_surface_design_memo.md)
+
+### Lineage
+
+| Label | Commit | Meaning |
+|-------|--------|---------|
+| **Accepted C6.4 evidence head** | `70527cade605a0f1ee2f90f600f6ae9884018eda` | Repository head at which the accepted C6.4 evidence reports were finalized |
+| **Fresh-smoke producer-run repository HEAD** | `0a386f2517deff8be116f4729abf7e2cfc09531d` | Full repository HEAD used to generate the C6.4 Pass 2 fresh bounded smoke artifacts |
+| **Strict weekly-expiry implementation** | `af9d9a08772b6e8c82c32acc39cbc84b32bb4326` | Accepted C6.1C commit that implements strict calendar-paired weekly expiry (a component of the producer, not the full smoke-run HEAD) |
+| **C6.4 audit implementation** | `c75417de79ae19ed8bcdd3fa9d0afce6045275f8` | Accepted C6.4 audit-helper and CLI implementation used for both passes |
 
 ---
 
@@ -251,9 +258,19 @@ No A1 or A2 duplicate keys were found in either bounded C6.4 pass. **No producer
 | **Broad weekly opportunity coverage** | Accepted | C6.1B broad sample: 57.2% weekly-tradable among successfully diagnosed observations — affects strategy opportunity count/capacity, not correctness |
 | **No full historical rebuild** | Accepted | Not required for Sprint 004 C6 closeout |
 | **No profitability or fill evidence** | Deferred | Sprint 006+ |
-| **No surface-audit orchestration wiring** | Deferred | Standalone audit accepted for C6; `refresh_weekly_inputs surface-audit` → C8 / C6.5 |
+| **No surface-audit orchestration wiring** | Deferred to **C8** | Standalone audit accepted for C6; wiring into `refresh_weekly_inputs surface-audit` is the C8 owner (historically numbered C6.5) |
 | **No incremental append/watermark hardening** | Deferred | Sprint 005 |
 | **No PIT universe validation** | Deferred | C7 |
+
+### On the historical "C6.5" numbering
+
+There is **no missing C6.5 closeout requirement**. The work originally numbered C6.5 is wiring the accepted standalone surface audit into:
+
+```text
+refresh_weekly_inputs surface-audit
+```
+
+That orchestration work is intentionally deferred to **C8** and does **not** block C6 closeout. C6 delivered and accepted the standalone audit (`scripts/audit_option_surface_artifacts.py`); orchestration is an integration concern owned by C8. No required C6 subtask remains unfinished.
 
 ### Why the Pass 1 lineage WARN is acceptable
 
@@ -363,7 +380,7 @@ Full Pass 1 / Pass 2 command lines: [c6_4_real_cache_surface_audit.md](../tmp/c6
 
 | Item | Sprint / task |
 |------|----------------|
-| `refresh_weekly_inputs surface-audit` wiring | C6.5 / C8 |
+| `refresh_weekly_inputs surface-audit` wiring | **C8** (historically numbered C6.5; not a C6 closeout blocker) |
 | PIT universe validation | C7 |
 | Weekly refresh orchestration | C8 |
 | Runbook and CLI cleanup | C9 |
