@@ -2,7 +2,10 @@
 
 **Verdict: PASS**
 
+**C6.1C commit:** `af9d9a08772b6e8c82c32acc39cbc84b32bb4326`  
 **Commit baseline (C6.1B follow-up):** `7049037174ac30b735e1328a7d465d8dc14a64bb`
+
+If a weekly builder is created without a weekly schedule, strict weekly expiry resolution returns `no_target_weekly_expiry`; production CLI wiring passes the schedule explicitly.
 
 C6.1C changes weekly producer expiry behavior from permissive nearest-DTE selection to strict calendar-paired target-expiry selection.
 
