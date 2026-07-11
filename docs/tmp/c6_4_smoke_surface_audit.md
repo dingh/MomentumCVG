@@ -227,25 +227,33 @@ Coverage and readiness metrics below use the normalized in-memory view when iden
 
 ## Tests
 
+### C6.1 weekly expiry / CLI / diagnostic
+
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_weekly_expiry.py tests/unit/test_precompute_option_surface_cli.py tests/unit/test_diagnose_weekly_expiry_policy.py -q
 ```
-Result: 41 passed in 0.38s
+Result: 41 passed in 0.41s
+
+### C6.2 contract
 
 ```powershell
-C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_contract.py tests/unit/test_audit_option_surface_artifacts.py -q
+C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_contract.py -q
 ```
-Result: 25 passed in 0.13s
+Result: 25 passed in 0.15s
+
+### C6.3 readiness
 
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_readiness.py -q
 ```
-Result: 39 passed in 0.07s
+Result: 39 passed in 0.08s
+
+### C6.4 helpers + audit CLI integration
 
 ```powershell
-C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_c64_audit.py -q
+C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_c64_audit.py tests/unit/test_audit_option_surface_artifacts.py -q
 ```
-Result: 33 passed in 0.83s
+Result: 33 passed in 0.86s
 
 ## Conclusion
 

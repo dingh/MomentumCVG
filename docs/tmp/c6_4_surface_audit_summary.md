@@ -54,14 +54,14 @@ Pass 1 WARN is **audit-policy / lineage confidence**, not a bounded integrity fa
 
 | Suite | Result |
 |-------|--------|
-| C6.1 weekly expiry / CLI / diagnostic | 41 passed |
-| C6.2 contract | 25 passed |
-| C6.4 helpers + audit CLI integration | 33 passed |
-| C6.3 readiness | 39 passed |
+| C6.1 weekly expiry / CLI / diagnostic | 41 passed in 0.41s |
+| C6.2 contract | 25 passed in 0.15s |
+| C6.3 readiness | 39 passed in 0.08s |
+| C6.4 helpers + audit CLI integration | 33 passed in 0.86s |
 
 ## Producer fix or artifact regeneration required?
 
-**No.** Existing bounded smoke artifacts were reused unchanged. This follow-up corrected audit orchestration and reports only.
+**No.** Existing bounded smoke artifacts were reused unchanged. This commit corrects test command/result alignment in the C6.4 evidence reports only.
 
 ## C6.4 closeout readiness
 
