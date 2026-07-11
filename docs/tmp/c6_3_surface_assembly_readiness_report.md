@@ -1,6 +1,8 @@
 # C6.3 — Surface Assembly-Readiness Audit
 
-**Generated:** 2026-07-11 04:28:44 UTC
+**Generated:** 2026-07-11 04:29:40 UTC
+
+**Commit:** `bd32a15`
 
 ## Verdict
 
@@ -8,7 +10,7 @@
 
 ## Scope
 
-- Commit baseline (C6.2 follow-up): `ffb6ae94d33515971905f54b7a9db5af5bec6ff9`
+- Commit baseline (C6.2 follow-up): `8d776e6058114beb397894dcf0c1e0825d969c75`
 - Meta: `C:\MomentumCVG_env\cache\c6_2_surface_smoke\option_surface_meta_weekly_2024_2024.parquet`
 - Quotes: `C:\MomentumCVG_env\cache\c6_2_surface_smoke\option_surface_quotes_weekly_2024_2024.parquet`
 - Sample window: 2024-01-01 .. 2024-01-31
