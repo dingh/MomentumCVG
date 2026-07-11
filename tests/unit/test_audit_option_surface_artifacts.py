@@ -396,3 +396,118 @@ def test_cli_c63_contract_failure_blocks_readiness(tmp_path: Path, cli_module) -
     text = report_path.read_text(encoding="utf-8")
     assert "**FAIL**" in text
     assert "Readiness evaluation **blocked**" in text
+
+
+def _c64_base_args(
+    tmp_path: Path,
+    meta_path: Path,
+    quotes_path: Path,
+    data_root: Path,
+    *,
+    legacy: bool,
+) -> list[str]:
+    report_path = tmp_path / ("legacy_report.md" if legacy else "fresh_report.md")
+    args = [
+        "--meta-path",
+        str(meta_path),
+        "--quotes-path",
+        str(quotes_path),
+        "--frequency",
+        "weekly",
+        "--data-root",
+        str(data_root),
+        "--start-date",
+        "2024-01-01",
+        "--end-date",
+        "2024-01-31",
+        "--report-format",
+        "c6.4",
+        "--include-assembly-readiness",
+        "--audit-commit",
+        "723a17961eb8b6e8b6dba33c9d8620f3a6b9959a",
+        "--output-report",
+        str(report_path),
+    ]
+    if legacy:
+        args.append("--legacy-cache")
+    else:
+        args.extend(
+            [
+                "--producer-run-head",
+                "0a386f2517deff8be116f4729abf7e2cfc09531d",
+                "--weekly-expiry-producer-commit",
+                "af9d9a08772b6e8c82c32acc39cbc84b32bb4326",
+            ]
+        )
+    return args
+
+
+def test_cli_c64_legacy_unknown_lineage_warn(tmp_path: Path, cli_module) -> None:
+    meta_path, quotes_path = _write_readiness_pair(tmp_path)
+    data_root = tmp_path / "adjusted"
+    _seed_weekly_schedule(data_root, date(2024, 1, 5))
+    _seed_weekly_schedule(data_root, date(2024, 1, 12))
+    args = _c64_base_args(tmp_path, meta_path, quotes_path, data_root, legacy=True)
+    report_path = Path(args[args.index("--output-report") + 1])
+
+    code = cli_module.main(args)
+    assert code == 0
+    text = report_path.read_text(encoding="utf-8")
+    assert "**WARN**" in text.split("## Verdict")[1].split("##")[0]
+    assert "Historical producer commit and upstream data lineage are unknown" in text
+    assert "Raw C6.2 contract verdict" in text
+    assert "Producer implementation commit SHA" not in text
+
+
+def test_cli_c64_legacy_identical_duplicate_warn_with_adjustment(tmp_path: Path, cli_module) -> None:
+    meta_path, quotes_path = _write_readiness_pair(tmp_path)
+    meta = pd.read_parquet(meta_path)
+    meta = pd.concat([meta, meta], ignore_index=True)
+    meta.to_parquet(meta_path, index=False)
+    data_root = tmp_path / "adjusted"
+    _seed_weekly_schedule(data_root, date(2024, 1, 5))
+    _seed_weekly_schedule(data_root, date(2024, 1, 12))
+    args = _c64_base_args(tmp_path, meta_path, quotes_path, data_root, legacy=True)
+    report_path = Path(args[args.index("--output-report") + 1])
+
+    code = cli_module.main(args)
+    assert code == 0
+    text = report_path.read_text(encoding="utf-8")
+    assert "Raw C6.2 contract verdict: **FAIL**" in text
+    assert "Adjusted C6.4 contract verdict: **WARN**" in text
+    assert "identical legacy duplicates downgraded" in text
+    assert "Normalized meta rows (metrics only): 1" in text
+
+
+def test_cli_c64_fresh_lineage_fields(tmp_path: Path, cli_module) -> None:
+    meta_path, quotes_path = _write_readiness_pair(tmp_path)
+    data_root = tmp_path / "adjusted"
+    _seed_weekly_schedule(data_root, date(2024, 1, 5))
+    _seed_weekly_schedule(data_root, date(2024, 1, 12))
+    args = _c64_base_args(tmp_path, meta_path, quotes_path, data_root, legacy=False)
+    report_path = Path(args[args.index("--output-report") + 1])
+
+    code = cli_module.main(args)
+    assert code == 0
+    text = report_path.read_text(encoding="utf-8")
+    assert "Repository HEAD when producer ran: `0a386f2517deff8be116f4729abf7e2cfc09531d`" in text
+    assert "Strict weekly-expiry producer implementation: `af9d9a08772b6e8c82c32acc39cbc84b32bb4326`" in text
+    assert "**PASS**" in text.split("## Verdict")[1].split("##")[0]
+
+
+def test_cli_c64_fresh_identical_duplicate_fail(tmp_path: Path, cli_module) -> None:
+    meta_path, quotes_path = _write_readiness_pair(tmp_path)
+    meta = pd.read_parquet(meta_path)
+    meta = pd.concat([meta, meta], ignore_index=True)
+    meta.to_parquet(meta_path, index=False)
+    data_root = tmp_path / "adjusted"
+    _seed_weekly_schedule(data_root, date(2024, 1, 5))
+    _seed_weekly_schedule(data_root, date(2024, 1, 12))
+    args = _c64_base_args(tmp_path, meta_path, quotes_path, data_root, legacy=False)
+    report_path = Path(args[args.index("--output-report") + 1])
+
+    code = cli_module.main(args)
+    assert code == 1
+    text = report_path.read_text(encoding="utf-8")
+    assert "Adjusted C6.4 contract verdict: **FAIL**" in text
+

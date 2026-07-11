@@ -1,6 +1,7 @@
 """C6.4 real-artifact audit helpers: bounded load, duplicate triage, coverage (read-only)."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -12,11 +13,31 @@ from src.data.trading_day import target_weekly_expiry_from_schedule, weekly_trad
 from src.features.option_surface_contract import (
     META_GRAIN_COLUMNS,
     QUOTE_GRAIN_COLUMNS,
+    ContractCheckResult,
     _to_date,
+    compute_overall_verdict,
 )
 from src.features.option_surface_readiness import SurfaceReadinessRow
 
+logger = logging.getLogger(__name__)
+
 WEEKLY_SCHEDULE_TAIL_DAYS = 21
+DUPLICATE_GRAIN_CHECK_NAMES = frozenset({"meta_grain", "quote_grain"})
+
+DOCUMENTED_TARGET_FAILURE_TAGS = frozenset({
+    "no_target_weekly_expiry",
+    "target_weekly_expiry_not_listed",
+    "no_expiries_on_entry_chain",
+    "target_weekly_body_not_quotable",
+})
+
+OTHER_PRODUCER_FAILURE_TAGS = frozenset({
+    "no_spot_price",
+    "no_options_at_entry",
+    "no_spot_at_expiry",
+    "no_strikes_in_chain",
+    "no_expiry_found",
+})
 
 
 @dataclass
@@ -53,10 +74,35 @@ class WeeklyExpiryEvidence:
     eligible_row_count: int
     exact_target_match_count: int
     silent_mismatch_count: int
-    missing_target_failure_count: int
-    target_not_listed_failure_count: int
+    documented_target_failure_count: int
+    other_producer_failure_count: int
+    missing_expiry_without_failure_count: int
+    no_target_weekly_expiry_count: int
+    target_weekly_expiry_not_listed_count: int
     no_expiries_on_entry_chain_count: int
-    mismatch_examples: list[str] = field(default_factory=list)
+    target_weekly_body_not_quotable_count: int
+    silent_mismatch_examples: list[str] = field(default_factory=list)
+
+
+@dataclass
+class C64ContractAdjustment:
+    """C6.4 policy adjustment applied on top of raw C6.2 contract checks."""
+
+    raw_verdict: str
+    adjusted_verdict: str
+    adjustment_notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class NormalizedViewInfo:
+    """In-memory metrics-only dedupe view (never written to disk)."""
+
+    applied: bool
+    raw_meta_row_count: int
+    normalized_meta_row_count: int
+    raw_quote_row_count: int
+    normalized_quote_row_count: int
+    note: str
 
 
 @dataclass
@@ -110,6 +156,25 @@ def _parquet_filters(
     return filters or None
 
 
+def _filter_fallback_errors() -> tuple[type[BaseException], ...]:
+    errors: list[type[BaseException]] = [ValueError, KeyError, TypeError]
+    try:
+        import pyarrow.lib as pa_lib
+
+        errors.extend(
+            exc
+            for exc in (
+                getattr(pa_lib, "ArrowInvalid", None),
+                getattr(pa_lib, "ArrowTypeError", None),
+                getattr(pa_lib, "ArrowNotImplementedError", None),
+            )
+            if exc is not None
+        )
+    except ImportError:
+        pass
+    return tuple(errors)
+
+
 def load_bounded_artifacts(
     meta_path: Path,
     quotes_path: Path,
@@ -127,7 +192,12 @@ def load_bounded_artifacts(
     try:
         meta_df = pd.read_parquet(meta_path, filters=filters)
         quotes_df = pd.read_parquet(quotes_path, filters=filters)
-    except Exception:
+    except _filter_fallback_errors() as exc:
+        logger.warning(
+            "Parquet pushdown filter failed (%s: %s); falling back to full read + filter",
+            type(exc).__name__,
+            exc,
+        )
         meta_df = pd.read_parquet(meta_path)
         quotes_df = pd.read_parquet(quotes_path)
         from src.features.option_surface_contract import filter_artifacts
@@ -236,6 +306,30 @@ def triage_duplicates(
     )
 
 
+def _failure_reason_str(value: Any) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    return str(value)
+
+
+def classify_weekly_expiry_row(
+    *,
+    expiry: date | None,
+    target: date,
+    reason_str: str | None,
+) -> str:
+    """Return one expiry-evidence category label for an eligible row."""
+    if reason_str is None:
+        if expiry is None:
+            return "missing_expiry_without_failure"
+        if expiry == target:
+            return "exact_target_match"
+        return "silent_mismatch"
+    if reason_str in DOCUMENTED_TARGET_FAILURE_TAGS:
+        return "documented_target_failure"
+    return "other_producer_failure"
+
+
 def compute_weekly_expiry_evidence(
     meta_df: pd.DataFrame,
     *,
@@ -250,10 +344,14 @@ def compute_weekly_expiry_evidence(
     eligible = 0
     exact_match = 0
     silent_mismatch = 0
-    missing_target = 0
+    documented_target = 0
+    other_producer = 0
+    missing_expiry = 0
+    no_target = 0
     target_not_listed = 0
     no_expiries = 0
-    mismatch_examples: list[str] = []
+    body_not_quotable = 0
+    silent_examples: list[str] = []
 
     for _, row in meta_df.iterrows():
         entry = _to_date(row.get("entry_date"))
@@ -264,37 +362,150 @@ def compute_weekly_expiry_evidence(
             continue
         eligible += 1
         expiry = _to_date(row.get("expiry_date"))
-        reason = row.get("failure_reason")
-        reason_str = None if pd.isna(reason) else str(reason)
+        reason_str = _failure_reason_str(row.get("failure_reason"))
+        category = classify_weekly_expiry_row(
+            expiry=expiry,
+            target=target,
+            reason_str=reason_str,
+        )
 
-        if reason_str == "no_target_weekly_expiry":
-            missing_target += 1
-            continue
-        if reason_str == "target_weekly_expiry_not_listed":
-            target_not_listed += 1
-            continue
-        if reason_str == "no_expiries_on_entry_chain":
-            no_expiries += 1
-            continue
-
-        if expiry == target:
+        if category == "exact_target_match":
             exact_match += 1
-        else:
+        elif category == "silent_mismatch":
             silent_mismatch += 1
-            if len(mismatch_examples) < 10:
-                mismatch_examples.append(
+            if len(silent_examples) < 10:
+                silent_examples.append(
                     f"ticker={row.get('ticker')} entry_date={entry} "
-                    f"expiry_date={expiry} target={target} failure_reason={reason_str}"
+                    f"expiry_date={expiry} target={target} failure_reason=null"
                 )
+        elif category == "missing_expiry_without_failure":
+            missing_expiry += 1
+        elif category == "documented_target_failure":
+            documented_target += 1
+            if reason_str == "no_target_weekly_expiry":
+                no_target += 1
+            elif reason_str == "target_weekly_expiry_not_listed":
+                target_not_listed += 1
+            elif reason_str == "no_expiries_on_entry_chain":
+                no_expiries += 1
+            elif reason_str == "target_weekly_body_not_quotable":
+                body_not_quotable += 1
+        else:
+            other_producer += 1
 
     return WeeklyExpiryEvidence(
         eligible_row_count=eligible,
         exact_target_match_count=exact_match,
         silent_mismatch_count=silent_mismatch,
-        missing_target_failure_count=missing_target,
-        target_not_listed_failure_count=target_not_listed,
+        documented_target_failure_count=documented_target,
+        other_producer_failure_count=other_producer,
+        missing_expiry_without_failure_count=missing_expiry,
+        no_target_weekly_expiry_count=no_target,
+        target_weekly_expiry_not_listed_count=target_not_listed,
         no_expiries_on_entry_chain_count=no_expiries,
-        mismatch_examples=mismatch_examples,
+        target_weekly_body_not_quotable_count=body_not_quotable,
+        silent_mismatch_examples=silent_examples,
+    )
+
+
+def _non_duplicate_contract_failures(results: Sequence[ContractCheckResult]) -> list[str]:
+    failures: list[str] = []
+    for result in results:
+        if result.status == "FAIL" and result.name not in DUPLICATE_GRAIN_CHECK_NAMES:
+            failures.extend(result.failures)
+    return failures
+
+
+def _duplicate_grain_contract_failed(results: Sequence[ContractCheckResult]) -> bool:
+    return any(
+        result.status == "FAIL" and result.name in DUPLICATE_GRAIN_CHECK_NAMES
+        for result in results
+    )
+
+
+def adjust_c64_contract_verdict(
+    results: Sequence[ContractCheckResult],
+    meta_triage: DuplicateTriageResult,
+    quote_triage: DuplicateTriageResult,
+    *,
+    legacy_mode: bool,
+) -> C64ContractAdjustment:
+    """Apply C6.4 duplicate policy on top of raw C6.2 contract checks."""
+    raw_verdict = compute_overall_verdict(results)
+    has_conflicting = bool(
+        meta_triage.conflicting_key_count or quote_triage.conflicting_key_count
+    )
+    has_any_duplicate = bool(
+        meta_triage.duplicate_key_count or quote_triage.duplicate_key_count
+    )
+
+    if has_conflicting:
+        return C64ContractAdjustment(raw_verdict=raw_verdict, adjusted_verdict="FAIL")
+
+    if not legacy_mode:
+        if has_any_duplicate:
+            return C64ContractAdjustment(raw_verdict=raw_verdict, adjusted_verdict="FAIL")
+        return C64ContractAdjustment(raw_verdict=raw_verdict, adjusted_verdict=raw_verdict)
+
+    non_dup_failures = _non_duplicate_contract_failures(results)
+    if non_dup_failures:
+        return C64ContractAdjustment(raw_verdict=raw_verdict, adjusted_verdict="FAIL")
+
+    if (
+        has_any_duplicate
+        and _duplicate_grain_contract_failed(results)
+        and meta_triage.identical_key_count + quote_triage.identical_key_count > 0
+        and not has_conflicting
+    ):
+        adjusted = "WARN" if raw_verdict == "FAIL" else raw_verdict
+        if raw_verdict == "FAIL":
+            return C64ContractAdjustment(
+                raw_verdict=raw_verdict,
+                adjusted_verdict=adjusted,
+                adjustment_notes=[
+                    "identical legacy duplicates downgraded from FAIL to WARN "
+                    "(duplicate-grain contract checks only)"
+                ],
+            )
+
+    return C64ContractAdjustment(raw_verdict=raw_verdict, adjusted_verdict=raw_verdict)
+
+
+def build_metrics_normalized_view(
+    meta_df: pd.DataFrame,
+    quotes_df: pd.DataFrame,
+    meta_triage: DuplicateTriageResult,
+    quote_triage: DuplicateTriageResult,
+) -> tuple[pd.DataFrame, pd.DataFrame, NormalizedViewInfo]:
+    """Drop exact duplicate rows in memory for coverage/readiness metrics only."""
+    raw_meta = len(meta_df)
+    raw_quotes = len(quotes_df)
+
+    if meta_triage.conflicting_key_count or quote_triage.conflicting_key_count:
+        return meta_df, quotes_df, NormalizedViewInfo(
+            applied=False,
+            raw_meta_row_count=raw_meta,
+            normalized_meta_row_count=raw_meta,
+            raw_quote_row_count=raw_quotes,
+            normalized_quote_row_count=raw_quotes,
+            note="normalization skipped: conflicting duplicates present",
+        )
+
+    meta_norm = meta_df.drop_duplicates(subset=list(META_GRAIN_COLUMNS), keep="first")
+    quotes_norm = quotes_df.drop_duplicates(subset=list(QUOTE_GRAIN_COLUMNS), keep="first")
+    applied = len(meta_norm) != raw_meta or len(quotes_norm) != raw_quotes
+    note = (
+        "metrics-only identical-duplicate dedupe applied in memory"
+        if applied
+        else "no identical duplicates; raw and normalized counts match"
+    )
+    return meta_norm.reset_index(drop=True), quotes_norm.reset_index(drop=True), NormalizedViewInfo(
+        applied=applied,
+        raw_meta_row_count=raw_meta,
+        normalized_meta_row_count=len(meta_norm),
+        raw_quote_row_count=raw_quotes,
+        normalized_quote_row_count=len(quotes_norm),
+        note=note,
     )
 
 
@@ -485,21 +696,54 @@ def weekly_expiry_verdict(
     blocking: list[str] = []
     warnings: list[str] = []
 
+    if evidence.missing_expiry_without_failure_count:
+        blocking.append(
+            f"{evidence.missing_expiry_without_failure_count} row(s) with null expiry_date "
+            "and null failure_reason"
+        )
+
     if evidence.silent_mismatch_count:
         msg = (
-            f"{evidence.silent_mismatch_count} row(s) with expiry_date != "
-            f"target_weekly_expiry_from_schedule (eligible={evidence.eligible_row_count})"
+            f"{evidence.silent_mismatch_count} silent weekly-expiry fallback row(s) "
+            f"(null failure_reason, non-null expiry != schedule target; "
+            f"eligible={evidence.eligible_row_count})"
         )
         if legacy_mode:
             warnings.append(msg)
         else:
             blocking.append(msg)
 
-    if legacy_mode and evidence.silent_mismatch_count:
-        return "WARN", blocking, warnings
     if blocking:
         return "FAIL", blocking, warnings
+    if warnings:
+        return "WARN", blocking, warnings
     return "PASS", blocking, warnings
+
+
+def legacy_lineage_verdict(
+    *,
+    legacy_mode: bool,
+    historical_producer_commit: str | None,
+) -> tuple[str, list[str], list[str]]:
+    """WARN when legacy cache lineage is unknown."""
+    if not legacy_mode:
+        return "PASS", [], []
+    if historical_producer_commit:
+        return "PASS", [], []
+    warning = (
+        "Historical producer commit and upstream data lineage are unknown "
+        "(not embedded in artifacts)"
+    )
+    return "WARN", [], [warning]
+
+
+def aggregate_c64_verdict(*statuses: str) -> str:
+    """Combine component verdicts into overall PASS/WARN/FAIL."""
+    if "FAIL" in statuses:
+        return "FAIL"
+    if "WARN" in statuses:
+        return "WARN"
+    return "PASS"
 
 
 def triage_meta_duplicates(meta_df: pd.DataFrame) -> DuplicateTriageResult:

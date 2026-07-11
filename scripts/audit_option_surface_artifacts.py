@@ -41,9 +41,13 @@ from src.features.option_surface_contract import (  # noqa: E402
     _to_date,
 )
 from src.features.option_surface_c64_audit import (  # noqa: E402
+    adjust_c64_contract_verdict,
+    aggregate_c64_verdict,
+    build_metrics_normalized_view,
     compute_coverage_metrics,
     compute_weekly_expiry_evidence,
     duplicate_verdict,
+    legacy_lineage_verdict,
     load_bounded_artifacts,
     per_ticker_coverage_from_meta,
     triage_meta_duplicates,
@@ -161,12 +165,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--audit-commit",
         default=None,
-        help="Audit implementation commit SHA for C6.4 lineage",
+        help="C6.4 audit implementation commit SHA for lineage",
     )
     parser.add_argument(
-        "--producer-commit",
+        "--producer-run-head",
         default=None,
-        help="Producer commit SHA for C6.4 lineage (Pass 2)",
+        help="Repository HEAD used when the producer command ran (Pass 2)",
+    )
+    parser.add_argument(
+        "--weekly-expiry-producer-commit",
+        default="af9d9a08772b6e8c82c32acc39cbc84b32bb4326",
+        help="Strict weekly-expiry producer implementation commit SHA",
+    )
+    parser.add_argument(
+        "--historical-producer-commit",
+        default=None,
+        help="Known historical producer commit for legacy cache (omit => lineage unknown WARN)",
     )
     parser.add_argument(
         "--spot-db-path",
@@ -679,9 +693,11 @@ def write_c64_markdown_report(
     pass_label: str,
     inventory: dict[str, Any],
     results: list[ContractCheckResult],
-    contract_overall: str,
+    raw_contract_overall: str,
+    contract_adjustment: Any,
     readiness: ReadinessAuditResult | None,
     coverage: Any,
+    normalized_view: Any,
     meta_triage: Any,
     quote_triage: Any,
     expiry_evidence: Any,
@@ -691,6 +707,8 @@ def write_c64_markdown_report(
     expiry_status: str,
     expiry_blocking: list[str],
     expiry_warnings: list[str],
+    lineage_status: str,
+    lineage_warnings: list[str],
     per_ticker: list[dict[str, Any]],
     tests_run: list[tuple[str, str]],
     audit_command: str,
@@ -698,10 +716,8 @@ def write_c64_markdown_report(
 ) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     audit_commit = args.audit_commit or "(current HEAD at run time)"
-    producer_commit = args.producer_commit or (
-        "unknown (legacy historical cache)" if args.legacy_cache else "(current HEAD at run time)"
-    )
     spot_db = args.spot_db_path or Path("C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet")
+    adjusted_contract = contract_adjustment.adjusted_verdict
 
     lines: list[str] = [
         pass_label,
@@ -714,10 +730,10 @@ def write_c64_markdown_report(
         "",
         "## Scope and lineage",
         "",
-        f"- Audit commit SHA: `{audit_commit}`",
-        f"- Producer implementation commit SHA: `{producer_commit}`",
+        f"- C6.4 audit implementation commit: `{audit_commit}`",
         f"- C6.2 baseline commit SHA: `{args.c6_2_commit}`",
         f"- C6.3 readiness implementation commit SHA: `{args.c63_commit or 'e2ffc2b845cf8162898e7622fada9ff8d08a7711'}`",
+        f"- Strict weekly-expiry producer implementation: `{args.weekly_expiry_producer_commit}`",
         f"- Meta path: `{inventory['meta_path']}`",
         f"- Quotes path: `{inventory['quotes_path']}`",
         f"- Adjusted-liquid data root: `{args.data_root}`",
@@ -728,12 +744,27 @@ def write_c64_markdown_report(
         "",
     ]
     if args.legacy_cache:
+        hist = args.historical_producer_commit or "unknown"
+        lines.append(f"- Historical producer commit: `{hist}`")
         lines.extend(
             [
+                "",
                 "### Legacy lineage note",
                 "",
                 "Historical producer commit and upstream data lineage are **unknown** unless "
-                "embedded elsewhere. Unknown legacy lineage is reported as WARN, not invented.",
+                "recorded via `--historical-producer-commit` or embedded elsewhere. "
+                "Unknown legacy lineage produces WARN, not invented lineage.",
+                "",
+            ]
+        )
+    else:
+        run_head = args.producer_run_head or "(not recorded)"
+        lines.extend(
+            [
+                f"- Repository HEAD when producer ran: `{run_head}`",
+                "",
+                "The smoke run used repository HEAD containing the accepted strict weekly "
+                "producer implementation above.",
                 "",
             ]
         )
@@ -748,18 +779,30 @@ def write_c64_markdown_report(
             "",
             f"- Meta exists: {inventory['meta_exists']}",
             f"- Quotes exists: {inventory['quotes_exists']}",
-            f"- Meta row count (scoped): {inventory['meta_row_count']}",
-            f"- Quotes row count (scoped): {inventory['quotes_row_count']}",
+            f"- Meta row count (scoped, raw): {inventory['meta_row_count']}",
+            f"- Quotes row count (scoped, raw): {inventory['quotes_row_count']}",
             f"- Ticker count: {inventory['ticker_count']}",
             f"- Entry-date range: {inventory['entry_date_min']} .. {inventory['entry_date_max']}",
             f"- Expiry-date range: {inventory['expiry_date_min']} .. {inventory['expiry_date_max']}",
             "",
+            "### Metrics-only normalized view",
+            "",
+            f"- Applied: {normalized_view.applied}",
+            f"- Note: {normalized_view.note}",
+            f"- Raw meta rows: {normalized_view.raw_meta_row_count}",
+            f"- Normalized meta rows (metrics only): {normalized_view.normalized_meta_row_count}",
+            f"- Raw quote rows: {normalized_view.raw_quote_row_count}",
+            f"- Normalized quote rows (metrics only): {normalized_view.normalized_quote_row_count}",
+            "",
             "## Requested versus actual coverage",
+            "",
+            "Coverage and readiness metrics below use the normalized in-memory view when "
+            "identical duplicates are present; raw row counts remain in artifact inventory.",
             "",
             f"| Metric | Value |",
             f"|--------|-------|",
-            f"| Meta row count | {coverage.meta_row_count} |",
-            f"| Quote row count | {coverage.quote_row_count} |",
+            f"| Meta row count (normalized) | {coverage.meta_row_count} |",
+            f"| Quote row count (normalized) | {coverage.quote_row_count} |",
             f"| Ticker count | {coverage.ticker_count} |",
             f"| Entry-date count | {coverage.entry_date_count} |",
             f"| Requested date range | {coverage.requested_start} .. {coverage.requested_end} |",
@@ -783,44 +826,45 @@ def write_c64_markdown_report(
         )
         lines.append("")
 
-    if not args.legacy_cache:
-        lines.extend(
-            [
-                "## Strict weekly-expiry evidence",
-                "",
-                f"- Eligible rows (successor schedule week exists): {expiry_evidence.eligible_row_count}",
-                f"- Exact target matches: {expiry_evidence.exact_target_match_count}",
-                f"- Silent mismatch count: {expiry_evidence.silent_mismatch_count}",
-                f"- no_target_weekly_expiry count: {expiry_evidence.missing_target_failure_count}",
-                f"- target_weekly_expiry_not_listed count: {expiry_evidence.target_not_listed_failure_count}",
-                f"- no_expiries_on_entry_chain count: {expiry_evidence.no_expiries_on_entry_chain_count}",
-                f"- Weekly expiry verdict: **{expiry_status}**",
-                "",
-            ]
-        )
-        for ex in expiry_evidence.mismatch_examples:
-            lines.append(f"- Mismatch example: {ex}")
-        lines.append("")
-    else:
-        lines.extend(
-            [
-                "## Weekly expiry diagnostic",
-                "",
-                f"- Eligible rows: {expiry_evidence.eligible_row_count}",
-                f"- Exact target matches: {expiry_evidence.exact_target_match_count}",
-                f"- Pre-C6.1C silent mismatches (WARN): {expiry_evidence.silent_mismatch_count}",
-                f"- no_target_weekly_expiry: {expiry_evidence.missing_target_failure_count}",
-                f"- target_weekly_expiry_not_listed: {expiry_evidence.target_not_listed_failure_count}",
-                f"- no_expiries_on_entry_chain: {expiry_evidence.no_expiries_on_entry_chain_count}",
-                f"- Diagnostic verdict: **{expiry_status}**",
-                "",
-            ]
-        )
-        for ex in expiry_evidence.mismatch_examples[:10]:
-            lines.append(f"- Example: {ex}")
-        lines.append("")
+    expiry_heading = (
+        "## Weekly expiry diagnostic" if args.legacy_cache else "## Strict weekly-expiry evidence"
+    )
+    lines.extend(
+        [
+            expiry_heading,
+            "",
+            f"- Eligible rows (successor schedule week exists): {expiry_evidence.eligible_row_count}",
+            f"- Exact target matches (null failure_reason, expiry == target): {expiry_evidence.exact_target_match_count}",
+            f"- Silent mismatch count (null failure_reason, non-null expiry != target): {expiry_evidence.silent_mismatch_count}",
+            f"- Documented target failure count: {expiry_evidence.documented_target_failure_count}",
+            f"- Other producer failure count: {expiry_evidence.other_producer_failure_count}",
+            f"- Missing expiry without failure count: {expiry_evidence.missing_expiry_without_failure_count}",
+            f"- no_target_weekly_expiry: {expiry_evidence.no_target_weekly_expiry_count}",
+            f"- target_weekly_expiry_not_listed: {expiry_evidence.target_weekly_expiry_not_listed_count}",
+            f"- no_expiries_on_entry_chain: {expiry_evidence.no_expiries_on_entry_chain_count}",
+            f"- target_weekly_body_not_quotable: {expiry_evidence.target_weekly_body_not_quotable_count}",
+            f"- Weekly expiry verdict: **{expiry_status}**",
+            "",
+        ]
+    )
+    for ex in expiry_evidence.silent_mismatch_examples:
+        lines.append(f"- Silent mismatch example: {ex}")
+    lines.append("")
 
-    lines.extend(["## C6.2 contract results", "", f"- Overall contract verdict: **{contract_overall}**", ""])
+    lines.extend(
+        [
+            "## C6.2 contract results",
+            "",
+            f"- Raw C6.2 contract verdict: **{raw_contract_overall}**",
+        ]
+    )
+    if contract_adjustment.adjustment_notes:
+        for note in contract_adjustment.adjustment_notes:
+            lines.append(f"- C6.4 duplicate-policy adjustment: {note}")
+        lines.append(f"- Adjusted C6.4 contract verdict: **{adjusted_contract}**")
+    else:
+        lines.append(f"- Adjusted C6.4 contract verdict: **{adjusted_contract}** (no policy adjustment)")
+    lines.append("")
     lines.extend(_c64_contract_section(results))
 
     lines.extend(
@@ -896,6 +940,9 @@ def write_c64_markdown_report(
             "",
         ]
     )
+    if readiness and readiness.blocked:
+        lines.append(f"- Readiness blocked: {readiness.block_reason}")
+        lines.append("")
     if readiness and readiness.failure_reason_breakdown:
         lines.append("### Readiness failure breakdown")
         for reason, count in list(readiness.failure_reason_breakdown.items())[:15]:
@@ -920,10 +967,15 @@ def write_c64_markdown_report(
 
     blocking: list[str] = []
     warnings: list[str] = []
-    if contract_overall == "FAIL":
-        blocking.append("C6.2 contract checks failed")
+    if adjusted_contract == "FAIL":
+        blocking.append("Adjusted C6.4 contract checks failed")
+    elif raw_contract_overall == "FAIL" and adjusted_contract != "FAIL":
+        warnings.extend(contract_adjustment.adjustment_notes)
     for result in results:
-        blocking.extend(result.failures)
+        if result.name in {"meta_grain", "quote_grain"} and adjusted_contract != "FAIL":
+            continue
+        if result.status == "FAIL":
+            blocking.extend(result.failures)
         warnings.extend(result.warnings)
     if readiness:
         blocking.extend(readiness.failures)
@@ -932,6 +984,7 @@ def write_c64_markdown_report(
     blocking.extend(expiry_blocking)
     warnings.extend(dup_warnings)
     warnings.extend(expiry_warnings)
+    warnings.extend(lineage_warnings)
     if args.legacy_cache:
         lines.extend(["## Legacy findings", ""])
         for warn in warnings:
@@ -944,12 +997,10 @@ def write_c64_markdown_report(
             lines.append("- (none)")
         lines.append("")
         lines.extend(["## Accepted warnings", ""])
-        legacy_warns = [
-            w for w in warnings
-            if any(k in w.lower() for k in ("identical", "mismatch", "unknown", "legacy", "null"))
-        ]
-        for warn in legacy_warns or warnings:
+        for warn in warnings:
             lines.append(f"- {warn}")
+        if not warnings:
+            lines.append("- (none)")
         lines.append("")
     else:
         lines.extend(["## Blocking failures", ""])
@@ -1131,9 +1182,16 @@ def main(argv: list[str] | None = None) -> int:
     audit_command = " ".join(sys.argv) if sys.argv else "(audit CLI)"
 
     if report_format == "c6.4":
-        assert readiness is not None
         meta_triage = triage_meta_duplicates(meta_df)
         quote_triage = triage_quote_duplicates(quotes_df)
+        contract_adjustment = adjust_c64_contract_verdict(
+            results,
+            meta_triage,
+            quote_triage,
+            legacy_mode=args.legacy_cache,
+        )
+        adjusted_contract = contract_adjustment.adjusted_verdict
+
         dup_status, dup_blocking, dup_warnings = duplicate_verdict(
             meta_triage,
             quote_triage,
@@ -1149,9 +1207,40 @@ def main(argv: list[str] | None = None) -> int:
             expiry_evidence,
             legacy_mode=args.legacy_cache,
         )
-        coverage = compute_coverage_metrics(
+        lineage_status, _, lineage_warnings = legacy_lineage_verdict(
+            legacy_mode=args.legacy_cache,
+            historical_producer_commit=args.historical_producer_commit,
+        )
+
+        readiness_blocked = bool(
+            meta_triage.conflicting_key_count or quote_triage.conflicting_key_count
+        )
+        meta_norm, quotes_norm, normalized_view = build_metrics_normalized_view(
             meta_df,
             quotes_df,
+            meta_triage,
+            quote_triage,
+        )
+
+        if readiness_blocked:
+            readiness = ReadinessAuditResult(
+                rows=[],
+                status="FAIL",
+                blocked=True,
+                block_reason="conflicting duplicate grain groups; readiness unavailable",
+                failures=["readiness blocked due to conflicting duplicates"],
+            )
+        else:
+            readiness = run_readiness_phase(
+                meta_norm,
+                quotes_norm,
+                contract_overall=adjusted_contract,
+                ironfly_symmetry_tolerance=args.ironfly_symmetry_tolerance,
+            )
+
+        coverage = compute_coverage_metrics(
+            meta_norm,
+            quotes_norm,
             readiness.rows,
             requested_start=args.start_date,
             requested_end=args.end_date,
@@ -1159,15 +1248,15 @@ def main(argv: list[str] | None = None) -> int:
             data_root=args.data_root,
             frequency=args.frequency,
         )
-        per_ticker = per_ticker_coverage_from_meta(meta_df, readiness.rows)
+        per_ticker = per_ticker_coverage_from_meta(meta_norm, readiness.rows)
 
-        c64_verdicts = [final_overall, dup_status, expiry_status]
-        if "FAIL" in c64_verdicts:
-            final_overall = "FAIL"
-        elif "WARN" in c64_verdicts:
-            final_overall = "WARN"
-        else:
-            final_overall = "PASS"
+        final_overall = aggregate_c64_verdict(
+            adjusted_contract,
+            dup_status,
+            expiry_status,
+            lineage_status,
+            readiness.status if readiness else "PASS",
+        )
 
         pass_title = (
             "# C6.4 — Existing Real-cache Surface Audit"
@@ -1180,9 +1269,11 @@ def main(argv: list[str] | None = None) -> int:
             pass_label=pass_title,
             inventory=inventory,
             results=results,
-            contract_overall=overall,
+            raw_contract_overall=overall,
+            contract_adjustment=contract_adjustment,
             readiness=readiness,
             coverage=coverage,
+            normalized_view=normalized_view,
             meta_triage=meta_triage,
             quote_triage=quote_triage,
             expiry_evidence=expiry_evidence,
@@ -1192,6 +1283,8 @@ def main(argv: list[str] | None = None) -> int:
             expiry_status=expiry_status,
             expiry_blocking=expiry_blocking,
             expiry_warnings=expiry_warnings,
+            lineage_status=lineage_status,
+            lineage_warnings=lineage_warnings,
             per_ticker=per_ticker,
             tests_run=tests_run,
             audit_command=audit_command,
