@@ -40,6 +40,16 @@ from src.features.option_surface_contract import (  # noqa: E402
     run_contract_checks,
     _to_date,
 )
+from src.features.option_surface_c64_audit import (  # noqa: E402
+    compute_coverage_metrics,
+    compute_weekly_expiry_evidence,
+    duplicate_verdict,
+    load_bounded_artifacts,
+    per_ticker_coverage_from_meta,
+    triage_meta_duplicates,
+    triage_quote_duplicates,
+    weekly_expiry_verdict,
+)
 from src.features.option_surface_readiness import (  # noqa: E402
     DEFAULT_IRONFLY_SYMMETRY_TOLERANCE,
     ReadinessAuditResult,
@@ -136,6 +146,43 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--c63-test-result",
         default="(not run)",
         help="Pytest result line for C6.3 readiness tests",
+    )
+    parser.add_argument(
+        "--report-format",
+        choices=("c6.2", "c6.3", "c6.4"),
+        default=None,
+        help="Report template (default: c6.3 when --include-assembly-readiness else c6.2)",
+    )
+    parser.add_argument(
+        "--legacy-cache",
+        action="store_true",
+        help="C6.4 Pass 1 legacy policy (identical duplicates and expiry mismatches WARN)",
+    )
+    parser.add_argument(
+        "--audit-commit",
+        default=None,
+        help="Audit implementation commit SHA for C6.4 lineage",
+    )
+    parser.add_argument(
+        "--producer-commit",
+        default=None,
+        help="Producer commit SHA for C6.4 lineage (Pass 2)",
+    )
+    parser.add_argument(
+        "--spot-db-path",
+        type=Path,
+        default=None,
+        help="Spot DB path recorded in C6.4 lineage",
+    )
+    parser.add_argument(
+        "--producer-command",
+        default=None,
+        help="Producer command line recorded in C6.4 Pass 2 report",
+    )
+    parser.add_argument(
+        "--c64-test-result",
+        default="(not run)",
+        help="Pytest result line for C6.4 audit helper tests",
     )
     return parser.parse_args(argv)
 
@@ -594,6 +641,351 @@ def write_c63_markdown_report(
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _format_pct(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{100.0 * value:.1f}%"
+
+
+def _resolve_report_format(args: argparse.Namespace) -> str:
+    if args.report_format:
+        return args.report_format
+    if args.include_assembly_readiness:
+        return "c6.3"
+    return "c6.2"
+
+
+def _c64_contract_section(results: list[ContractCheckResult]) -> list[str]:
+    lines: list[str] = []
+    for result in results:
+        lines.append(f"### {result.name}")
+        lines.append(f"- Status: **{result.status}**")
+        for key, val in result.metrics.items():
+            lines.append(f"- {key}: {val}")
+        for failure in result.failures:
+            lines.append(f"- FAIL: {failure}")
+        for warning in result.warnings:
+            lines.append(f"- WARN: {warning}")
+        for ex in result.examples[:5]:
+            lines.append(f"- Example: {ex}")
+        lines.append("")
+    return lines
+
+
+def write_c64_markdown_report(
+    report_path: Path,
+    *,
+    args: argparse.Namespace,
+    pass_label: str,
+    inventory: dict[str, Any],
+    results: list[ContractCheckResult],
+    contract_overall: str,
+    readiness: ReadinessAuditResult | None,
+    coverage: Any,
+    meta_triage: Any,
+    quote_triage: Any,
+    expiry_evidence: Any,
+    dup_status: str,
+    dup_blocking: list[str],
+    dup_warnings: list[str],
+    expiry_status: str,
+    expiry_blocking: list[str],
+    expiry_warnings: list[str],
+    per_ticker: list[dict[str, Any]],
+    tests_run: list[tuple[str, str]],
+    audit_command: str,
+    final_verdict: str,
+) -> None:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    audit_commit = args.audit_commit or "(current HEAD at run time)"
+    producer_commit = args.producer_commit or (
+        "unknown (legacy historical cache)" if args.legacy_cache else "(current HEAD at run time)"
+    )
+    spot_db = args.spot_db_path or Path("C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet")
+
+    lines: list[str] = [
+        pass_label,
+        "",
+        f"**Generated:** {ts}",
+        "",
+        "## Verdict",
+        "",
+        f"**{final_verdict}**",
+        "",
+        "## Scope and lineage",
+        "",
+        f"- Audit commit SHA: `{audit_commit}`",
+        f"- Producer implementation commit SHA: `{producer_commit}`",
+        f"- C6.2 baseline commit SHA: `{args.c6_2_commit}`",
+        f"- C6.3 readiness implementation commit SHA: `{args.c63_commit or 'e2ffc2b845cf8162898e7622fada9ff8d08a7711'}`",
+        f"- Meta path: `{inventory['meta_path']}`",
+        f"- Quotes path: `{inventory['quotes_path']}`",
+        f"- Adjusted-liquid data root: `{args.data_root}`",
+        f"- Spot DB path: `{spot_db}`",
+        f"- Ticker scope: {args.sample_tickers or 'all in window'}",
+        f"- Requested start/end: {args.start_date} .. {args.end_date}",
+        f"- Legacy cache mode: {args.legacy_cache}",
+        "",
+    ]
+    if args.legacy_cache:
+        lines.extend(
+            [
+                "### Legacy lineage note",
+                "",
+                "Historical producer commit and upstream data lineage are **unknown** unless "
+                "embedded elsewhere. Unknown legacy lineage is reported as WARN, not invented.",
+                "",
+            ]
+        )
+    if args.producer_command:
+        lines.extend(["## Producer command", "", "```powershell", args.producer_command, "```", ""])
+
+    lines.extend(["## Audit command", "", "```powershell", audit_command, "```", ""])
+
+    lines.extend(
+        [
+            "## Artifact inventory",
+            "",
+            f"- Meta exists: {inventory['meta_exists']}",
+            f"- Quotes exists: {inventory['quotes_exists']}",
+            f"- Meta row count (scoped): {inventory['meta_row_count']}",
+            f"- Quotes row count (scoped): {inventory['quotes_row_count']}",
+            f"- Ticker count: {inventory['ticker_count']}",
+            f"- Entry-date range: {inventory['entry_date_min']} .. {inventory['entry_date_max']}",
+            f"- Expiry-date range: {inventory['expiry_date_min']} .. {inventory['expiry_date_max']}",
+            "",
+            "## Requested versus actual coverage",
+            "",
+            f"| Metric | Value |",
+            f"|--------|-------|",
+            f"| Meta row count | {coverage.meta_row_count} |",
+            f"| Quote row count | {coverage.quote_row_count} |",
+            f"| Ticker count | {coverage.ticker_count} |",
+            f"| Entry-date count | {coverage.entry_date_count} |",
+            f"| Requested date range | {coverage.requested_start} .. {coverage.requested_end} |",
+            f"| Resolved schedule range | {coverage.schedule_min} .. {coverage.schedule_max} |",
+            f"| Actual meta entry range | {coverage.meta_entry_min} .. {coverage.meta_entry_max} |",
+            f"| Actual quote entry range | {coverage.quote_entry_min} .. {coverage.quote_entry_max} |",
+            f"| Actual expiry range | {coverage.expiry_min} .. {coverage.expiry_max} |",
+            f"| surface_valid count/rate | {coverage.surface_valid_count} / {_format_pct(coverage.surface_valid_rate)} |",
+            f"| straddle_ready count/rate | {coverage.straddle_ready_count} / {_format_pct(coverage.straddle_ready_rate)} |",
+            f"| ironfly_candidate_ready count/rate | {coverage.ironfly_candidate_ready_count} / {_format_pct(coverage.ironfly_candidate_ready_rate)} |",
+            f"| ironcondor_candidate_ready count/rate | {coverage.ironcondor_candidate_ready_count} / {_format_pct(coverage.ironcondor_candidate_ready_rate)} |",
+            f"| straddle_ready (among surface_valid) | {_format_pct(coverage.straddle_ready_among_surface_valid_rate)} |",
+            f"| ironfly_ready (among surface_valid) | {_format_pct(coverage.ironfly_ready_among_surface_valid_rate)} |",
+            f"| ironcondor_ready (among surface_valid) | {_format_pct(coverage.ironcondor_ready_among_surface_valid_rate)} |",
+            "",
+        ]
+    )
+    if coverage.absent_requested_tickers:
+        lines.append(
+            f"- Absent requested tickers: {', '.join(coverage.absent_requested_tickers)}"
+        )
+        lines.append("")
+
+    if not args.legacy_cache:
+        lines.extend(
+            [
+                "## Strict weekly-expiry evidence",
+                "",
+                f"- Eligible rows (successor schedule week exists): {expiry_evidence.eligible_row_count}",
+                f"- Exact target matches: {expiry_evidence.exact_target_match_count}",
+                f"- Silent mismatch count: {expiry_evidence.silent_mismatch_count}",
+                f"- no_target_weekly_expiry count: {expiry_evidence.missing_target_failure_count}",
+                f"- target_weekly_expiry_not_listed count: {expiry_evidence.target_not_listed_failure_count}",
+                f"- no_expiries_on_entry_chain count: {expiry_evidence.no_expiries_on_entry_chain_count}",
+                f"- Weekly expiry verdict: **{expiry_status}**",
+                "",
+            ]
+        )
+        for ex in expiry_evidence.mismatch_examples:
+            lines.append(f"- Mismatch example: {ex}")
+        lines.append("")
+    else:
+        lines.extend(
+            [
+                "## Weekly expiry diagnostic",
+                "",
+                f"- Eligible rows: {expiry_evidence.eligible_row_count}",
+                f"- Exact target matches: {expiry_evidence.exact_target_match_count}",
+                f"- Pre-C6.1C silent mismatches (WARN): {expiry_evidence.silent_mismatch_count}",
+                f"- no_target_weekly_expiry: {expiry_evidence.missing_target_failure_count}",
+                f"- target_weekly_expiry_not_listed: {expiry_evidence.target_not_listed_failure_count}",
+                f"- no_expiries_on_entry_chain: {expiry_evidence.no_expiries_on_entry_chain_count}",
+                f"- Diagnostic verdict: **{expiry_status}**",
+                "",
+            ]
+        )
+        for ex in expiry_evidence.mismatch_examples[:10]:
+            lines.append(f"- Example: {ex}")
+        lines.append("")
+
+    lines.extend(["## C6.2 contract results", "", f"- Overall contract verdict: **{contract_overall}**", ""])
+    lines.extend(_c64_contract_section(results))
+
+    lines.extend(
+        [
+            "## Duplicate triage",
+            "",
+            f"- Duplicate triage verdict: **{dup_status}**",
+            "",
+            "### A1 grain (ticker, entry_date)",
+            f"- duplicate key count: {meta_triage.duplicate_key_count}",
+            f"- duplicate row count: {meta_triage.duplicate_row_count}",
+            f"- affected ticker count: {meta_triage.affected_ticker_count}",
+            f"- affected date count: {meta_triage.affected_date_count}",
+            f"- IDENTICAL_DUPLICATE keys: {meta_triage.identical_key_count}",
+            f"- CONFLICTING_DUPLICATE keys: {meta_triage.conflicting_key_count}",
+            "",
+            "### A2 grain (ticker, entry_date, expiry_date, strike, side)",
+            f"- duplicate key count: {quote_triage.duplicate_key_count}",
+            f"- duplicate row count: {quote_triage.duplicate_row_count}",
+            f"- affected ticker count: {quote_triage.affected_ticker_count}",
+            f"- affected date count: {quote_triage.affected_date_count}",
+            f"- IDENTICAL_DUPLICATE keys: {quote_triage.identical_key_count}",
+            f"- CONFLICTING_DUPLICATE keys: {quote_triage.conflicting_key_count}",
+            "",
+        ]
+    )
+    for triage in (meta_triage, quote_triage):
+        for group in triage.groups[:10]:
+            lines.append(
+                f"- {group.classification}: {group.grain_label} key={group.key} "
+                f"rows={group.row_count}"
+                + (f" differing={group.differing_columns}" if group.differing_columns else "")
+            )
+    for warn in dup_warnings:
+        lines.append(f"- WARN: {warn}")
+    for fail in dup_blocking:
+        lines.append(f"- FAIL: {fail}")
+    lines.append("")
+
+    vocabulary = _result_by_name(results, "failure_vocabulary")
+    failure_heading = (
+        "## Failure vocabulary and validity" if args.legacy_cache else "## Failure breakdown"
+    )
+    lines.extend([failure_heading, ""])
+    if vocabulary:
+        lines.append(f"- Known tags: {vocabulary.metrics.get('known_tags')}")
+        lines.append(f"- Unknown tag count: {vocabulary.metrics.get('unknown_tag_count')}")
+        lines.append(f"- Failure breakdown: {vocabulary.metrics.get('failure_breakdown')}")
+    lines.append("")
+
+    settlement = _result_by_name(results, "settlement_readiness")
+    lines.extend(["## Settlement readiness", ""])
+    if settlement:
+        for key, val in settlement.metrics.items():
+            lines.append(f"- {key}: {val}")
+        for ex in settlement.examples[:5]:
+            lines.append(f"- Example: {ex}")
+    lines.append("")
+
+    metrics = readiness.metrics if readiness else {}
+    lines.extend(
+        [
+            "## C6.3 assembly readiness",
+            "",
+            f"- Readiness verdict: **{readiness.status if readiness else 'SKIPPED'}**",
+            f"- body_pair_ready: {metrics.get('body_pair_ready_count', 'n/a')} ({_format_pct(metrics.get('body_pair_ready_rate'))})",
+            f"- straddle_ready: {metrics.get('straddle_ready_count', 'n/a')} ({_format_pct(metrics.get('straddle_ready_rate'))})",
+            f"- otm_call_wing_available: {metrics.get('otm_call_wing_available_count', 'n/a')}",
+            f"- otm_put_wing_available: {metrics.get('otm_put_wing_available_count', 'n/a')}",
+            f"- ironfly_candidate_ready: {metrics.get('ironfly_candidate_ready_count', 'n/a')} ({_format_pct(metrics.get('ironfly_candidate_ready_rate'))})",
+            f"- symmetric_ironfly_pair_available (informational): {metrics.get('symmetric_ironfly_pair_available_count', 'n/a')}",
+            f"- ironcondor_candidate_ready: {metrics.get('ironcondor_candidate_ready_count', 'n/a')} ({_format_pct(metrics.get('ironcondor_candidate_ready_rate'))})",
+            "",
+        ]
+    )
+    if readiness and readiness.failure_reason_breakdown:
+        lines.append("### Readiness failure breakdown")
+        for reason, count in list(readiness.failure_reason_breakdown.items())[:15]:
+            lines.append(f"- {reason}: {count}")
+        lines.append("")
+
+    lines.extend(["## Per-ticker coverage", ""])
+    lines.append(
+        "| ticker | attempted | surface_valid | straddle | iron-fly | iron-condor | top failure |"
+    )
+    lines.append("|--------|-----------|---------------|----------|----------|-------------|-------------|")
+    for row in per_ticker:
+        lines.append(
+            f"| {row['ticker']} | {row['attempted_surface_count']} | "
+            f"{row['surface_valid_count']} ({_format_pct(row['surface_valid_rate'])}) | "
+            f"{row['straddle_ready_count']} ({_format_pct(row['straddle_ready_rate'])}) | "
+            f"{row['ironfly_ready_count']} ({_format_pct(row['ironfly_ready_rate'])}) | "
+            f"{row['ironcondor_ready_count']} ({_format_pct(row['ironcondor_ready_rate'])}) | "
+            f"{row['top_failure_reason']} |"
+        )
+    lines.append("")
+
+    blocking: list[str] = []
+    warnings: list[str] = []
+    if contract_overall == "FAIL":
+        blocking.append("C6.2 contract checks failed")
+    for result in results:
+        blocking.extend(result.failures)
+        warnings.extend(result.warnings)
+    if readiness:
+        blocking.extend(readiness.failures)
+        warnings.extend(readiness.warnings)
+    blocking.extend(dup_blocking)
+    blocking.extend(expiry_blocking)
+    warnings.extend(dup_warnings)
+    warnings.extend(expiry_warnings)
+    if args.legacy_cache:
+        lines.extend(["## Legacy findings", ""])
+        for warn in warnings:
+            lines.append(f"- {warn}")
+        lines.append("")
+        lines.extend(["## Blocking failures", ""])
+        for fail in blocking:
+            lines.append(f"- {fail}")
+        if not blocking:
+            lines.append("- (none)")
+        lines.append("")
+        lines.extend(["## Accepted warnings", ""])
+        legacy_warns = [
+            w for w in warnings
+            if any(k in w.lower() for k in ("identical", "mismatch", "unknown", "legacy", "null"))
+        ]
+        for warn in legacy_warns or warnings:
+            lines.append(f"- {warn}")
+        lines.append("")
+    else:
+        lines.extend(["## Blocking failures", ""])
+        for fail in blocking:
+            lines.append(f"- {fail}")
+        if not blocking:
+            lines.append("- (none)")
+        lines.append("")
+        lines.extend(["## Warnings", ""])
+        for warn in warnings:
+            lines.append(f"- {warn}")
+        if not warnings:
+            lines.append("- (none)")
+        lines.append("")
+
+    lines.extend(["## Commands and tests" if args.legacy_cache else "## Tests", ""])
+    for cmd, result_line in tests_run:
+        lines.append(f"```powershell\n{cmd}\n```")
+        lines.append(f"Result: {result_line}")
+        lines.append("")
+
+    lines.extend(
+        [
+            "## Conclusion",
+            "",
+            f"C6.4 {('legacy real-cache' if args.legacy_cache else 'fresh smoke')} audit "
+            f"completed with verdict **{final_verdict}**. "
+            "This report supplies real-artifact evidence only; it does not establish "
+            "strategy backtest readiness.",
+            "",
+        ]
+    )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def run_readiness_phase(
     meta_df: pd.DataFrame,
     quotes_df: pd.DataFrame,
@@ -635,6 +1027,9 @@ def audit_artifacts(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    report_format = _resolve_report_format(args)
+    if report_format == "c6.4":
+        args.include_assembly_readiness = True
 
     if not args.meta_path.exists():
         logger.error("Meta artifact not found: %s", args.meta_path)
@@ -646,16 +1041,25 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("--data-root is required when --frequency weekly")
         return 2
 
-    meta_df = pd.read_parquet(args.meta_path)
-    quotes_df = pd.read_parquet(args.quotes_path)
-    meta_df, quotes_df = filter_artifacts(
-        meta_df,
-        quotes_df,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        sample_tickers=args.sample_tickers,
-        max_rows=args.max_rows,
-    )
+    if report_format == "c6.4":
+        meta_df, quotes_df = load_bounded_artifacts(
+            args.meta_path,
+            args.quotes_path,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            sample_tickers=args.sample_tickers,
+        )
+    else:
+        meta_df = pd.read_parquet(args.meta_path)
+        quotes_df = pd.read_parquet(args.quotes_path)
+        meta_df, quotes_df = filter_artifacts(
+            meta_df,
+            quotes_df,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            sample_tickers=args.sample_tickers,
+            max_rows=args.max_rows,
+        )
 
     results = audit_artifacts(
         meta_df,
@@ -715,8 +1119,85 @@ def main(argv: list[str] | None = None) -> int:
                 args.c63_test_result,
             )
         )
+    if report_format == "c6.4":
+        tests_run.append(
+            (
+                "C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest "
+                "tests/unit/test_option_surface_c64_audit.py -q",
+                getattr(args, "c64_test_result", "(not run)"),
+            )
+        )
 
-    if args.include_assembly_readiness:
+    audit_command = " ".join(sys.argv) if sys.argv else "(audit CLI)"
+
+    if report_format == "c6.4":
+        assert readiness is not None
+        meta_triage = triage_meta_duplicates(meta_df)
+        quote_triage = triage_quote_duplicates(quotes_df)
+        dup_status, dup_blocking, dup_warnings = duplicate_verdict(
+            meta_triage,
+            quote_triage,
+            legacy_mode=args.legacy_cache,
+        )
+        expiry_evidence = compute_weekly_expiry_evidence(
+            meta_df,
+            data_root=args.data_root,
+            start_date=args.start_date,
+            end_date=args.end_date,
+        )
+        expiry_status, expiry_blocking, expiry_warnings = weekly_expiry_verdict(
+            expiry_evidence,
+            legacy_mode=args.legacy_cache,
+        )
+        coverage = compute_coverage_metrics(
+            meta_df,
+            quotes_df,
+            readiness.rows,
+            requested_start=args.start_date,
+            requested_end=args.end_date,
+            requested_tickers=args.sample_tickers,
+            data_root=args.data_root,
+            frequency=args.frequency,
+        )
+        per_ticker = per_ticker_coverage_from_meta(meta_df, readiness.rows)
+
+        c64_verdicts = [final_overall, dup_status, expiry_status]
+        if "FAIL" in c64_verdicts:
+            final_overall = "FAIL"
+        elif "WARN" in c64_verdicts:
+            final_overall = "WARN"
+        else:
+            final_overall = "PASS"
+
+        pass_title = (
+            "# C6.4 — Existing Real-cache Surface Audit"
+            if args.legacy_cache
+            else "# C6.4 — Fresh C6 Surface Smoke Audit"
+        )
+        write_c64_markdown_report(
+            args.output_report,
+            args=args,
+            pass_label=pass_title,
+            inventory=inventory,
+            results=results,
+            contract_overall=overall,
+            readiness=readiness,
+            coverage=coverage,
+            meta_triage=meta_triage,
+            quote_triage=quote_triage,
+            expiry_evidence=expiry_evidence,
+            dup_status=dup_status,
+            dup_blocking=dup_blocking,
+            dup_warnings=dup_warnings,
+            expiry_status=expiry_status,
+            expiry_blocking=expiry_blocking,
+            expiry_warnings=expiry_warnings,
+            per_ticker=per_ticker,
+            tests_run=tests_run,
+            audit_command=audit_command,
+            final_verdict=final_overall,
+        )
+    elif args.include_assembly_readiness:
         files_changed = [
             "src/features/option_surface_readiness.py",
             "scripts/audit_option_surface_artifacts.py",
