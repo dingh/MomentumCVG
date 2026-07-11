@@ -89,6 +89,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Exit 1 when overall verdict is WARN",
     )
+    parser.add_argument(
+        "--c6-2-commit",
+        default="ffb6ae94d33515971905f54b7a9db5af5bec6ff9",
+        help="Baseline C6.2 commit SHA recorded in the report",
+    )
+    parser.add_argument(
+        "--c61-regression-result",
+        default="(not run)",
+        help="Pytest result line for C6.1 regression suite",
+    )
+    parser.add_argument(
+        "--c62-test-result",
+        default="(not run)",
+        help="Pytest result line for C6.2 contract/audit tests",
+    )
     return parser.parse_args(argv)
 
 
@@ -130,14 +145,16 @@ def write_markdown_report(
     inventory: dict[str, Any],
     results: list[ContractCheckResult],
     overall: str,
-    tests_run: list[str],
+    tests_run: list[tuple[str, str]],
     files_changed: list[str],
+    c6_2_commit: str | None = None,
 ) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     schema = _result_by_name(results, "schema_checks")
     invariant = _result_by_name(results, "surface_valid_invariant")
     vocabulary = _result_by_name(results, "failure_vocabulary")
     settlement = _result_by_name(results, "settlement_readiness")
+    meta_grain = _result_by_name(results, "meta_grain")
     join = _result_by_name(results, "a1_a2_join_integrity")
     grain = _result_by_name(results, "quote_grain")
     alignment = _result_by_name(results, "date_alignment")
@@ -146,6 +163,11 @@ def write_markdown_report(
         "# C6.2 — Surface Artifact Contract and Audit Foundation",
         "",
         f"**Generated:** {ts}",
+    ]
+    if c6_2_commit:
+        lines.extend(["", f"**C6.2 commit:** `{c6_2_commit}`"])
+    lines.extend(
+        [
         "",
         "## Verdict",
         "",
@@ -156,6 +178,7 @@ def write_markdown_report(
         "### Files changed",
         "",
     ]
+    )
     for path in files_changed:
         lines.append(f"- `{path}`")
     lines.extend(
@@ -169,7 +192,8 @@ def write_markdown_report(
             "### Read-only guarantee",
             "",
             "This audit only reads parquet inputs and writes a markdown report. "
-            "No parquet mutation, no backfill, no raw ORATS access.",
+            "No parquet mutation, no backfill. "
+            "No raw ORATS access; weekly date alignment reads adjusted-liquid file presence only.",
             "",
             "## Artifact inventory",
             "",
@@ -223,6 +247,16 @@ def write_markdown_report(
             lines.append("- Examples:")
             for ex in settlement.examples:
                 lines.append(f"  - {ex}")
+    lines.extend(["", "## A1 metadata grain", ""])
+    if meta_grain:
+        lines.append(f"- Grain: {meta_grain.metrics.get('grain')}")
+        lines.append(f"- Metadata row count: {meta_grain.metrics.get('meta_row_count')}")
+        lines.append(f"- Duplicate row count: {meta_grain.metrics.get('duplicate_row_count')}")
+        lines.append(f"- Duplicate key count: {meta_grain.metrics.get('duplicate_key_count')}")
+        if meta_grain.examples:
+            lines.append("- Examples:")
+            for ex in meta_grain.examples:
+                lines.append(f"  - {ex}")
     lines.extend(["", "## A1/A2 join integrity", ""])
     if join:
         lines.append(f"- Orphan quote rows: {join.metrics.get('orphan_quote_count')}")
@@ -261,8 +295,10 @@ def write_markdown_report(
                 for ex in alignment.examples:
                     lines.append(f"  - {ex}")
     lines.extend(["", "## Tests", ""])
-    for cmd in tests_run:
+    for cmd, result_line in tests_run:
         lines.append(f"```powershell\n{cmd}\n```")
+        lines.append(f"Result: {result_line}")
+        lines.append("")
     lines.extend(
         [
             "",
@@ -349,20 +385,25 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     tests_run = [
-        "C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest "
-        "tests/unit/test_option_surface_weekly_expiry.py "
-        "tests/unit/test_precompute_option_surface_cli.py "
-        "tests/unit/test_diagnose_weekly_expiry_policy.py -q",
-        "C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest "
-        "tests/unit/test_option_surface_contract.py "
-        "tests/unit/test_audit_option_surface_artifacts.py -q",
+        (
+            "C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest "
+            "tests/unit/test_option_surface_weekly_expiry.py "
+            "tests/unit/test_precompute_option_surface_cli.py "
+            "tests/unit/test_diagnose_weekly_expiry_policy.py -q",
+            args.c61_regression_result,
+        ),
+        (
+            "C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest "
+            "tests/unit/test_option_surface_contract.py "
+            "tests/unit/test_audit_option_surface_artifacts.py -q",
+            args.c62_test_result,
+        ),
     ]
     files_changed = [
         "src/features/option_surface_contract.py",
         "scripts/audit_option_surface_artifacts.py",
-        "src/features/option_surface_analyzer.py",
         "tests/unit/test_option_surface_contract.py",
-        "tests/unit/test_audit_option_surface_artifacts.py",
+        "docs/tmp/c6_2_surface_artifact_contract_report.md",
     ]
 
     write_markdown_report(
@@ -373,6 +414,7 @@ def main(argv: list[str] | None = None) -> int:
         overall=overall,
         tests_run=tests_run,
         files_changed=files_changed,
+        c6_2_commit=args.c6_2_commit,
     )
     logger.info("Wrote report: %s", args.output_report)
     logger.info("Overall verdict: %s", overall)

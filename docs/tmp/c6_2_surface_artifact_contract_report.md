@@ -1,6 +1,8 @@
 # C6.2 — Surface Artifact Contract and Audit Foundation
 
-**Generated:** 2026-07-11 02:19:41 UTC
+**Generated:** 2026-07-11 04:17:10 UTC
+
+**C6.2 commit:** `ffb6ae94d33515971905f54b7a9db5af5bec6ff9`
 
 ## Verdict
 
@@ -12,9 +14,8 @@
 
 - `src/features/option_surface_contract.py`
 - `scripts/audit_option_surface_artifacts.py`
-- `src/features/option_surface_analyzer.py`
 - `tests/unit/test_option_surface_contract.py`
-- `tests/unit/test_audit_option_surface_artifacts.py`
+- `docs/tmp/c6_2_surface_artifact_contract_report.md`
 
 ### Artifacts audited
 
@@ -23,7 +24,7 @@
 
 ### Read-only guarantee
 
-This audit only reads parquet inputs and writes a markdown report. No parquet mutation, no backfill, no raw ORATS access.
+This audit only reads parquet inputs and writes a markdown report. No parquet mutation, no backfill. No raw ORATS access; weekly date alignment reads adjusted-liquid file presence only.
 
 ## Artifact inventory
 
@@ -59,6 +60,13 @@ This audit only reads parquet inputs and writes a markdown report. No parquet mu
 - Valid row count: 8
 - dte_actual mismatch count: 0
 
+## A1 metadata grain
+
+- Grain: ['ticker', 'entry_date']
+- Metadata row count: 8
+- Duplicate row count: 0
+- Duplicate key count: 0
+
 ## A1/A2 join integrity
 
 - Orphan quote rows: 0
@@ -81,9 +89,13 @@ This audit only reads parquet inputs and writes a markdown report. No parquet mu
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_weekly_expiry.py tests/unit/test_precompute_option_surface_cli.py tests/unit/test_diagnose_weekly_expiry_policy.py -q
 ```
+Result: 41 passed
+
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_contract.py tests/unit/test_audit_option_surface_artifacts.py -q
 ```
+Result: 30 passed
+
 
 ## Remaining limitations
 
@@ -98,6 +110,7 @@ C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surf
 - **surface_valid_invariant**: PASS
 - **failure_vocabulary**: PASS
 - **settlement_readiness**: PASS
+- **meta_grain**: PASS
 - **a1_a2_join_integrity**: PASS
 - **quote_grain**: PASS
 - **date_alignment**: PASS

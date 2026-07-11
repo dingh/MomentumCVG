@@ -18,12 +18,14 @@ from src.features.option_surface_contract import (
     SURFACE_QUOTES_REQUIRED_COLUMNS,
     check_a1_a2_join,
     check_failure_vocabulary,
+    check_meta_grain,
     check_quote_grain,
     check_required_columns,
     check_settlement_fields,
     check_surface_valid_invariant,
     check_weekly_date_alignment,
     compute_overall_verdict,
+    run_contract_checks,
 )
 
 
@@ -240,6 +242,51 @@ def test_duplicate_quote_grain_fails():
     result = check_quote_grain(quotes)
     assert result.status == "FAIL"
     assert result.metrics["duplicate_key_count"] == 1
+
+
+def test_clean_metadata_grain_passes():
+    meta = pd.DataFrame([_meta_row(), _meta_row(ticker="MSFT", entry_date=date(2024, 1, 12))])
+    result = check_meta_grain(meta)
+    assert result.status == "PASS"
+    assert result.metrics["duplicate_key_count"] == 0
+
+
+def test_duplicate_metadata_grain_fails():
+    meta = pd.DataFrame([_meta_row(), _meta_row()])
+    result = check_meta_grain(meta)
+    assert result.status == "FAIL"
+    assert result.metrics["duplicate_key_count"] == 1
+
+
+def test_duplicate_metadata_grain_different_expiry_still_fails():
+    meta = pd.DataFrame(
+        [
+            _meta_row(expiry_date=date(2024, 1, 12)),
+            _meta_row(expiry_date=date(2024, 1, 19)),
+        ]
+    )
+    result = check_meta_grain(meta)
+    assert result.status == "FAIL"
+    assert result.metrics["duplicate_key_count"] == 1
+
+
+def test_missing_metadata_grain_column_fails():
+    meta = pd.DataFrame([{k: v for k, v in _meta_row().items() if k != "entry_date"}])
+    result = check_meta_grain(meta)
+    assert result.status == "FAIL"
+    assert "entry_date" in result.failures[0]
+
+
+def test_overall_verdict_fails_when_meta_grain_fails():
+    meta = pd.DataFrame([_meta_row(), _meta_row()])
+    quotes = pd.DataFrame([_quote_row()])
+    results = run_contract_checks(
+        meta,
+        quotes,
+        frequency="monthly",
+    )
+    assert check_meta_grain(meta).status == "FAIL"
+    assert compute_overall_verdict(results) == "FAIL"
 
 
 def test_valid_row_dte_actual_mismatch_fails():

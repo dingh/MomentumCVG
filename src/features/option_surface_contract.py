@@ -60,6 +60,11 @@ QUOTE_GRAIN_COLUMNS = (
     "side",
 )
 
+META_GRAIN_COLUMNS = (
+    "ticker",
+    "entry_date",
+)
+
 SETTLEMENT_FIELDS = (
     "expiry_date",
     "entry_spot",
@@ -397,6 +402,44 @@ def check_a1_a2_join(
     return result
 
 
+def check_meta_grain(meta_df: pd.DataFrame) -> ContractCheckResult:
+    """Detect duplicate metadata rows at the A1 grain (one row per ticker-entry)."""
+    missing = [col for col in META_GRAIN_COLUMNS if col not in meta_df.columns]
+    if missing:
+        return ContractCheckResult(
+            name="meta_grain",
+            status="FAIL",
+            failures=[f"meta missing grain columns: {missing}"],
+        )
+
+    meta = _normalize_key_columns(meta_df, META_GRAIN_COLUMNS)
+    grain = meta[list(META_GRAIN_COLUMNS)]
+    dup_mask = grain.duplicated(keep=False)
+    dup_count = int(dup_mask.sum())
+    unique_violations = int(grain.duplicated(keep="first").sum())
+
+    result = ContractCheckResult(
+        name="meta_grain",
+        status="PASS",
+        metrics={
+            "meta_row_count": len(meta_df),
+            "duplicate_row_count": dup_count,
+            "duplicate_key_count": unique_violations,
+            "grain": list(META_GRAIN_COLUMNS),
+        },
+    )
+    if unique_violations:
+        result.status = "FAIL"
+        result.failures.append(
+            f"{unique_violations} duplicate metadata key(s) at grain {list(META_GRAIN_COLUMNS)}"
+        )
+        for _, row in grain[grain.duplicated(keep="first")].head(5).iterrows():
+            result.examples.append(
+                f"duplicate: ticker={row['ticker']} entry_date={row['entry_date']}"
+            )
+    return result
+
+
 def check_quote_grain(quotes_df: pd.DataFrame) -> ContractCheckResult:
     """Detect duplicate quote rows at the stable A2 grain."""
     missing = [col for col in QUOTE_GRAIN_COLUMNS if col not in quotes_df.columns]
@@ -508,6 +551,7 @@ def run_contract_checks(
         check_surface_valid_invariant(meta_df),
         check_failure_vocabulary(meta_df),
         check_settlement_fields(meta_df),
+        check_meta_grain(meta_df),
         check_a1_a2_join(meta_df, quotes_df),
         check_quote_grain(quotes_df),
     ]
