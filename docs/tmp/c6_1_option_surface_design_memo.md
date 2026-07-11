@@ -7,6 +7,8 @@
 
 **Status:** C6.1 design accepted — implementation-ready cleanup (2026-07-07)
 
+**C6 closeout memo:** [docs/sprint_memos/004_c6_option_surface.md](../sprint_memos/004_c6_option_surface.md) (closed 2026-07-11)
+
 ---
 
 ## Scope and non-goals
