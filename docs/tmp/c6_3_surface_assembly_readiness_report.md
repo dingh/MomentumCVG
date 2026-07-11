@@ -1,8 +1,6 @@
 # C6.3 — Surface Assembly-Readiness Audit
 
-**Generated:** 2026-07-11 04:29:40 UTC
-
-**Commit:** `bd32a15`
+**Generated:** 2026-07-11 04:52:43 UTC
 
 ## Verdict
 
@@ -31,8 +29,8 @@ This audit only reads parquet inputs and writes a markdown report. No parquet mu
 - ``build_ironfly_from_surface``: long OTM put / short ATM put / short ATM call / long OTM call.
 - Body legs from ``is_body`` quotes; wings from ``is_otm`` quotes on each side.
 - Wing selection uses ``abs_delta`` vs ``wing_target_delta`` at assembly time (not a C6.3 gate).
-- C6.3 structural rule: body pair + quotable OTM wings + at least one symmetric wing pair
-  (``call_strike - body_strike ≈ body_strike - put_strike`` within tolerance).
+- C6.3 structural rule: body pair + at least one quotable OTM call wing + at least one
+  quotable OTM put wing. Symmetric wing distance is informational only.
 
 ### Iron-condor leg requirements
 - ``build_ironcondor_from_surface``: long OTM put / short nearer put / short nearer call / long OTM call.
@@ -59,6 +57,7 @@ This audit only reads parquet inputs and writes a markdown report. No parquet mu
 
 ## Body-pair consistency
 
+- A1 has_body_call and has_body_put must agree exactly with quotable A2 body-leg availability in both directions.
 - Surfaces with body/A1 inconsistencies: 0
 
 ## Straddle readiness
@@ -78,10 +77,18 @@ This audit only reads parquet inputs and writes a markdown report. No parquet mu
 
 ### Definition
 
-body_pair_ready AND quotable OTM call/put wings AND ≥1 symmetric wing pair (tolerance=0.0).
+body_pair_ready AND at least one quotable OTM call wing AND at least one quotable OTM put wing.
 
 - ironfly_candidate_ready: 8 (100.0%)
 - Conditional (among surface_valid): 100.0%
+
+### Symmetric-wing informational metric
+
+Symmetric wing distance is not required by the current downstream iron-fly assembler. It is reported only as an informational structural characteristic.
+
+- symmetric_ironfly_pair_available: 8 (100.0%)
+- symmetric_ironfly_pair_count: 43
+- Symmetry tolerance: 0.0
 
 ## Iron-condor candidate readiness
 
@@ -111,12 +118,12 @@ Result: 41 passed
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_contract.py tests/unit/test_audit_option_surface_artifacts.py -q
 ```
-Result: 32 passed (contract 25 + audit 7)
+Result: 32 passed
 
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_readiness.py -q
 ```
-Result: 32 passed
+Result: 39 passed
 
 
 ## Remaining limitations

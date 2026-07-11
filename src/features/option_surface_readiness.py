@@ -9,8 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
 
-# Default iron-fly wing symmetry tolerance (strike units).  Exact symmetry
-# (0.0) is preferred when strike grids permit; callers may override via CLI.
+# Default iron-fly wing symmetry tolerance (strike units).  This is an
+# informational structural metric; downstream iron-fly assembly does not require
+# symmetric wing distances.
 DEFAULT_IRONFLY_SYMMETRY_TOLERANCE = 0.0
 
 SURFACE_KEY_COLUMNS = ("ticker", "entry_date", "expiry_date")
@@ -53,6 +54,8 @@ class SurfaceReadinessRow:
     otm_call_wing_available: bool
     otm_put_wing_available: bool
     otm_wing_pair_available: bool
+    symmetric_ironfly_pair_count: int
+    symmetric_ironfly_pair_available: bool
     ironfly_candidate_pair_count: int
     ironfly_candidate_ready: bool
     ironcondor_candidate_count: int
@@ -275,9 +278,12 @@ def compute_surface_readiness(
     body_pair_ready = len(quotable_body_calls) >= 1 and len(quotable_body_puts) >= 1
     straddle_ready = body_pair_ready
 
-    if has_body_call and not quotable_body_calls:
+    a2_has_body_call = len(quotable_body_calls) == 1
+    a2_has_body_put = len(quotable_body_puts) == 1
+
+    if has_body_call != a2_has_body_call:
         consistency_failures.append("body_flag_mismatch")
-    if has_body_put and not quotable_body_puts:
+    if has_body_put != a2_has_body_put:
         consistency_failures.append("body_flag_mismatch")
     if surface_valid and not body_pair_ready:
         consistency_failures.append("surface_valid_body_contradiction")
@@ -300,17 +306,16 @@ def compute_surface_readiness(
         if not quotable_body_puts:
             readiness_reasons.append("missing_body_put")
 
-    ironfly_pairs = 0
+    symmetric_ironfly_pairs = 0
     if body_pair_ready and otm_wing_pair_available:
-        ironfly_pairs = count_symmetric_ironfly_pairs(
+        symmetric_ironfly_pairs = count_symmetric_ironfly_pairs(
             otm_call_wings,
             otm_put_wings,
             body_strike,
             symmetry_tolerance=ironfly_symmetry_tolerance,
         )
-    ironfly_ready = body_pair_ready and ironfly_pairs > 0
-    if body_pair_ready and otm_wing_pair_available and ironfly_pairs == 0:
-        readiness_reasons.append("no_symmetric_ironfly_pair")
+    symmetric_ironfly_pair_available = symmetric_ironfly_pairs > 0
+    ironfly_ready = body_pair_ready and otm_wing_pair_available
 
     quotable_puts = [q for q in quotes if q.side == "put" and is_quotable(q.bid, q.ask, q.mid)]
     quotable_calls = [q for q in quotes if q.side == "call" and is_quotable(q.bid, q.ask, q.mid)]
@@ -341,7 +346,9 @@ def compute_surface_readiness(
         otm_call_wing_available=otm_call_wing_available,
         otm_put_wing_available=otm_put_wing_available,
         otm_wing_pair_available=otm_wing_pair_available,
-        ironfly_candidate_pair_count=ironfly_pairs,
+        symmetric_ironfly_pair_count=symmetric_ironfly_pairs,
+        symmetric_ironfly_pair_available=symmetric_ironfly_pair_available,
+        ironfly_candidate_pair_count=symmetric_ironfly_pairs,
         ironfly_candidate_ready=ironfly_ready,
         ironcondor_candidate_count=condor_count,
         ironcondor_candidate_ready=condor_ready,
@@ -380,6 +387,11 @@ def _aggregate_readiness_metrics(rows: Sequence[SurfaceReadinessRow]) -> dict[st
         "otm_put_wing_available_rate": _rate(count_true("otm_put_wing_available"), total),
         "otm_wing_pair_available_count": count_true("otm_wing_pair_available"),
         "otm_wing_pair_available_rate": _rate(count_true("otm_wing_pair_available"), total),
+        "symmetric_ironfly_pair_available_count": count_true("symmetric_ironfly_pair_available"),
+        "symmetric_ironfly_pair_available_rate": _rate(
+            count_true("symmetric_ironfly_pair_available"), total
+        ),
+        "symmetric_ironfly_pair_count": sum(r.symmetric_ironfly_pair_count for r in rows),
         "ironfly_candidate_ready_count": count_true("ironfly_candidate_ready"),
         "ironfly_candidate_ready_rate": _rate(count_true("ironfly_candidate_ready"), total),
         "ironcondor_candidate_ready_count": count_true("ironcondor_candidate_ready"),

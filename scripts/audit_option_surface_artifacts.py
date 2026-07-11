@@ -365,8 +365,8 @@ DOWNSTREAM_ASSEMBLY_CONTRACT = """
 - ``build_ironfly_from_surface``: long OTM put / short ATM put / short ATM call / long OTM call.
 - Body legs from ``is_body`` quotes; wings from ``is_otm`` quotes on each side.
 - Wing selection uses ``abs_delta`` vs ``wing_target_delta`` at assembly time (not a C6.3 gate).
-- C6.3 structural rule: body pair + quotable OTM wings + at least one symmetric wing pair
-  (``call_strike - body_strike ≈ body_strike - put_strike`` within tolerance).
+- C6.3 structural rule: body pair + at least one quotable OTM call wing + at least one
+  quotable OTM put wing. Symmetric wing distance is informational only.
 
 ### Iron-condor leg requirements
 - ``build_ironcondor_from_surface``: long OTM put / short nearer put / short nearer call / long OTM call.
@@ -478,6 +478,10 @@ def write_c63_markdown_report(
                 )
             )
         )
+        lines.append(
+            "- A1 has_body_call and has_body_put must agree exactly with quotable "
+            "A2 body-leg availability in both directions."
+        )
         lines.append(f"- Surfaces with body/A1 inconsistencies: {body_mismatch}")
         for ex in readiness.examples[:5]:
             lines.append(f"- Example: {ex}")
@@ -511,13 +515,25 @@ def write_c63_markdown_report(
             "",
             "### Definition",
             "",
-            "body_pair_ready AND quotable OTM call/put wings AND ≥1 symmetric wing pair "
-            f"(tolerance={args.ironfly_symmetry_tolerance}).",
+            "body_pair_ready AND at least one quotable OTM call wing AND at least one "
+            "quotable OTM put wing.",
             "",
             f"- ironfly_candidate_ready: {metrics.get('ironfly_candidate_ready_count', 'n/a')} "
             f"({_format_rate(metrics.get('ironfly_candidate_ready_rate'))})",
             f"- Conditional (among surface_valid): "
             f"{_format_rate(metrics.get('ironfly_candidate_ready_among_surface_valid_rate'))}",
+            "",
+            "### Symmetric-wing informational metric",
+            "",
+            "Symmetric wing distance is not required by the current downstream iron-fly assembler. "
+            "It is reported only as an informational structural characteristic.",
+            "",
+            f"- symmetric_ironfly_pair_available: "
+            f"{metrics.get('symmetric_ironfly_pair_available_count', 'n/a')} "
+            f"({_format_rate(metrics.get('symmetric_ironfly_pair_available_rate'))})",
+            f"- symmetric_ironfly_pair_count: "
+            f"{metrics.get('symmetric_ironfly_pair_count', 'n/a')}",
+            f"- Symmetry tolerance: {args.ironfly_symmetry_tolerance}",
             "",
             "## Iron-condor candidate readiness",
             "",

@@ -118,6 +118,28 @@ class TestBodyStraddleReadiness:
         row = compute_surface_readiness(_meta(has_body_call=True), quotes)
         assert "body_flag_mismatch" in row.consistency_failures
 
+    def test_a1_false_a2_body_call_exists_is_mismatch(self) -> None:
+        row = compute_surface_readiness(_meta(has_body_call=False), _full_surface_quotes())
+        assert "body_flag_mismatch" in row.consistency_failures
+
+    def test_a1_true_a2_body_put_missing_is_mismatch(self) -> None:
+        quotes = [q for q in _full_surface_quotes() if q["side"] != "put" or not q["is_body"]]
+        row = compute_surface_readiness(_meta(has_body_put=True), quotes)
+        assert "body_flag_mismatch" in row.consistency_failures
+
+    def test_a1_false_a2_body_put_exists_is_mismatch(self) -> None:
+        row = compute_surface_readiness(_meta(has_body_put=False), _full_surface_quotes())
+        assert "body_flag_mismatch" in row.consistency_failures
+
+    def test_a1_flags_and_a2_body_availability_agree(self) -> None:
+        row = compute_surface_readiness(_meta(), _full_surface_quotes())
+        assert "body_flag_mismatch" not in row.consistency_failures
+
+    def test_body_flag_mismatch_produces_fail(self) -> None:
+        row = compute_surface_readiness(_meta(has_body_call=False), _full_surface_quotes())
+        verdict = compute_readiness_verdict([row], contract_passed=True)
+        assert verdict.status == "FAIL"
+
     def test_duplicate_body_call_rows_fail(self) -> None:
         quotes = _full_surface_quotes()
         quotes.append(dict(quotes[0]))
@@ -167,12 +189,14 @@ class TestIronFlyReadiness:
         assert row.ironfly_candidate_ready is True
         assert row.ironfly_candidate_pair_count == 1
 
-    def test_asymmetric_wings_only_not_ready(self) -> None:
+    def test_asymmetric_wings_are_still_ready(self) -> None:
         quotes = _full_surface_quotes()
         quotes[3]["strike"] = 97.0  # 3 vs 5 from body
         row = compute_surface_readiness(_meta(), quotes, ironfly_symmetry_tolerance=0.0)
-        assert row.ironfly_candidate_ready is False
-        assert "no_symmetric_ironfly_pair" in row.readiness_failure_reasons
+        assert row.ironfly_candidate_ready is True
+        assert row.symmetric_ironfly_pair_count == 0
+        assert row.symmetric_ironfly_pair_available is False
+        assert "no_symmetric_ironfly_pair" not in row.readiness_failure_reasons
 
     def test_multiple_symmetric_pairs_count(self) -> None:
         quotes = _full_surface_quotes()
@@ -184,12 +208,26 @@ class TestIronFlyReadiness:
         )
         row = compute_surface_readiness(_meta(), quotes)
         assert row.ironfly_candidate_pair_count == 2
+        assert row.symmetric_ironfly_pair_count == 2
+        assert row.symmetric_ironfly_pair_available is True
         assert row.ironfly_candidate_ready is True
 
     def test_body_pair_missing_ironfly_not_ready(self) -> None:
         quotes = [q for q in _full_surface_quotes() if not q["is_body"]]
         row = compute_surface_readiness(_meta(has_body_call=False, has_body_put=False), quotes)
         assert row.ironfly_candidate_ready is False
+
+    def test_missing_otm_call_ironfly_not_ready(self) -> None:
+        quotes = [q for q in _full_surface_quotes() if q["side"] != "call" or q["is_body"]]
+        row = compute_surface_readiness(_meta(), quotes)
+        assert row.ironfly_candidate_ready is False
+        assert "no_otm_call_wing" in row.readiness_failure_reasons
+
+    def test_missing_otm_put_ironfly_not_ready(self) -> None:
+        quotes = [q for q in _full_surface_quotes() if q["side"] != "put" or q["is_body"]]
+        row = compute_surface_readiness(_meta(), quotes)
+        assert row.ironfly_candidate_ready is False
+        assert "no_otm_put_wing" in row.readiness_failure_reasons
 
 
 class TestIronCondorReadiness:
