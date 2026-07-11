@@ -1,6 +1,6 @@
 # C6.4 — Fresh C6 Surface Smoke Audit
 
-**Generated:** 2026-07-11 05:13:34 UTC
+**Generated:** 2026-07-11 17:39:29 UTC
 
 ## Verdict
 
@@ -8,10 +8,10 @@
 
 ## Scope and lineage
 
-- Audit commit SHA: `723a17961eb8b6e8b6dba33c9d8620f3a6b9959a`
-- Producer implementation commit SHA: `0a386f2517deff8be116f4729abf7e2cfc09531d`
+- C6.4 audit implementation commit: `c75417de79ae19ed8bcdd3fa9d0afce6045275f8`
 - C6.2 baseline commit SHA: `8d776e6058114beb397894dcf0c1e0825d969c75`
 - C6.3 readiness implementation commit SHA: `e2ffc2b845cf8162898e7622fada9ff8d08a7711`
+- Strict weekly-expiry producer implementation: `af9d9a08772b6e8c82c32acc39cbc84b32bb4326`
 - Meta path: `C:\MomentumCVG_env\cache\c6_4_surface_smoke\option_surface_meta_weekly_2024_2024.parquet`
 - Quotes path: `C:\MomentumCVG_env\cache\c6_4_surface_smoke\option_surface_quotes_weekly_2024_2024.parquet`
 - Adjusted-liquid data root: `C:\MomentumCVG_env\input\adjusted_liquid`
@@ -19,6 +19,10 @@
 - Ticker scope: ['AAPL', 'MSFT', 'NVDA', 'SPY', 'QQQ']
 - Requested start/end: 2024-01-01 .. 2024-03-31
 - Legacy cache mode: False
+
+- Repository HEAD when producer ran: `0a386f2517deff8be116f4729abf7e2cfc09531d`
+
+The smoke run used repository HEAD containing the accepted strict weekly producer implementation above.
 
 ## Producer command
 
@@ -29,25 +33,36 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/precompute_option_surface.py 
 ## Audit command
 
 ```powershell
-scripts/audit_option_surface_artifacts.py --meta-path C:/MomentumCVG_env/cache/c6_4_surface_smoke/option_surface_meta_weekly_2024_2024.parquet --quotes-path C:/MomentumCVG_env/cache/c6_4_surface_smoke/option_surface_quotes_weekly_2024_2024.parquet --frequency weekly --data-root C:/MomentumCVG_env/input/adjusted_liquid --spot-db-path C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet --start-date 2024-01-01 --end-date 2024-03-31 --sample-tickers AAPL MSFT NVDA SPY QQQ --report-format c6.4 --include-assembly-readiness --audit-commit 723a17961eb8b6e8b6dba33c9d8620f3a6b9959a --producer-commit 0a386f2517deff8be116f4729abf7e2cfc09531d --c6-2-commit 8d776e6058114beb397894dcf0c1e0825d969c75 --c63-commit e2ffc2b845cf8162898e7622fada9ff8d08a7711 --c61-regression-result 41 passed in 0.42s --c62-test-result 36 passed in 0.58s --c63-test-result 39 passed in 0.08s --c64-test-result 4 passed in 0.07s --producer-command C:/MomentumCVG_env/venv/Scripts/python.exe scripts/precompute_option_surface.py --data-root C:/MomentumCVG_env/input/adjusted_liquid --spot-db-path C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet --output-root C:/MomentumCVG_env/cache/c6_4_surface_smoke --frequency weekly --start-year 2024 --end-year 2024 --start-date 2024-01-01 --end-date 2024-03-31 --tickers AAPL MSFT NVDA SPY QQQ --overwrite --workers 8 --output-report docs/tmp/c6_4_smoke_surface_audit.md
+scripts/audit_option_surface_artifacts.py --meta-path C:/MomentumCVG_env/cache/c6_4_surface_smoke/option_surface_meta_weekly_2024_2024.parquet --quotes-path C:/MomentumCVG_env/cache/c6_4_surface_smoke/option_surface_quotes_weekly_2024_2024.parquet --frequency weekly --data-root C:/MomentumCVG_env/input/adjusted_liquid --spot-db-path C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet --start-date 2024-01-01 --end-date 2024-03-31 --sample-tickers AAPL MSFT NVDA SPY QQQ --report-format c6.4 --include-assembly-readiness --audit-commit c75417de79ae19ed8bcdd3fa9d0afce6045275f8 --producer-run-head 0a386f2517deff8be116f4729abf7e2cfc09531d --weekly-expiry-producer-commit af9d9a08772b6e8c82c32acc39cbc84b32bb4326 --c6-2-commit 8d776e6058114beb397894dcf0c1e0825d969c75 --c63-commit e2ffc2b845cf8162898e7622fada9ff8d08a7711 --c61-regression-result 41 passed in 0.38s --c62-test-result 25 passed in 0.13s --c63-test-result 39 passed in 0.07s --c64-test-result 33 passed in 0.83s --producer-command C:/MomentumCVG_env/venv/Scripts/python.exe scripts/precompute_option_surface.py --data-root C:/MomentumCVG_env/input/adjusted_liquid --spot-db-path C:/MomentumCVG_env/cache/spot_prices_adjusted.parquet --output-root C:/MomentumCVG_env/cache/c6_4_surface_smoke --frequency weekly --start-year 2024 --end-year 2024 --start-date 2024-01-01 --end-date 2024-03-31 --tickers AAPL MSFT NVDA SPY QQQ --overwrite --workers 8 --output-report docs/tmp/c6_4_smoke_surface_audit.md
 ```
 
 ## Artifact inventory
 
 - Meta exists: True
 - Quotes exists: True
-- Meta row count (scoped): 65
-- Quotes row count (scoped): 2114
+- Meta row count (scoped, raw): 65
+- Quotes row count (scoped, raw): 2114
 - Ticker count: 5
 - Entry-date range: 2024-01-05 .. 2024-03-28
 - Expiry-date range: 2024-01-12 .. 2024-04-05
 
+### Metrics-only normalized view
+
+- Applied: False
+- Note: no identical duplicates; raw and normalized counts match
+- Raw meta rows: 65
+- Normalized meta rows (metrics only): 65
+- Raw quote rows: 2114
+- Normalized quote rows (metrics only): 2114
+
 ## Requested versus actual coverage
+
+Coverage and readiness metrics below use the normalized in-memory view when identical duplicates are present; raw row counts remain in artifact inventory.
 
 | Metric | Value |
 |--------|-------|
-| Meta row count | 65 |
-| Quote row count | 2114 |
+| Meta row count (normalized) | 65 |
+| Quote row count (normalized) | 2114 |
 | Ticker count | 5 |
 | Entry-date count | 13 |
 | Requested date range | 2024-01-01 .. 2024-03-31 |
@@ -66,17 +81,22 @@ scripts/audit_option_surface_artifacts.py --meta-path C:/MomentumCVG_env/cache/c
 ## Strict weekly-expiry evidence
 
 - Eligible rows (successor schedule week exists): 65
-- Exact target matches: 65
-- Silent mismatch count: 0
-- no_target_weekly_expiry count: 0
-- target_weekly_expiry_not_listed count: 0
-- no_expiries_on_entry_chain count: 0
+- Exact target matches (null failure_reason, expiry == target): 65
+- Silent mismatch count (null failure_reason, non-null expiry != target): 0
+- Documented target failure count: 0
+- Other producer failure count: 0
+- Missing expiry without failure count: 0
+- no_target_weekly_expiry: 0
+- target_weekly_expiry_not_listed: 0
+- no_expiries_on_entry_chain: 0
+- target_weekly_body_not_quotable: 0
 - Weekly expiry verdict: **PASS**
 
 
 ## C6.2 contract results
 
-- Overall contract verdict: **PASS**
+- Raw C6.2 contract verdict: **PASS**
+- Adjusted C6.4 contract verdict: **PASS** (no policy adjustment)
 
 ### schema_checks
 - Status: **PASS**
@@ -210,22 +230,22 @@ scripts/audit_option_surface_artifacts.py --meta-path C:/MomentumCVG_env/cache/c
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_weekly_expiry.py tests/unit/test_precompute_option_surface_cli.py tests/unit/test_diagnose_weekly_expiry_policy.py -q
 ```
-Result: 41 passed in 0.42s
+Result: 41 passed in 0.38s
 
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_contract.py tests/unit/test_audit_option_surface_artifacts.py -q
 ```
-Result: 36 passed in 0.58s
+Result: 25 passed in 0.13s
 
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_readiness.py -q
 ```
-Result: 39 passed in 0.08s
+Result: 39 passed in 0.07s
 
 ```powershell
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_option_surface_c64_audit.py -q
 ```
-Result: 4 passed in 0.07s
+Result: 33 passed in 0.83s
 
 ## Conclusion
 
