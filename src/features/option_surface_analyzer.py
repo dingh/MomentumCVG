@@ -27,6 +27,19 @@ from ..data.trading_day import target_weekly_expiry_from_schedule
 
 logger = logging.getLogger(__name__)
 
+# Documented snake_case failure tags emitted by the surface producer (C6.2 contract).
+DOCUMENTED_SURFACE_FAILURE_TAGS = frozenset({
+    "no_spot_price",
+    "no_expiry_found",
+    "no_target_weekly_expiry",
+    "no_expiries_on_entry_chain",
+    "target_weekly_expiry_not_listed",
+    "no_options_at_entry",
+    "no_strikes_in_chain",
+    "no_spot_at_expiry",
+    "target_weekly_body_not_quotable",
+})
+
 
 def _nearest_bucket(value: float, buckets: Sequence[float]) -> Optional[float]:
     """Return the element of *buckets* whose distance to *value* is smallest.
