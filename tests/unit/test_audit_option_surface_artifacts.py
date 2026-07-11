@@ -274,3 +274,125 @@ def test_cli_fail_on_warn_flag(tmp_path: Path, cli_module) -> None:
         ]
     )
     assert code == 1
+
+
+def _write_readiness_pair(tmp_path: Path) -> tuple[Path, Path]:
+    """Full body + symmetric wing surface for C6.3 readiness."""
+    meta_row = _metadata_success_row(
+        ticker="AAPL",
+        entry_date=date(2024, 1, 5),
+        expiry_date=date(2024, 1, 12),
+        dte_target=7,
+        frequency="weekly",
+        entry_spot=100.0,
+        exit_spot=101.0,
+        body_strike=100.0,
+        spot_move_pct=0.01,
+        realized_volatility=0.2,
+        has_body_call=True,
+        has_body_put=True,
+        n_surface_quotes=4,
+        processing_time=0.1,
+    )
+    quotes = [
+        {
+            "ticker": "AAPL",
+            "entry_date": date(2024, 1, 5),
+            "expiry_date": date(2024, 1, 12),
+            "entry_spot": 100.0,
+            "body_strike": 100.0,
+            "side": side,
+            "is_body": is_body,
+            "is_otm": is_otm,
+            "strike": strike,
+            "bid": 1.0,
+            "ask": 1.2,
+            "mid": 1.1,
+            "spread_pct": 0.18,
+            "iv": 0.2,
+            "delta": 0.5 if is_body else 0.25,
+            "abs_delta": 0.5 if is_body else 0.25,
+            "gamma": 0.01,
+            "vega": 0.1,
+            "theta": -0.01,
+            "volume": 100,
+            "open_interest": 1000,
+        }
+        for side, strike, is_body, is_otm in (
+            ("call", 100.0, True, False),
+            ("put", 100.0, True, False),
+            ("call", 105.0, False, True),
+            ("put", 95.0, False, True),
+        )
+    ]
+    meta_path = tmp_path / "meta.parquet"
+    quotes_path = tmp_path / "quotes.parquet"
+    pd.DataFrame([meta_row]).to_parquet(meta_path, index=False)
+    pd.DataFrame(quotes).to_parquet(quotes_path, index=False)
+    return meta_path, quotes_path
+
+
+def test_cli_c63_readiness_pass(tmp_path: Path, cli_module) -> None:
+    meta_path, quotes_path = _write_readiness_pair(tmp_path)
+    data_root = tmp_path / "adjusted"
+    _seed_weekly_schedule(data_root, date(2024, 1, 5))
+    report_path = tmp_path / "c63_report.md"
+
+    code = cli_module.main(
+        [
+            "--meta-path",
+            str(meta_path),
+            "--quotes-path",
+            str(quotes_path),
+            "--frequency",
+            "weekly",
+            "--data-root",
+            str(data_root),
+            "--start-date",
+            "2024-01-01",
+            "--end-date",
+            "2024-01-31",
+            "--include-assembly-readiness",
+            "--output-report",
+            str(report_path),
+        ]
+    )
+    assert code == 0
+    text = report_path.read_text(encoding="utf-8")
+    assert "# C6.3 — Surface Assembly-Readiness Audit" in text
+    assert "## Straddle readiness" in text
+    assert "ironfly_candidate_ready" in text
+    assert "Conditional (among surface_valid)" in text
+
+
+def test_cli_c63_contract_failure_blocks_readiness(tmp_path: Path, cli_module) -> None:
+    meta_path, quotes_path = _write_readiness_pair(tmp_path)
+    quotes = pd.read_parquet(quotes_path)
+    orphan = quotes.iloc[0].copy()
+    orphan["ticker"] = "MSFT"
+    quotes = pd.concat([quotes, pd.DataFrame([orphan])], ignore_index=True)
+    quotes.to_parquet(quotes_path, index=False)
+
+    data_root = tmp_path / "adjusted"
+    _seed_weekly_schedule(data_root, date(2024, 1, 5))
+    report_path = tmp_path / "c63_report.md"
+
+    code = cli_module.main(
+        [
+            "--meta-path",
+            str(meta_path),
+            "--quotes-path",
+            str(quotes_path),
+            "--frequency",
+            "weekly",
+            "--data-root",
+            str(data_root),
+            "--include-assembly-readiness",
+            "--output-report",
+            str(report_path),
+        ]
+    )
+    assert code == 1
+    text = report_path.read_text(encoding="utf-8")
+    assert "**FAIL**" in text
+    assert "Readiness evaluation **blocked**" in text

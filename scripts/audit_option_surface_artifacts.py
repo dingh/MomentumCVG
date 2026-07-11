@@ -1,7 +1,7 @@
 """
-Read-only audit for option surface A1/A2 parquet artifacts (Sprint 004 C6.2).
+Read-only audit for option surface A1/A2 parquet artifacts (Sprint 004 C6.2/C6.3).
 
-Usage:
+Usage (C6.2 contract only):
     python scripts/audit_option_surface_artifacts.py \\
         --meta-path C:/MomentumCVG_env/cache/c6_2_surface_smoke/option_surface_meta_weekly_2024_2024.parquet \\
         --quotes-path C:/MomentumCVG_env/cache/c6_2_surface_smoke/option_surface_quotes_weekly_2024_2024.parquet \\
@@ -10,6 +10,12 @@ Usage:
         --start-date 2024-01-01 \\
         --end-date 2024-01-31 \\
         --output-report docs/tmp/c6_2_surface_artifact_contract_report.md
+
+Usage (C6.3 assembly-readiness phase after contract gate):
+    python scripts/audit_option_surface_artifacts.py \\
+        ... \\
+        --include-assembly-readiness \\
+        --output-report docs/tmp/c6_3_surface_assembly_readiness_report.md
 """
 
 from __future__ import annotations
@@ -33,6 +39,12 @@ from src.features.option_surface_contract import (  # noqa: E402
     filter_artifacts,
     run_contract_checks,
     _to_date,
+)
+from src.features.option_surface_readiness import (  # noqa: E402
+    DEFAULT_IRONFLY_SYMMETRY_TOLERANCE,
+    ReadinessAuditResult,
+    group_quotes_by_surface,
+    run_readiness_audit,
 )
 
 logging.basicConfig(
@@ -103,6 +115,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--c62-test-result",
         default="(not run)",
         help="Pytest result line for C6.2 contract/audit tests",
+    )
+    parser.add_argument(
+        "--include-assembly-readiness",
+        action="store_true",
+        help="Run C6.3 assembly-readiness phase after C6.2 contract gate",
+    )
+    parser.add_argument(
+        "--ironfly-symmetry-tolerance",
+        type=float,
+        default=DEFAULT_IRONFLY_SYMMETRY_TOLERANCE,
+        help="Max strike-distance asymmetry for iron-fly wing pairs",
+    )
+    parser.add_argument(
+        "--c63-commit",
+        default=None,
+        help="C6.3 commit SHA recorded in readiness report",
+    )
+    parser.add_argument(
+        "--c63-test-result",
+        default="(not run)",
+        help="Pytest result line for C6.3 readiness tests",
     )
     return parser.parse_args(argv)
 
@@ -323,6 +356,246 @@ def write_markdown_report(
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+DOWNSTREAM_ASSEMBLY_CONTRACT = """
+### Straddle leg requirements
+- ``build_straddle_from_surface`` requires one body call and one body put at ``body_strike`` from A2.
+- v1 readiness: ``straddle_ready == body_pair_ready`` (quotable body call + quotable body put).
+
+### Iron-fly leg requirements
+- ``build_ironfly_from_surface``: long OTM put / short ATM put / short ATM call / long OTM call.
+- Body legs from ``is_body`` quotes; wings from ``is_otm`` quotes on each side.
+- Wing selection uses ``abs_delta`` vs ``wing_target_delta`` at assembly time (not a C6.3 gate).
+- C6.3 structural rule: body pair + quotable OTM wings + at least one symmetric wing pair
+  (``call_strike - body_strike ≈ body_strike - put_strike`` within tolerance).
+
+### Iron-condor leg requirements
+- ``build_ironcondor_from_surface``: long OTM put / short nearer put / short nearer call / long OTM call.
+- Short-leg candidates include body (``is_body | is_otm``); long legs must be further OTM than shorts.
+- Delta targets applied at assembly; C6.3 uses conservative structural rule:
+  body pair + quotable puts/calls forming at least one put vertical and one call vertical spread.
+""".strip()
+
+
+def _format_rate(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    return f"{100.0 * float(value):.1f}%"
+
+
+def write_c63_markdown_report(
+    report_path: Path,
+    *,
+    args: argparse.Namespace,
+    inventory: dict[str, Any],
+    contract_results: list[ContractCheckResult],
+    contract_overall: str,
+    readiness: ReadinessAuditResult | None,
+    tests_run: list[tuple[str, str]],
+    files_changed: list[str],
+    c63_commit: str | None = None,
+) -> None:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    readiness_overall = readiness.status if readiness else "SKIPPED"
+    if contract_overall == "FAIL":
+        overall = "FAIL"
+    elif readiness and readiness.status == "FAIL":
+        overall = "FAIL"
+    elif contract_overall == "WARN" or (readiness and readiness.status == "WARN"):
+        overall = "WARN"
+    else:
+        overall = "PASS" if readiness else contract_overall
+
+    lines: list[str] = [
+        "# C6.3 — Surface Assembly-Readiness Audit",
+        "",
+        f"**Generated:** {ts}",
+    ]
+    if c63_commit:
+        lines.extend(["", f"**Commit:** `{c63_commit}`"])
+    lines.extend(
+        [
+            "",
+            "## Verdict",
+            "",
+            f"**{overall}**",
+            "",
+            "## Scope",
+            "",
+            f"- Commit baseline (C6.2 follow-up): `{args.c6_2_commit}`",
+            f"- Meta: `{inventory['meta_path']}`",
+            f"- Quotes: `{inventory['quotes_path']}`",
+            f"- Sample window: {args.start_date} .. {args.end_date}",
+            f"- Ticker scope: {args.sample_tickers or 'all in filtered sample'}",
+            f"- Iron-fly symmetry tolerance: {args.ironfly_symmetry_tolerance}",
+            "",
+            "### Read-only guarantee",
+            "",
+            "This audit only reads parquet inputs and writes a markdown report. "
+            "No parquet mutation, no backfill, no strategy assembly or backtest.",
+            "",
+            "## Downstream assembly contract",
+            "",
+            DOWNSTREAM_ASSEMBLY_CONTRACT,
+            "",
+            "### Unresolved ambiguity",
+            "",
+            "- Iron-condor readiness does not enforce delta-bucket targets; S3 may reject "
+            "structurally valid surfaces when ``_choose_nearest`` cannot match targets.",
+            "- Spread filters (``max_leg_spread_pct``, ``max_spread_cost_ratio``) are assembly-time only.",
+            "",
+            "## C6.2 prerequisite",
+            "",
+            f"- Contract verdict: **{contract_overall}**",
+        ]
+    )
+    for result in contract_results:
+        lines.append(f"- **{result.name}**: {result.status}")
+        for failure in result.failures[:3]:
+            lines.append(f"  - FAIL: {failure}")
+    if readiness and readiness.blocked:
+        lines.extend(
+            [
+                "",
+                "- Readiness evaluation **blocked** because C6.2 contract checks failed.",
+                f"- Block reason: {readiness.block_reason}",
+            ]
+        )
+
+    lines.extend(["", "## Body-pair consistency", ""])
+    if readiness and not readiness.blocked:
+        body_mismatch = sum(
+            1
+            for row in readiness.rows
+            if row.consistency_failures
+            and any(
+                f in row.consistency_failures
+                for f in (
+                    "body_flag_mismatch",
+                    "body_strike_mismatch",
+                    "surface_valid_body_contradiction",
+                    "duplicate_body_call",
+                    "duplicate_body_put",
+                )
+            )
+        )
+        lines.append(f"- Surfaces with body/A1 inconsistencies: {body_mismatch}")
+        for ex in readiness.examples[:5]:
+            lines.append(f"- Example: {ex}")
+    else:
+        lines.append("- Not computed (contract gate failed or readiness skipped).")
+
+    metrics = readiness.metrics if readiness else {}
+    lines.extend(
+        [
+            "",
+            "## Straddle readiness",
+            "",
+            f"- Surface count: {metrics.get('surface_count', inventory['meta_row_count'])}",
+            f"- body_pair_ready: {metrics.get('body_pair_ready_count', 'n/a')} "
+            f"({_format_rate(metrics.get('body_pair_ready_rate'))})",
+            f"- straddle_ready: {metrics.get('straddle_ready_count', 'n/a')} "
+            f"({_format_rate(metrics.get('straddle_ready_rate'))})",
+            f"- Conditional (among surface_valid): "
+            f"{_format_rate(metrics.get('straddle_ready_among_surface_valid_rate'))}",
+            "",
+            "## OTM wing availability",
+            "",
+            f"- otm_call_wing_available: {metrics.get('otm_call_wing_available_count', 'n/a')} "
+            f"({_format_rate(metrics.get('otm_call_wing_available_rate'))})",
+            f"- otm_put_wing_available: {metrics.get('otm_put_wing_available_count', 'n/a')} "
+            f"({_format_rate(metrics.get('otm_put_wing_available_rate'))})",
+            f"- otm_wing_pair_available: {metrics.get('otm_wing_pair_available_count', 'n/a')} "
+            f"({_format_rate(metrics.get('otm_wing_pair_available_rate'))})",
+            "",
+            "## Iron-fly candidate readiness",
+            "",
+            "### Definition",
+            "",
+            "body_pair_ready AND quotable OTM call/put wings AND ≥1 symmetric wing pair "
+            f"(tolerance={args.ironfly_symmetry_tolerance}).",
+            "",
+            f"- ironfly_candidate_ready: {metrics.get('ironfly_candidate_ready_count', 'n/a')} "
+            f"({_format_rate(metrics.get('ironfly_candidate_ready_rate'))})",
+            f"- Conditional (among surface_valid): "
+            f"{_format_rate(metrics.get('ironfly_candidate_ready_among_surface_valid_rate'))}",
+            "",
+            "## Iron-condor candidate readiness",
+            "",
+            "### Definition derived from S3",
+            "",
+            "body_pair_ready AND ≥1 quotable put vertical spread AND ≥1 quotable call vertical spread "
+            "(long further OTM than short on each side; body may be inner short leg).",
+            "",
+            f"- ironcondor_candidate_ready: {metrics.get('ironcondor_candidate_ready_count', 'n/a')} "
+            f"({_format_rate(metrics.get('ironcondor_candidate_ready_rate'))})",
+            f"- Conditional (among surface_valid): "
+            f"{_format_rate(metrics.get('ironcondor_candidate_ready_among_surface_valid_rate'))}",
+            "",
+            "### Limitations",
+            "",
+            "- Does not apply delta targets or spread filters from ``BacktestRunConfig``.",
+            "- Candidate count = put_vertical_pairs × call_vertical_pairs (structural only).",
+            "",
+            "## Readiness failure breakdown",
+            "",
+        ]
+    )
+    if readiness and readiness.failure_reason_breakdown:
+        for reason, count in list(readiness.failure_reason_breakdown.items())[:15]:
+            lines.append(f"- {reason}: {count}")
+    else:
+        lines.append("- (none)")
+    if readiness:
+        for warn in readiness.warnings[:8]:
+            lines.append(f"- WARN: {warn}")
+        for fail in readiness.failures:
+            lines.append(f"- FAIL: {fail}")
+
+    lines.extend(["", "## Tests", ""])
+    for cmd, result_line in tests_run:
+        lines.append(f"```powershell\n{cmd}\n```")
+        lines.append(f"Result: {result_line}")
+        lines.append("")
+
+    lines.extend(
+        [
+            "",
+            "## Remaining limitations",
+            "",
+            "- No pricing beyond quotable bid/ask/mid checks.",
+            "- No fill simulation or transaction costs.",
+            "- No strategy ranking, backtest, or Sharpe/profitability conclusion.",
+            "- C6.4 broader coverage thresholds deferred.",
+            "",
+            "### Files changed (C6.3)",
+            "",
+        ]
+    )
+    for path in files_changed:
+        lines.append(f"- `{path}`")
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def run_readiness_phase(
+    meta_df: pd.DataFrame,
+    quotes_df: pd.DataFrame,
+    *,
+    contract_overall: str,
+    ironfly_symmetry_tolerance: float,
+) -> ReadinessAuditResult:
+    contract_passed = contract_overall != "FAIL"
+    quotes_grouped = group_quotes_by_surface(quotes_df.to_dict(orient="records"))
+    meta_records = meta_df.to_dict(orient="records")
+    return run_readiness_audit(
+        meta_records,
+        quotes_grouped,
+        contract_passed=contract_passed,
+        ironfly_symmetry_tolerance=ironfly_symmetry_tolerance,
+    )
+
+
 def audit_artifacts(
     meta_df: pd.DataFrame,
     quotes_df: pd.DataFrame,
@@ -384,6 +657,25 @@ def main(argv: list[str] | None = None) -> int:
         quotes_path=args.quotes_path,
     )
 
+    readiness: ReadinessAuditResult | None = None
+    if args.include_assembly_readiness:
+        readiness = run_readiness_phase(
+            meta_df,
+            quotes_df,
+            contract_overall=overall,
+            ironfly_symmetry_tolerance=args.ironfly_symmetry_tolerance,
+        )
+        if overall == "FAIL":
+            final_overall = "FAIL"
+        elif readiness.status == "FAIL":
+            final_overall = "FAIL"
+        elif overall == "WARN" or readiness.status == "WARN":
+            final_overall = "WARN"
+        else:
+            final_overall = "PASS"
+    else:
+        final_overall = overall
+
     tests_run = [
         (
             "C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest "
@@ -399,29 +691,58 @@ def main(argv: list[str] | None = None) -> int:
             args.c62_test_result,
         ),
     ]
-    files_changed = [
-        "src/features/option_surface_contract.py",
-        "scripts/audit_option_surface_artifacts.py",
-        "tests/unit/test_option_surface_contract.py",
-        "docs/tmp/c6_2_surface_artifact_contract_report.md",
-    ]
+    if args.include_assembly_readiness:
+        tests_run.append(
+            (
+                "C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest "
+                "tests/unit/test_option_surface_readiness.py -q",
+                args.c63_test_result,
+            )
+        )
 
-    write_markdown_report(
-        args.output_report,
-        args=args,
-        inventory=inventory,
-        results=results,
-        overall=overall,
-        tests_run=tests_run,
-        files_changed=files_changed,
-        c6_2_commit=args.c6_2_commit,
-    )
+    if args.include_assembly_readiness:
+        files_changed = [
+            "src/features/option_surface_readiness.py",
+            "scripts/audit_option_surface_artifacts.py",
+            "tests/unit/test_option_surface_readiness.py",
+            "tests/unit/test_audit_option_surface_artifacts.py",
+            "docs/tmp/c6_3_surface_assembly_readiness_report.md",
+        ]
+        write_c63_markdown_report(
+            args.output_report,
+            args=args,
+            inventory=inventory,
+            contract_results=results,
+            contract_overall=overall,
+            readiness=readiness,
+            tests_run=tests_run,
+            files_changed=files_changed,
+            c63_commit=args.c63_commit,
+        )
+    else:
+        files_changed = [
+            "src/features/option_surface_contract.py",
+            "scripts/audit_option_surface_artifacts.py",
+            "tests/unit/test_option_surface_contract.py",
+            "docs/tmp/c6_2_surface_artifact_contract_report.md",
+        ]
+        write_markdown_report(
+            args.output_report,
+            args=args,
+            inventory=inventory,
+            results=results,
+            overall=overall,
+            tests_run=tests_run,
+            files_changed=files_changed,
+            c6_2_commit=args.c6_2_commit,
+        )
+
     logger.info("Wrote report: %s", args.output_report)
-    logger.info("Overall verdict: %s", overall)
+    logger.info("Overall verdict: %s", final_overall)
 
-    if overall == "FAIL":
+    if final_overall == "FAIL":
         return 1
-    if overall == "WARN" and args.fail_on_warn:
+    if final_overall == "WARN" and args.fail_on_warn:
         return 1
     return 0
 
