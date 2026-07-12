@@ -508,7 +508,7 @@ Untrusted remainder documented in sprint memo; scale-jump → FAIL; coverage gap
 | Near month boundary | Rolling / `month_date` edge |
 | Missing/new ticker liquidity (if in cache) | Explicit WARN/FAIL |
 
-Invariants: snapshot date ≤ `trade_date`; rolling uses only data ≤ `trade_date`; same inputs → same universe; missing liquidity never silent PASS.
+Invariants: snapshot date < `trade_date` (strict prior snapshot — C7.2; same-day and future snapshots prohibited); rolling uses only data ≤ resolved snapshot (< `trade_date`); same inputs → same universe; missing liquidity never silent PASS.
 
 ---
 

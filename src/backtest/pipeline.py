@@ -66,8 +66,10 @@ def step1_get_universe(
     """
     Build the point-in-time eligible ticker universe for trade_date.
 
-    Uses the liquidity panel snapshot as-of trade_date to enforce that only
-    information known at decision time is used (strategy_def §3.2).
+    Uses the latest global liquidity panel snapshot STRICTLY BEFORE trade_date
+    (max(month_date < trade_date)) to enforce that only information known at
+    decision time is used (strategy_def §3.2). Same-day and future snapshots are
+    never selected.
 
     Required columns in liquidity_panel:
         month_date, ticker, atm_straddle_dollar_vol, atm_spread_pct, has_valid_atm_pair
@@ -78,10 +80,17 @@ def step1_get_universe(
     """
     # --- 1. Point-in-time snapshot lookup ---
     # Normalise trade_date to pd.Timestamp for comparison with month_date column.
+    #
+    # Strict prior-snapshot rule (C7.2): use the latest global liquidity snapshot
+    # STRICTLY BEFORE trade_date, i.e. max(month_date where month_date < trade_date).
+    # At the trade decision the current day's dollar volume is not yet observable,
+    # so universe membership must come from the last fully completed weekly snapshot.
+    # Same-day and future snapshots are prohibited; a trade date on or before the
+    # earliest snapshot returns an empty universe.
     trade_ts = pd.Timestamp(trade_date)
 
     valid_months = liquidity_panel.loc[
-        liquidity_panel["month_date"] <= trade_ts, "month_date"
+        liquidity_panel["month_date"] < trade_ts, "month_date"
     ]
     if valid_months.empty:
         return pd.DataFrame(columns=["ticker", "dvol_rank_pct", "spread_rank_pct"])

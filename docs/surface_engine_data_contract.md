@@ -111,7 +111,7 @@ Consumed by **S1** as the point-in-time liquidity snapshot.
 
 | Column | Required | Notes |
 |--------|----------|-------|
-| `month_date` | yes | Snapshot month; S1 picks `max(month_date <= trade_date)` |
+| `month_date` | yes | Snapshot date; S1 picks `max(month_date < trade_date)` (strict prior snapshot) |
 | `ticker` | yes | Symbol |
 | `atm_straddle_dollar_vol` | yes | Dollar-volume metric; ranked for `dvol_top_pct` |
 | `atm_spread_pct` | yes | Effective spread; ranked for `spread_bottom_pct` |
@@ -174,12 +174,16 @@ Consumed by **S2** for cross-sectional ranking.
 **Outputs:** `[ticker, dvol_rank_pct, spread_rank_pct]`, one row per eligible ticker (empty frame with these columns when none qualify).
 
 **Invariants:**
-- **I1 (PIT):** snapshot used = `max(month_date <= trade_date)`. No future panel leaks.
+- **I1 (PIT):** snapshot used = `max(month_date < trade_date)` — the latest global
+  liquidity snapshot **strictly before** the trade date (C7.2). The snapshot is one
+  global cross-section for the entire market (not chosen per ticker). Same-day and
+  future snapshots are prohibited: a `trade_date` on or before the earliest snapshot
+  returns an empty universe. No future panel leaks. No other S1 invariants changed.
 - **I2:** rows with `has_valid_atm_pair == False` or NaN `atm_straddle_dollar_vol` / `atm_spread_pct` are dropped *before* ranking.
 - **I3:** ranks computed on the full surviving snapshot; both filters applied with **AND** logic
   (`dvol_rank_pct >= 1 − dvol_top_pct` AND `spread_rank_pct >= 1 − spread_bottom_pct`).
 - **I4:** output schema is exactly `[ticker, dvol_rank_pct, spread_rank_pct]`.
-- **I5:** `trade_date` earlier than every snapshot ⇒ empty frame (correct columns).
+- **I5:** `trade_date` on or before every snapshot ⇒ empty frame (correct columns).
 - rank-pct values ∈ [0, 1].
 
 **Status:** `built` (L1 contract test green)
