@@ -1,10 +1,10 @@
 # C7.0 — Point-in-time universe reality map
 
 **Sprint:** 004 · **Task:** C7 (investigation only)  
-**Repository HEAD:** `609c15196ca1ab3644cabcabde8b96213a57bf01`  
+**Repository HEAD:** `86013504a5a0ec0a8a5d648649e7ab632cd38d01` (reality map at C7.0 commit); C7.2 target branch  
 **Created:** 2026-07-11  
-**Updated:** 2026-07-11 (HD amendment: prior-week snapshot — see §7)  
-**Scope:** Document what exists today. Design policy updates in `c7_1_pit_universe_design_memo.md`.
+**Updated:** 2026-07-11 (C7.0/C7.1 follow-up — rolling provenance, artifact envelope, sample discovery)  
+**Scope:** Document what exists at pre-C7.2 HEAD. Design policy in `c7_1_pit_universe_design_memo.md`.
 
 ---
 
@@ -20,7 +20,7 @@
 | Friday trade on week-end | Same-day snapshot allowed | Prior week's snapshot |
 | Rationale | — | No same-day liquidity at decision time; matches C4 Saturday-build / completed-week panel |
 
-The reality map §2–§5 still describe **current** repository behavior at HEAD. C7.2 changes `step1_get_universe` and contract tests per [c7_1_pit_universe_design_memo.md](c7_1_pit_universe_design_memo.md) §1.
+The reality map §2–§5 describe **pre-C7.2 HEAD** repository behavior. C7.2 changes `step1_get_universe`, `surface_engine_data_contract.md`, and sprint PIT acceptance wording per [c7_1_pit_universe_design_memo.md](c7_1_pit_universe_design_memo.md). `v1_universe_protocol.md` remains temporarily stale until C9.
 
 ---
 
@@ -168,14 +168,15 @@ The panel carries **partial** evidence for independent verification:
 
 | Check | Panel support |
 |-------|---------------|
-| Snapshot date ≤ trade date | Yes — via `month_date` |
-| Rolling window bounds | Yes — `window_start_date`, `window_end_date`, `window_shortfall` |
-| Weekly source rows used | **No** — must join `ticker_liquidity_weekly_observations.parquet` |
+| Snapshot date strictly before trade date (C7 target) | Yes — via `month_date` + strict `<` rule |
+| Rolling window bounds | Yes — metadata columns; **values** need independent weekly recomputation |
+| Weekly source rows used | **No** — must join weekly artifact and recompute C4 formulas |
 | Daily source rows used | **No** — requires daily artifact or ORATS re-read |
 | Duplicate grain | Detectable from panel |
 | Build param consistency | Detectable from stamped columns |
+| Supported S1 parameter envelope | Readable from panel stamp vs requested config |
 
-C4 design states PIT rule: snapshot `T` uses only weekly rows with `week_end_date ≤ T`. That invariant is **not** re-validated on production artifacts today.
+C4 design: snapshot `S` rolling mean uses weekly rows with `week_end_date` in the last `lookback_weeks` global weeks where `week_end_date <= S`. **C7 must independently recompute** those means from weekly observations — not filter weekly rows and assert `week_end_date <= S` (that assertion is tautological).
 
 ### Accepted C4 warnings and limitations
 
@@ -326,15 +327,15 @@ Does **not** return `None` (runner checks for `None` defensively).
 
 | Property | Proven? | Evidence |
 |----------|---------|----------|
-| No future snapshot use | **Partial** | Synthetic pre-first-snapshot test only |
+| No future / same-day snapshot | **Partial** | Synthetic only; HEAD still uses `<=` |
 | Correct global snapshot selection | **Partial** | Two-snapshot fixture; not boundary/holiday cases |
 | Correct ranking | **Partial** | One AND-filter case; not tie boundaries |
 | Duplicate-grain rejection | **No** | Not tested in S1 or producer read path |
 | Determinism | **Partial** | Rank values stable; row order not tested |
 | Real production-panel behavior | **No** | No test reads `input/liquidity/` panel |
-| Rolling-window provenance | **No** | No weekly↔panel join tests |
-| Missing/new ticker handling | **No** | No explicit classification tests |
-| Superset coverage vs `liquid_tickers.csv` | **No** | Not tested |
+| Rolling-window provenance | **No** | Must independent-recompute from weekly grid (design memo §7) |
+| Supported envelope vs superset | **No** | Not enforced |
+| Full-history superset coverage | **No** | Sample-only ad hoc check |
 | Future weekly-row invariance | **No** | Not tested |
 | Independent reference ≠ double S1 | **No** | Harness absent |
 
@@ -374,10 +375,12 @@ Does **not** return `None` (runner checks for `None` defensively).
 
 ### Unverified assumptions C7 must test
 
-1. Global snapshot semantics are acceptable (vs per-ticker carry-forward in protocol doc).
-2. Rank-percentile S1 mechanics match `BacktestRunConfig` thresholds (any legal `dvol_top_pct` / `spread_bottom_pct`), not a fixed 20%/1.0 trading rule.
-3. Weekly rows with `week_end_date > snapshot_date` never enter rolling means.
-4. Missing liquidity never yields silent PASS in an audit report.
+1. Global snapshot semantics with strict `<` (vs per-ticker carry-forward in protocol doc).
+2. Rank-percentile S1 mechanics match `BacktestRunConfig` for **supported** parameter envelope only.
+3. Independent rolling recomputation matches stored panel rows on bounded samples.
+4. Historical snapshot `S` invariant to weekly rows with `week_end_date > S`.
+5. Full-history superset coverage for canonical supported configuration.
+6. Missing liquidity never yields silent PASS in an audit report.
 
 ---
 
@@ -443,35 +446,48 @@ There are **two different uses** of dvol/spread percentages. Only the second is 
 
 #### Layer 2 — Trading universe (S1 / backtest)
 
-| Param | Where | Locked? |
-|-------|-------|---------|
-| `dvol_top_pct` | `BacktestRunConfig` | **No** — configurable per run |
-| `spread_bottom_pct` | `BacktestRunConfig` | **No** — configurable per run |
+| Param | Where | Configurable? | Supported by current artifacts? |
+|-------|-------|---------------|--------------------------------|
+| `dvol_top_pct` | `BacktestRunConfig` | Yes — any value in `(0, 1]` | **Only if** `requested <= superset build dvol_top_pct` stamped on panel |
+| `spread_bottom_pct` | `BacktestRunConfig` | Yes — any value in `(0, 1]` | **Only if** `requested <= 1.0` (superset spread filter fully open) |
 
-**S1 filter logic (always):** AND of rank-percentile thresholds on the **full panel** cross-section at the prior-week snapshot:
+**S1 filter logic (always):** AND of rank-percentile thresholds on the full panel cross-section at the prior-week snapshot:
 
 ```text
 dvol_rank_pct   >= 1 - dvol_top_pct
 spread_rank_pct >= 1 - spread_bottom_pct
 ```
 
-Examples (same panel, different configs):
+`BacktestRunConfig` permits a wider mathematical range. The **current precomputed data layer** supports only the envelope covered by the accepted superset:
 
-| Config | Effective selection |
-|--------|---------------------|
-| `dvol=0.20`, `spread=1.0` | Top 20% dvol; spread filter open |
-| `dvol=0.20`, `spread=0.20` | Intersection: top 20% dvol **and** top 20% tightest spreads |
-| `dvol=0.10`, `spread=0.50` | Tunable — backtest/search chooses |
+```text
+Production baseline (panel stamp):
+    superset build dvol_top_pct   = 0.20
+    superset build spread_bot_pct = 1.0
 
-`run_surface_search.py` already exposes both flags (defaults 0.20 / 0.20 — independent of superset build stamp).
+Structurally supported S1 requests against current liquid_tickers.csv:
+    requested dvol_top_pct        <= 0.20
+    requested spread_bottom_pct   <= 1.0
+```
+
+Spread rule nuance: superset build has spread filter **fully open** (`spread_bot_pct = 1.0`). Any S1 `spread_bottom_pct` in `(0, 1]` only **narrows** names. A **wider** dollar-volume fraction than the superset build (e.g. `dvol_top_pct = 0.50`) can select tickers never precomputed → **blocking configuration/artifact-envelope FAIL** in C7, not a silent PASS.
+
+Examples:
+
+| Config | Supported on current artifacts? |
+|--------|--------------------------------|
+| `dvol=0.20`, `spread=1.0` | **Yes** — canonical audit baseline |
+| `dvol=0.20`, `spread=0.20` | **Yes** — narrower spread only |
+| `dvol=0.10`, `spread=1.0` | **Yes** — narrower dvol only |
+| `dvol=0.50`, `spread=1.0` | **No** — broader than superset build |
 
 #### C7 stance
 
-- **Do not lock** trading-universe percentages in C7. Validate **mechanics** (PIT snapshot, rank direction, AND logic) for whatever params the audit/backtest passes.
-- C7 audit CLI may **default** to production stamp values (0.20 / 1.0) for a baseline reproducibility run; report must record params used and state they are not the only valid backtest choice.
-- **Not a conflict:** panel stamp 0.20/1.0 vs backtest config 0.20/0.20 — different layers.
+- Validate S1 **mechanics** (strict prior snapshot, rank direction, AND logic) for caller-supplied params.
+- **Enforce supported artifact envelope** before superset-coverage or full-history checks.
+- Default audit CLI to canonical supported params (`0.20` / `1.0`); wider configs require a broader accepted superset artifact.
 
-**Classification:** **resolved** — docs/manifest wording ("top 20%") describes the common v1 default and superset build, not a frozen backtest parameter. C9 should clarify two-layer model in `v1_universe_protocol.md`.
+**Classification:** **resolved** — two-layer model with explicit supported envelope (reality map §5D, design memo §1.5).
 
 ### D. Precompute superset versus trading universe
 
@@ -479,29 +495,31 @@ Examples (same panel, different configs):
 
 **This is not the trading universe.** The trading universe is S1 output at each rebalance date `t` (prior-week snapshot + configurable rank filters on the **full panel**).
 
-**Required invariant:**
+**Required invariant (supported configurations only):**
 
 ```text
-trading_universe(t) ⊆ precompute_superset   for every trade date t
+trading_universe(t) ⊆ liquid_tickers.csv   when requested S1 params are within supported envelope
 ```
 
-If a ticker is selected for trading but was never in the superset, surface/features may be missing → backtest silently breaks or skips. C7 **FAIL** when any S1-selected ticker ∉ `liquid_tickers.csv`.
+If `requested dvol_top_pct > superset build dvol_top_pct`, the audit returns a **configuration/artifact-envelope FAIL** before coverage checks — the current superset cannot certify wider universes.
+
+If a ticker is selected within the supported envelope but absent from `liquid_tickers.csv`, surface/features may be missing → **FAIL**.
 
 | Layer | Artifact | What it is | Used for |
 |-------|----------|------------|----------|
-| **Precompute superset** | `liquid_tickers.csv` (~2,783 tickers) | Historical union of names that ever qualified under superset build params (C4 `build_liquid_tickers`) | `precompute_option_surface.py`, C5 scoped adjust, future feature precompute — **reduces compute/storage** |
-| **Full liquidity panel** | `ticker_liquidity_panel.parquet` | All tickers × weekly snapshots with rolling metrics | S1 ranking cross-section (source of truth for PIT selection) |
-| **Trading universe** | S1 output at `trade_date` | Top/filtered slice of panel at prior-week snapshot | Backtest/live rebalance — **changes every week** |
+| **Precompute superset** | `liquid_tickers.csv` (~2,783 tickers) | Historical union under superset build params (`dvol_top_pct=0.20`, `spread_bot_pct=1.0`) | Surface precompute, C5 scoped adjust, future feature precompute — **reduces compute/storage** |
+| **Full liquidity panel** | `ticker_liquidity_panel.parquet` | All tickers × weekly snapshots with rolling metrics | S1 ranking cross-section |
+| **Trading universe** | S1 output at `trade_date` | Top/filtered slice at prior-week snapshot | Backtest/live rebalance |
 
 ```text
-ORATS universe  ⊃  panel tickers  ⊇  trading_universe(t)  ⊆  liquid_tickers.csv (superset)
+ORATS universe  ⊃  panel tickers  ⊇  trading_universe(t)  ⊆  liquid_tickers.csv
+                                                      (supported envelope only)
 ```
 
-The superset is intentionally **broader** than any single week's trading universe (built from weeks that ever hit top-20% dvol under superset params). Precompute can run ahead of a specific backtest config as long as the invariant holds.
+**C7 checks:**
 
-**Verified in repo/docs:** `v1_universe_protocol.md`, runbook § Two universe layers, C4/C5 memos — CSV is not the trading universe.
-
-**C7 check:** Superset coverage — `selected_tickers - liquid_tickers.csv` must be empty for each audited sample date.
+1. **Per-sample** superset coverage for discovered/manual trade dates.
+2. **Full-history supported-envelope coverage** (artifact-level): vectorize across all production snapshots; for canonical params (`0.20` / `1.0`), independently compute S1 membership per snapshot→trade-date mapping; assert every selected ticker ∈ `liquid_tickers.csv`. Does **not** certify unsupported wider configs.
 
 ---
 
@@ -509,21 +527,26 @@ The superset is intentionally **broader** than any single week's trading univers
 
 | ID | Risk | Current evidence | Missing evidence | Severity | Proposed C7 check |
 |----|------|------------------|------------------|----------|-------------------|
-| G1 | Future snapshot leakage | Synthetic pre-first-snapshot test | Production sample dates; `resolved_snapshot <= trade_date` audit | **High** | Per-sample PIT resolution check |
-| G2 | Future weekly rows in rolling window | C4 design rule only | Join weekly obs; assert all `week_end_date <= snapshot_date` | **High** | Rolling provenance check |
+| G1 | Future / same-day snapshot | HEAD uses `<=` | Strict `resolved_snapshot < trade_date`; same-day **FAIL** | **High** | Per-sample PIT resolution |
+| G2 | Rolling panel not independently verified | C4 design only | Recompute C4 formulas from weekly grid; compare to panel row | **High** | Independent rolling recomputation |
 | G3 | Duplicate `(month_date, ticker)` | Production count = 0 | Automated FAIL on any duplicate | **Med** | Artifact grain check |
 | G4 | Missing required columns | Contract test on fixture | Production panel schema audit | **Med** | Artifact schema check |
-| G5 | Mixed build parameters | Production uniform stamp | Detect varying `lookback_weeks` / `dvol_top_pct` within file | **Med** | Build-param homogeneity check |
-| G6 | Nondeterministic membership | Shuffled-row rank stability (ad hoc) | Canonical sort + membership hash contract | **Med** | Determinism contract + hash |
-| G7 | S1 vs independent reference | None | Recompute ranks/thresholds without calling S1 twice | **High** | Independent reference module |
-| G8 | Global vs per-ticker drift | Documented conflict | Explicit WARN in report | **Med** | Document limitation; no silent "fix" |
-| G9 | Same-day snapshot timing | Friday lag=0 observed | Report `snapshot_lag_days`; WARN | **Med** | Timing section in report |
-| G10 | Superset vs backtest params conflated | Panel stamp 0.20/1.0 documented | Audit report labels params as S1 config, not superset rule | **Low** | Report param layer explicitly |
-| G11 | Superset coverage gap | Last snapshot 0 missing (ad hoc) | All selected tickers ⊆ `liquid_tickers.csv` | **Med** | Superset coverage check |
-| G12 | Missing/new ticker silent exclusion | Eligibility rules in code | Classify empty universe / new ticker cases | **Med** | Explicit exclusion summary |
-| G13 | `liquid_tickers.csv` used as trading universe | Docs warn; no guard in S1 | Static CSV misuse detection (out of scope for S1) | **Low** | Doc + audit note only |
-| G14 | Quantile (superset) vs rank (S1) mismatch | Different algorithms | Compare only where needed; S1 reference uses rank | **Low** | Reference uses S1 semantics |
-| G15 | Early `window_shortfall` | 0 in production full backfill | WARN on shortfall > 0 in other windows | **Low** | WARN policy |
+| G5 | Mixed build parameters | Production uniform stamp | Detect varying stamped params within file | **Med** | Build-param homogeneity |
+| G6 | Nondeterministic membership | Shuffled-row rank stability (ad hoc) | Canonical sort + membership hash | **Med** | Determinism contract |
+| G7 | S1 vs independent reference | None | Recompute ranks/thresholds without double S1 | **High** | Independent reference module |
+| G8 | Global vs per-ticker doc drift | Protocol wording | Informational note; global cross-section is policy | **Low** | Report only (C9 fixes doc) |
+| G9 | Same-day snapshot resolution | HEAD allows lag=0 | **FAIL** if `resolved_snapshot >= trade_date` | **High** | Strict timing gate |
+| G10 | Unsupported S1 vs superset envelope | Panel stamp 0.20/1.0 | FAIL when `requested dvol > stamp dvol` | **High** | Artifact envelope check |
+| G11 | Superset coverage gap | Last snapshot ad hoc | Full-history check for canonical config | **High** | Full-history coverage |
+| G12 | Missing/new ticker silent exclusion | Eligibility in code | Explicit exclusion counts | **Med** | Exclusion summary |
+| G13 | Static CSV used as trading universe | Docs warn | Audit note only | **Low** | Doc note |
+| G14 | Quantile (superset build) vs rank (S1) | Different algorithms | S1 reference uses rank pct | **Low** | Reference semantics |
+| G15 | Early `window_shortfall` | 0 in production | WARN when shortfall > 0 | **Low** | WARN policy |
+| G16 | Historical snapshot changes with later weekly rows | Not tested | Future-invariance recomputation test | **High** | Future-invariance check |
+| G17 | Tautological weekly filter-only check | Prior design flaw | Full independent recompute per § design memo §7 | **High** | Replace filter/assert design |
+| G18 | Sample discovery uses `trade_date = S` | Resolves to snapshot before S | Map target snapshot S → trade date T with `resolve(T)=S` | **Med** | Discovery algorithm fix |
+| G19 | Unparseable mixed date types | Ambiguous test plan | Explicit parse/normalize contract | **Med** | Date parsing gate |
+| G20 | Source-of-truth contract stale (`<=`) | `surface_engine_data_contract.md` | Update in same commit as S1 change | **High** | C7.2 contract sync |
 
 ---
 
@@ -539,10 +562,32 @@ The superset is intentionally **broader** than any single week's trading univers
 ### C7 should not implement
 
 - Changes to S2–S8, signal logic, backtest runs, Sharpe claims
-- Changes to `step1_get_universe` snapshot selection (`<=` → `<`) — **in scope for C7.2** per HD amendment
 - Full panel rebuild (C4 scope)
 - Wiring into `refresh_weekly_inputs.py validate` (C3 after C8)
 - A4 feature validation
+
+### Approved single S1 production change (C7.2 only)
+
+C7 may make **exactly one** approved production behavior change:
+
+```text
+S1 snapshot resolution:  month_date <= trade_date  →  month_date < trade_date
+```
+
+**No other** S1 eligibility, ranking, threshold, schema, or output behavior may change without separate evidence and HD approval.
+
+C7.2 must update in the **same behavior-changing commit**:
+
+```text
+src/backtest/pipeline.py
+tests/contract/test_step1_universe_contract.py
+docs/surface_engine_data_contract.md
+docs/agenda/current_sprint.md
+src/data/pit_universe_audit.py
+tests/unit/test_pit_universe_audit.py
+```
+
+`docs/v1_universe_protocol.md` broader rewrite remains **C9**; until then it is temporarily stale and must not remain the accepted implementation contract.
 
 ### Canonical policy recommendation
 
@@ -554,12 +599,12 @@ global_snapshot_date = max(month_date < trade_date)
 
 See [c7_1_pit_universe_design_memo.md](c7_1_pit_universe_design_memo.md) §1. C7.2 updates `step1_get_universe` accordingly.
 
-**Unchanged:** global (not per-ticker) cross-section; document per-ticker protocol drift as WARN.
+**Unchanged:** global (not per-ticker) cross-section; per-ticker protocol wording is documentation drift only (C9).
 
 ---
 
 ## References
 
 - C4 closeout: `docs/sprint_memos/004_c4_liquidity_panel.md`
-- S1 contract: `docs/surface_engine_data_contract.md` § S1
+- S1 contract: `docs/surface_engine_data_contract.md` § S1 (**stale `<=` at HEAD**; C7.2 updates to `<`)
 - Sprint blocker #6: `docs/agenda/current_sprint.md` § Closeout blockers
