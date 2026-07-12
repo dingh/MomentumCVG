@@ -182,6 +182,8 @@ class UniverseComparisonResult:
     duplicate_production_tickers: Tuple[str, ...]
     rank_mismatches: Tuple[Tuple[str, str, float, float], ...]  # ticker, field, prod, ref
     status: Status
+    invalid_production_rank_tickers: Tuple[str, ...] = ()
+    comparison_errors: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -330,17 +332,25 @@ def normalize_date_column(frame: pd.DataFrame, column: str) -> pd.Series:
     if column not in frame.columns:
         raise ArtifactValidationError(f"required date column {column!r} is missing")
 
-    # Fast path: a tz-aware pandas datetime column is rejected wholesale.
-    dtype = frame[column].dtype
+    col = frame[column]
+    dtype = col.dtype
+
+    # A tz-aware pandas datetime column is rejected wholesale.
     if isinstance(dtype, pd.DatetimeTZDtype):
         raise ArtifactValidationError(
             f"{column!r}: timezone-aware column rejected "
             "(UTC conversion could shift the calendar day)"
         )
 
-    values = [
-        normalize_date_value(v, label=column) for v in frame[column].tolist()
-    ]
+    # Fast path: an already tz-naive datetime64 column (any resolution) normalizes
+    # with one vectorized op instead of millions of Python-level conversions.
+    if pd.api.types.is_datetime64_dtype(dtype):
+        if col.isna().any():
+            raise ArtifactValidationError(f"{column!r}: null/NaT date is not allowed")
+        return col.dt.normalize().rename(column)
+
+    # Object / heterogeneous fallback: strict per-value normalization.
+    values = [normalize_date_value(v, label=column) for v in col.tolist()]
     return pd.Series(values, index=frame.index, name=column)
 
 
@@ -366,15 +376,55 @@ def _is_finite(value: object) -> bool:
     return f is not None and math.isfinite(f)
 
 
-def _floats_equal(a: object, b: object, *, rel_tol: float = FLOAT_REL_TOL) -> bool:
-    fa = _to_float(a)
-    fb = _to_float(b)
-    a_nan = fa is None or math.isnan(fa)
-    b_nan = fb is None or math.isnan(fb)
+def compare_numeric_values(
+    actual: object,
+    expected: object,
+    *,
+    allow_both_nan: bool,
+    rel_tol: float,
+    abs_tol: float = 0.0,
+) -> bool:
+    """Single strict numeric comparison contract for the whole audit.
+
+    Semantics (see C7.2A Fix 1):
+
+    * Both values finite:
+        ``abs(a - b) <= max(abs_tol, rel_tol * max(1, abs(a), abs(b)))``.
+    * Both NaN (or null / unparseable → treated as NaN):
+        equal only when ``allow_both_nan`` is True.
+    * One-sided NaN: mismatch.
+    * Infinity (either side, +inf or -inf): never an ordinary valid match —
+      always returns ``False``. Infinity must be rejected by artifact validation
+      *before* comparison; here it can only surface as a mismatch, never a PASS.
+
+    The tolerance term ``rel_tol * max(1, |a|, |b|)`` can only be evaluated once
+    both sides are known finite, so it can never blow up to infinity.
+    """
+    fa = _to_float(actual)
+    fb = _to_float(expected)
+    fa = float("nan") if fa is None else fa
+    fb = float("nan") if fb is None else fb
+
+    a_nan = math.isnan(fa)
+    b_nan = math.isnan(fb)
     if a_nan or b_nan:
-        return a_nan and b_nan  # NaN == NaN only
-    tol = rel_tol * max(1.0, abs(fa), abs(fb))
+        return bool(allow_both_nan and a_nan and b_nan)
+
+    # Infinity is never treated as an ordinary valid match.
+    if math.isinf(fa) or math.isinf(fb):
+        return False
+
+    tol = max(abs_tol, rel_tol * max(1.0, abs(fa), abs(fb)))
     return abs(fa - fb) <= tol
+
+
+def _floats_equal(a: object, b: object, *, rel_tol: float = FLOAT_REL_TOL) -> bool:
+    """Provenance/value equality where a legitimately-missing value is NaN.
+
+    Both-NaN is treated as equal (missing spread is an expected valid state);
+    infinity is always a mismatch.
+    """
+    return compare_numeric_values(a, b, allow_both_nan=True, rel_tol=rel_tol)
 
 
 def _cap(items: Sequence[str], cap: int = _MAX_EXAMPLES) -> Tuple[str, ...]:
@@ -382,7 +432,10 @@ def _cap(items: Sequence[str], cap: int = _MAX_EXAMPLES) -> Tuple[str, ...]:
 
 
 def _aggregate_status(statuses: Iterable[Status]) -> Status:
+    """Aggregate statuses. An empty input is FAIL — no evidence is not PASS."""
     seen = set(statuses)
+    if not seen:
+        return FAIL
     if FAIL in seen:
         return FAIL
     if WARN in seen:
@@ -544,6 +597,55 @@ def read_superset_build_params(panel: pd.DataFrame) -> Tuple[float, float]:
     return out[0], out[1]
 
 
+def check_panel_metric_integrity(panel: pd.DataFrame) -> ArtifactCheckResult:
+    """Layer A — artifact-value integrity for panel metric columns.
+
+    This is *separate* from S1 parity (Layer B). It rejects corrupt artifact
+    values regardless of what production S1 would do with them:
+
+    * ``atm_straddle_dollar_vol`` / ``atm_spread_pct`` must be true numeric
+      values. Non-numeric object/text is rejected (not silently coerced to NaN
+      and treated as ordinary missing liquidity).
+    * NaN is permitted only as the contract's missing-liquidity marker.
+    * Infinity always FAILs.
+    * Negative values FAIL (dollar volume and spread are non-negative).
+    """
+    problems: dict[str, object] = {}
+    for col in (COL_DVOL, COL_SPREAD):
+        if col not in panel.columns:
+            problems[col] = "missing"
+            continue
+        series = panel[col]
+        numeric = pd.to_numeric(series, errors="coerce")
+        # Non-null originals that fail numeric coercion are corrupt (text).
+        non_numeric = int((series.notna() & numeric.isna()).sum())
+        if non_numeric:
+            problems[col] = f"non_numeric_values:{non_numeric}"
+            continue
+        finite = numeric[np.isfinite(numeric)]
+        n_inf = int(np.isinf(numeric.to_numpy(dtype="float64", na_value=np.nan)).sum())
+        if n_inf:
+            problems[col] = f"infinite_values:{n_inf}"
+            continue
+        n_negative = int((finite < 0).sum())
+        if n_negative:
+            problems[col] = f"negative_values:{n_negative}"
+
+    if problems:
+        return ArtifactCheckResult(
+            name="panel_metric_integrity",
+            status=FAIL,
+            message=f"invalid panel metric values: {sorted(problems)}",
+            details=problems,
+        )
+    return ArtifactCheckResult(
+        name="panel_metric_integrity",
+        status=PASS,
+        message="panel metric columns numeric, finite-or-null, non-negative",
+        details={},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Part 6 — Supported artifact parameter envelope
 # ---------------------------------------------------------------------------
@@ -616,16 +718,30 @@ EMPTY_UNIVERSE_COLUMNS = ["ticker", "dvol_rank_pct", "spread_rank_pct"]
 
 
 def _eligibility_masks(snap: pd.DataFrame) -> dict[str, pd.Series]:
+    """Eligibility masks.
+
+    ``eligible`` reproduces production S1 exactly (Layer B parity):
+    ``has_valid_atm_pair == True AND dvol.notna() AND spread.notna()`` — the
+    same predicate as ``step1_get_universe``. Artifact-value integrity (rejecting
+    infinity / non-numeric text) is handled separately by
+    :func:`check_panel_metric_integrity` (Layer A). ``finite_*`` masks are
+    retained for audit-layer classification/reporting only.
+    """
     dvol = pd.to_numeric(snap[COL_DVOL], errors="coerce")
     spread = pd.to_numeric(snap[COL_SPREAD], errors="coerce")
     valid_pair = snap[COL_HAS_VALID] == True  # noqa: E712
+    notna_dvol = snap[COL_DVOL].notna()
+    notna_spread = snap[COL_SPREAD].notna()
     finite_dvol = np.isfinite(dvol)
     finite_spread = np.isfinite(spread)
     return {
         "valid_pair": valid_pair,
+        "notna_dvol": notna_dvol,
+        "notna_spread": notna_spread,
         "finite_dvol": finite_dvol,
         "finite_spread": finite_spread,
-        "eligible": valid_pair & finite_dvol & finite_spread,
+        # Layer B parity with production S1 (.notna(), not isfinite).
+        "eligible": valid_pair & notna_dvol & notna_spread,
     }
 
 
@@ -683,14 +799,17 @@ def compute_reference_universe(
 
     masks = _eligibility_masks(snap)
     valid_pair = masks["valid_pair"]
-    finite_dvol = masks["finite_dvol"]
-    finite_spread = masks["finite_spread"]
+    notna_dvol = masks["notna_dvol"]
+    notna_spread = masks["notna_spread"]
     eligible_mask = masks["eligible"]
 
+    # Exclusion buckets mirror the S1 (.notna) eligibility predicate exactly,
+    # so counts reconcile with parity. Infinite values are caught upstream by
+    # check_panel_metric_integrity (Layer A).
     exclusions = {
         "invalid_atm_pair": int((~valid_pair).sum()),
-        "missing_or_nonfinite_dvol": int((valid_pair & ~finite_dvol).sum()),
-        "missing_or_nonfinite_spread": int((valid_pair & finite_dvol & ~finite_spread).sum()),
+        "missing_or_nonfinite_dvol": int((valid_pair & ~notna_dvol).sum()),
+        "missing_or_nonfinite_spread": int((valid_pair & notna_dvol & ~notna_spread).sum()),
     }
 
     elig = snap.loc[eligible_mask].copy()
@@ -748,51 +867,93 @@ def compute_reference_universe(
 # Part 8 — Compare production S1 with independent reference
 # ---------------------------------------------------------------------------
 
-def compare_universe_to_reference(
-    trade_date: object,
-    panel: pd.DataFrame,
-    dvol_top_pct: float,
-    spread_bottom_pct: float,
-    *,
-    step1_fn=step1_get_universe,
-) -> UniverseComparisonResult:
-    """Call production S1 once and compare to the independent reference."""
-    reference = compute_reference_universe(trade_date, panel, dvol_top_pct, spread_bottom_pct)
+PRODUCTION_OUTPUT_COLUMNS = ("ticker", "dvol_rank_pct", "spread_rank_pct")
 
-    # step1_get_universe only reads ``config.dvol_top_pct`` / ``config.spread_bottom_pct``.
-    params = SimpleNamespace(dvol_top_pct=dvol_top_pct, spread_bottom_pct=spread_bottom_pct)
-    production = step1_fn(
-        normalize_date_value(trade_date, label="trade_date").date(),
-        panel,
-        params,
+
+def _comparison_fail(
+    reference: ReferenceUniverseResult,
+    production: object,
+    errors: Sequence[str],
+) -> UniverseComparisonResult:
+    prod_count = int(len(production)) if isinstance(production, pd.DataFrame) else 0
+    return UniverseComparisonResult(
+        match=False,
+        row_count_match=False,
+        production_count=prod_count,
+        reference_count=int(len(reference.selected)),
+        production_only=(),
+        reference_only=(),
+        duplicate_production_tickers=(),
+        rank_mismatches=(),
+        status=FAIL,
+        invalid_production_rank_tickers=(),
+        comparison_errors=tuple(errors),
     )
 
+
+def compare_production_output_to_reference(
+    production: object,
+    reference: ReferenceUniverseResult,
+) -> UniverseComparisonResult:
+    """Pure comparison of a production S1 output frame to the independent
+    reference. Does not call S1 and does not recompute the reference.
+
+    Malformed production output (not a DataFrame, missing required columns,
+    non-finite ranks) is represented as an audit FAIL with explicit
+    ``comparison_errors`` / mismatch records — never an opaque pandas exception.
+    """
+    if not isinstance(production, pd.DataFrame):
+        return _comparison_fail(
+            reference, production, [f"production output is not a DataFrame: {type(production)!r}"]
+        )
+
+    missing_cols = [c for c in PRODUCTION_OUTPUT_COLUMNS if c not in production.columns]
+    if missing_cols:
+        return _comparison_fail(
+            reference, production, [f"production output missing columns: {missing_cols}"]
+        )
+
     prod = production.copy()
-    prod_tickers = list(prod["ticker"])
+    prod_tickers = [str(t) for t in prod["ticker"].tolist()]
     dup_prod = sorted({t for t in prod_tickers if prod_tickers.count(t) > 1})
+
+    # Non-finite (NaN / inf) production ranks are invalid regardless of parity.
+    invalid_rank: list[str] = []
+    for row in prod.itertuples(index=False):
+        if not (_is_finite(row.dvol_rank_pct) and _is_finite(row.spread_rank_pct)):
+            invalid_rank.append(str(row.ticker))
+    invalid_rank = sorted(set(invalid_rank))
 
     prod_sorted = prod.sort_values("ticker", kind="mergesort").reset_index(drop=True)
     ref_sorted = reference.selected.sort_values("ticker", kind="mergesort").reset_index(drop=True)
 
-    prod_set = set(prod_sorted["ticker"])
-    ref_set = set(ref_sorted["ticker"])
+    prod_set = set(str(t) for t in prod_sorted["ticker"])
+    ref_set = set(str(t) for t in ref_sorted["ticker"])
     production_only = tuple(sorted(prod_set - ref_set))
     reference_only = tuple(sorted(ref_set - prod_set))
 
     ref_lookup = {
-        row.ticker: (float(row.dvol_rank_pct), float(row.spread_rank_pct))
+        str(row.ticker): (row.dvol_rank_pct, row.spread_rank_pct)
         for row in ref_sorted.itertuples(index=False)
     }
     rank_mismatches: list[Tuple[str, str, float, float]] = []
     for row in prod_sorted.itertuples(index=False):
-        if row.ticker not in ref_lookup:
+        ticker = str(row.ticker)
+        if ticker not in ref_lookup:
             continue
-        ref_dvol, ref_spread = ref_lookup[row.ticker]
-        if abs(float(row.dvol_rank_pct) - ref_dvol) > RANK_TOL:
-            rank_mismatches.append((row.ticker, "dvol_rank_pct", float(row.dvol_rank_pct), ref_dvol))
-        if abs(float(row.spread_rank_pct) - ref_spread) > RANK_TOL:
+        ref_dvol, ref_spread = ref_lookup[ticker]
+        # Ranks must be finite and equal within abs tolerance; NaN/inf → mismatch.
+        if not compare_numeric_values(
+            row.dvol_rank_pct, ref_dvol, allow_both_nan=False, rel_tol=0.0, abs_tol=RANK_TOL
+        ):
             rank_mismatches.append(
-                (row.ticker, "spread_rank_pct", float(row.spread_rank_pct), ref_spread)
+                (ticker, "dvol_rank_pct", _to_float(row.dvol_rank_pct), _to_float(ref_dvol))
+            )
+        if not compare_numeric_values(
+            row.spread_rank_pct, ref_spread, allow_both_nan=False, rel_tol=0.0, abs_tol=RANK_TOL
+        ):
+            rank_mismatches.append(
+                (ticker, "spread_rank_pct", _to_float(row.spread_rank_pct), _to_float(ref_spread))
             )
 
     row_count_match = len(prod_sorted) == len(ref_sorted)
@@ -800,6 +961,7 @@ def compare_universe_to_reference(
         not production_only
         and not reference_only
         and not dup_prod
+        and not invalid_rank
         and row_count_match
         and not rank_mismatches
     )
@@ -813,7 +975,37 @@ def compare_universe_to_reference(
         duplicate_production_tickers=tuple(dup_prod),
         rank_mismatches=tuple(rank_mismatches),
         status=PASS if match else FAIL,
+        invalid_production_rank_tickers=tuple(invalid_rank),
+        comparison_errors=(),
     )
+
+
+def compare_universe_to_reference(
+    trade_date: object,
+    panel: pd.DataFrame,
+    dvol_top_pct: float,
+    spread_bottom_pct: float,
+    *,
+    step1_fn=step1_get_universe,
+    reference: Optional[ReferenceUniverseResult] = None,
+) -> UniverseComparisonResult:
+    """Call production S1 **exactly once** and compare to the independent reference.
+
+    If ``reference`` is supplied it is reused (the reference is not recomputed),
+    so a caller such as :func:`evaluate_pit_sample` computes the reference once
+    and S1 once per sample.
+    """
+    if reference is None:
+        reference = compute_reference_universe(trade_date, panel, dvol_top_pct, spread_bottom_pct)
+
+    # step1_get_universe only reads ``config.dvol_top_pct`` / ``config.spread_bottom_pct``.
+    params = SimpleNamespace(dvol_top_pct=dvol_top_pct, spread_bottom_pct=spread_bottom_pct)
+    production = step1_fn(
+        normalize_date_value(trade_date, label="trade_date").date(),
+        panel,
+        params,
+    )
+    return compare_production_output_to_reference(production, reference)
 
 
 # ---------------------------------------------------------------------------
@@ -909,10 +1101,199 @@ def _members_to_records(members: object) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Fix 3 — Weekly artifact validation
+# ---------------------------------------------------------------------------
+
+WEEKLY_REQUIRED_COLUMNS: Tuple[str, ...] = (
+    COL_WEEK_END,
+    COL_TICKER,
+    COL_WEEKLY_DVOL,
+    COL_WEEKLY_SPREAD,
+    COL_WEEKLY_VALID,
+)
+
+_PREPARED_WEEK_COL = "weeknorm"
+
+
+def _is_bool_scalar(value: object) -> bool:
+    return isinstance(value, (bool, np.bool_))
+
+
+def check_weekly_artifact(weekly_obs: pd.DataFrame) -> Tuple[ArtifactCheckResult, ...]:
+    """Validate the full weekly observations artifact before rolling recompute.
+
+    Returns granular :class:`ArtifactCheckResult` records. Any FAIL means the
+    weekly artifact must not be consumed by :func:`recompute_rolling_snapshot`.
+    """
+    missing = [c for c in WEEKLY_REQUIRED_COLUMNS if c not in weekly_obs.columns]
+    if missing:
+        return (
+            ArtifactCheckResult(
+                name="weekly_required_columns",
+                status=FAIL,
+                message=f"missing required weekly columns: {missing}",
+                details={"missing": missing},
+            ),
+        )
+
+    results: list[ArtifactCheckResult] = [
+        ArtifactCheckResult(
+            name="weekly_required_columns",
+            status=PASS,
+            message="all required weekly columns present",
+            details={},
+        )
+    ]
+
+    # --- Grain: no duplicate (week_end_date, ticker) ---
+    try:
+        weeknorm = normalize_date_column(weekly_obs, COL_WEEK_END)
+        key = pd.DataFrame(
+            {COL_WEEK_END: weeknorm.values, COL_TICKER: weekly_obs[COL_TICKER].astype(str).values}
+        )
+        dup_mask = key.duplicated(keep=False)
+        n_dup = int(dup_mask.sum())
+        if n_dup:
+            examples = (
+                key[dup_mask].drop_duplicates().astype(str).agg(" / ".join, axis=1).tolist()
+            )
+            results.append(
+                ArtifactCheckResult(
+                    name="weekly_grain",
+                    status=FAIL,
+                    message=f"{n_dup} duplicate (week_end_date, ticker) rows",
+                    details={"duplicate_row_count": n_dup, "examples": _cap(examples)},
+                )
+            )
+        else:
+            results.append(
+                ArtifactCheckResult(
+                    name="weekly_grain", status=PASS, message="no duplicate weekly grain", details={}
+                )
+            )
+    except ArtifactValidationError as exc:
+        results.append(
+            ArtifactCheckResult(name="weekly_grain", status=FAIL, message=str(exc), details={})
+        )
+
+    # --- Ticker validity ---
+    tick = weekly_obs[COL_TICKER]
+    null_tick = int(tick.isna().sum())
+    empty_tick = int((tick.dropna().astype(str).str.strip() == "").sum())
+    results.append(
+        ArtifactCheckResult(
+            name="weekly_ticker_validity",
+            status=FAIL if (null_tick or empty_tick) else PASS,
+            message=f"{null_tick} null and {empty_tick} empty weekly ticker values",
+            details={"null_count": null_tick, "empty_count": empty_tick},
+        )
+    )
+
+    # --- Boolean domain for weekly_has_valid_quote ---
+    non_bool = int(sum(1 for v in weekly_obs[COL_WEEKLY_VALID].tolist() if not _is_bool_scalar(v)))
+    results.append(
+        ArtifactCheckResult(
+            name="weekly_has_valid_quote_domain",
+            status=FAIL if non_bool else PASS,
+            message=(
+                f"{non_bool} non-boolean weekly_has_valid_quote values"
+                if non_bool
+                else "weekly_has_valid_quote is boolean"
+            ),
+            details={"non_boolean_count": non_bool},
+        )
+    )
+
+    # --- Volume validity (existing rows must be numeric, finite, non-negative) ---
+    vol = weekly_obs[COL_WEEKLY_DVOL]
+    vol_num = pd.to_numeric(vol, errors="coerce")
+    vol_non_numeric = int((vol.notna() & vol_num.isna()).sum())
+    vol_arr = vol_num.to_numpy(dtype="float64", na_value=np.nan)
+    vol_nan = int(np.isnan(vol_arr).sum())  # includes non-numeric coerced-to-NaN
+    vol_inf = int(np.isinf(vol_arr).sum())
+    vol_negative = int((vol_num[np.isfinite(vol_num)] < 0).sum())
+    vol_problems = (vol_non_numeric > 0) or (vol_nan > 0) or (vol_inf > 0) or (vol_negative > 0)
+    results.append(
+        ArtifactCheckResult(
+            name="weekly_volume_validity",
+            status=FAIL if vol_problems else PASS,
+            message=(
+                "weekly volume must be numeric, finite, non-negative"
+                if vol_problems
+                else "weekly volume numeric, finite, non-negative"
+            ),
+            details={
+                "non_numeric": vol_non_numeric,
+                "nan_or_missing": vol_nan,
+                "infinite": vol_inf,
+                "negative": vol_negative,
+            },
+        )
+    )
+
+    # --- Spread consistency vs valid flag ---
+    spread = weekly_obs[COL_WEEKLY_SPREAD]
+    spread_num = pd.to_numeric(spread, errors="coerce")
+    spread_non_numeric = int((spread.notna() & spread_num.isna()).sum())
+    spread_arr = spread_num.to_numpy(dtype="float64", na_value=np.nan)
+    spread_inf = int(np.isinf(spread_arr).sum())
+    valid_flags = [_is_bool_scalar(v) and bool(v) for v in weekly_obs[COL_WEEKLY_VALID].tolist()]
+    valid_mask = pd.Series(valid_flags, index=weekly_obs.index)
+    # valid quote requires finite spread.
+    valid_needs_finite = int((valid_mask & ~np.isfinite(spread_num)).sum())
+    spread_problems = (spread_non_numeric > 0) or (spread_inf > 0) or (valid_needs_finite > 0)
+    results.append(
+        ArtifactCheckResult(
+            name="weekly_spread_consistency",
+            status=FAIL if spread_problems else PASS,
+            message=(
+                "valid quotes require finite spread; infinity/non-numeric spread rejected"
+                if spread_problems
+                else "weekly spread consistent with valid flag"
+            ),
+            details={
+                "non_numeric": spread_non_numeric,
+                "infinite": spread_inf,
+                "valid_quote_with_nonfinite_spread": valid_needs_finite,
+            },
+        )
+    )
+
+    return tuple(results)
+
+
+def validate_weekly_artifact(weekly_obs: pd.DataFrame) -> pd.DataFrame:
+    """Validate and return a *prepared* weekly frame for rolling recompute.
+
+    Raises :class:`ArtifactValidationError` on any structural problem (see
+    :func:`check_weekly_artifact`). On success returns a copy with a normalized
+    ``weeknorm`` date column, an explicitly-normalized boolean quote flag, and
+    numeric volume/spread columns — so recompute never depends on duplicate-row
+    ordering or ``bool()`` on unvalidated data.
+    """
+    results = check_weekly_artifact(weekly_obs)
+    failures = [r for r in results if r.status == FAIL]
+    if failures:
+        raise ArtifactValidationError(
+            "invalid weekly artifact: "
+            + "; ".join(f"{r.name}: {r.message}" for r in failures)
+        )
+
+    prepared = weekly_obs.copy()
+    prepared[_PREPARED_WEEK_COL] = normalize_date_column(prepared, COL_WEEK_END).values
+    prepared[COL_WEEKLY_VALID] = [bool(v) for v in prepared[COL_WEEKLY_VALID].tolist()]
+    prepared[COL_WEEKLY_DVOL] = pd.to_numeric(prepared[COL_WEEKLY_DVOL], errors="coerce")
+    prepared[COL_WEEKLY_SPREAD] = pd.to_numeric(prepared[COL_WEEKLY_SPREAD], errors="coerce")
+    return prepared
+
+
+# ---------------------------------------------------------------------------
 # Part 10 — Independent rolling-panel recomputation
 # ---------------------------------------------------------------------------
 
 def _global_week_ends(weekly_obs: pd.DataFrame) -> list[pd.Timestamp]:
+    if _PREPARED_WEEK_COL in weekly_obs.columns:
+        return sorted(set(weekly_obs[_PREPARED_WEEK_COL].tolist()))
     weeks = normalize_date_column(weekly_obs, COL_WEEK_END)
     return sorted(set(weeks.tolist()))
 
@@ -932,6 +1313,8 @@ def recompute_rolling_snapshot(
     weekly_obs: pd.DataFrame,
     lookback_weeks: int,
     min_valid_quote_weeks: int,
+    *,
+    assume_validated: bool = False,
 ) -> pd.DataFrame:
     """Independently recompute the C4 rolling panel row for each checked ticker.
 
@@ -940,27 +1323,33 @@ def recompute_rolling_snapshot(
     zero-filled for volume and treated as invalid quotes; the denominator is the
     configured ``lookback_weeks`` even during early-history shortfall.
 
+    The weekly artifact is fully validated first (see
+    :func:`validate_weekly_artifact`) — it is never silently consumed on invalid
+    input. Pass ``assume_validated=True`` with an already-prepared frame to skip
+    revalidation within one audit run.
+
     Returns one row per checked ticker (index = ticker) with columns matching the
     panel provenance fields.
     """
-    for col in (COL_WEEK_END, COL_TICKER, COL_WEEKLY_DVOL, COL_WEEKLY_SPREAD, COL_WEEKLY_VALID):
-        if col not in weekly_obs.columns:
-            raise ArtifactValidationError(f"weekly observations missing column {col!r}")
+    if assume_validated:
+        weekly = weekly_obs
+        if _PREPARED_WEEK_COL not in weekly.columns:
+            raise PitAuditError("assume_validated=True requires a prepared weekly frame")
+    else:
+        weekly = validate_weekly_artifact(weekly_obs)
 
     snapshot = normalize_date_value(target_snapshot, label="target_snapshot")
     lookback_weeks = int(lookback_weeks)
     min_valid_quote_weeks = int(min_valid_quote_weeks)
 
-    week_series = normalize_date_column(weekly_obs, COL_WEEK_END)
-    all_week_ends = sorted(set(week_series.tolist()))
+    all_week_ends = sorted(set(weekly[_PREPARED_WEEK_COL].tolist()))
     window = _expected_window(all_week_ends, snapshot, lookback_weeks)
     window_set = set(window)
     window_shortfall = max(0, lookback_weeks - len(window))
     window_start = window[0] if window else snapshot
 
-    weekly = weekly_obs.copy()
-    weekly["weeknorm"] = week_series.values
-    in_window = weekly[weekly["weeknorm"].isin(window_set)]
+    in_window = weekly[weekly[_PREPARED_WEEK_COL].isin(window_set)]
+    # Grain is validated upstream, so (weeknorm, ticker) keys are unique.
     lookup: dict[tuple[pd.Timestamp, str], object] = {
         (row.weeknorm, row.ticker): row for row in in_window.itertuples(index=False)
     }
@@ -1055,8 +1444,17 @@ def check_rolling_provenance(
     if min_valid_quote_weeks is None:
         min_valid_quote_weeks = int(panel["min_valid_quote_weeks"].iloc[0])
 
+    # Validate the weekly artifact once, then reuse the prepared frame for both
+    # the recompute and the future-invariance recompute (no repeated validation).
+    prepared_weekly = validate_weekly_artifact(weekly_obs)
+
     recomputed = recompute_rolling_snapshot(
-        snapshot, checked_tickers, weekly_obs, lookback_weeks, min_valid_quote_weeks
+        snapshot,
+        checked_tickers,
+        prepared_weekly,
+        lookback_weeks,
+        min_valid_quote_weeks,
+        assume_validated=True,
     )
 
     month = normalize_date_column(panel, COL_MONTH_DATE)
@@ -1075,7 +1473,12 @@ def check_rolling_provenance(
     future_ok = True
     if run_future_invariance:
         future_ok = check_future_invariance(
-            snapshot, checked_tickers, weekly_obs, lookback_weeks, min_valid_quote_weeks
+            snapshot,
+            checked_tickers,
+            prepared_weekly,
+            lookback_weeks,
+            min_valid_quote_weeks,
+            assume_validated=True,
         )
 
     matches = not field_mismatches
@@ -1084,7 +1487,7 @@ def check_rolling_provenance(
         target_snapshot_date=snapshot,
         tickers_checked=tuple(checked_tickers),
         expected_week_ends=tuple(
-            _expected_window(_global_week_ends(weekly_obs), snapshot, lookback_weeks)
+            _expected_window(_global_week_ends(prepared_weekly), snapshot, lookback_weeks)
         ),
         recomputed_matches_panel=matches,
         field_mismatches=tuple(field_mismatches),
@@ -1103,6 +1506,8 @@ def check_future_invariance(
     weekly_obs: pd.DataFrame,
     lookback_weeks: int,
     min_valid_quote_weeks: int,
+    *,
+    assume_validated: bool = False,
 ) -> bool:
     """Recomputing snapshot S must not change when future weekly rows are present.
 
@@ -1112,14 +1517,25 @@ def check_future_invariance(
     """
     snapshot = normalize_date_value(target_snapshot, label="target_snapshot")
 
+    prepared = weekly_obs if assume_validated else validate_weekly_artifact(weekly_obs)
+
     full = recompute_rolling_snapshot(
-        snapshot, checked_tickers, weekly_obs, lookback_weeks, min_valid_quote_weeks
+        snapshot,
+        checked_tickers,
+        prepared,
+        lookback_weeks,
+        min_valid_quote_weeks,
+        assume_validated=True,
     )
 
-    weeks = normalize_date_column(weekly_obs, COL_WEEK_END)
-    restricted_obs = weekly_obs.loc[weeks <= snapshot].copy()
+    restricted_obs = prepared.loc[prepared[_PREPARED_WEEK_COL] <= snapshot].copy()
     restricted = recompute_rolling_snapshot(
-        snapshot, checked_tickers, restricted_obs, lookback_weeks, min_valid_quote_weeks
+        snapshot,
+        checked_tickers,
+        restricted_obs,
+        lookback_weeks,
+        min_valid_quote_weeks,
+        assume_validated=True,
     )
 
     for ticker in checked_tickers:
@@ -1191,8 +1607,13 @@ def check_full_history_superset_coverage(
 
     work = panel.copy()
     work[COL_MONTH_DATE] = normalize_date_column(work, COL_MONTH_DATE).values
-    dvol = pd.to_numeric(work[COL_DVOL], errors="coerce")
-    spread = pd.to_numeric(work[COL_SPREAD], errors="coerce")
+    # Assign coerced numeric values back so ranking is numeric, never
+    # lexicographic on object/string columns. Non-numeric values become NaN and
+    # are excluded (finite check below).
+    work[COL_DVOL] = pd.to_numeric(work[COL_DVOL], errors="coerce")
+    work[COL_SPREAD] = pd.to_numeric(work[COL_SPREAD], errors="coerce")
+    dvol = work[COL_DVOL]
+    spread = work[COL_SPREAD]
     eligible = (work[COL_HAS_VALID] == True) & np.isfinite(dvol) & np.isfinite(spread)  # noqa: E712
     elig = work.loc[eligible].copy()
 
@@ -1329,9 +1750,11 @@ def evaluate_pit_sample(
     compares production S1 to it, computes a deterministic membership hash, and
     reads window metadata from the panel snapshot.
     """
+    # Compute the reference exactly once, and reuse it for the comparison so
+    # production S1 is called exactly once per sample.
     reference = compute_reference_universe(trade_date, panel, dvol_top_pct, spread_bottom_pct)
     comparison = compare_universe_to_reference(
-        trade_date, panel, dvol_top_pct, spread_bottom_pct, step1_fn=step1_fn
+        trade_date, panel, dvol_top_pct, spread_bottom_pct, step1_fn=step1_fn, reference=reference
     )
 
     resolved = reference.resolved_snapshot_date
@@ -1348,13 +1771,33 @@ def evaluate_pit_sample(
     if resolved is not None and resolved >= reference.trade_date:
         status = FAIL
         notes.append("resolved_snapshot_date >= trade_date (same-day/future prohibited)")
-    if target_ts is not None and resolved is not None and target_ts != resolved:
-        status = FAIL
-        notes.append(f"target_snapshot_date {target_ts.date()} != resolved {resolved.date()}")
+
+    # Target-snapshot resolution: an expected target with no resolved snapshot is
+    # a hard FAIL (not skipped merely because ``resolved`` is None).
+    if target_ts is not None:
+        if resolved is None:
+            status = FAIL
+            notes.append(
+                f"target_snapshot_date {target_ts.date()} supplied but no snapshot resolved"
+            )
+        elif target_ts != resolved:
+            status = FAIL
+            notes.append(f"target_snapshot_date {target_ts.date()} != resolved {resolved.date()}")
 
     if not comparison.match:
         status = FAIL
         notes.append("production S1 differs from independent reference")
+
+    # Empty-universe conditions are explicit non-blocking WARNs (never silent
+    # PASS). A supplied target with no snapshot already forced FAIL above.
+    if reference.empty_reason in (
+        "before_first_snapshot",
+        "no_eligible_rows",
+        "no_rows_pass_thresholds",
+    ):
+        notes.append(f"empty universe: {reference.empty_reason}")
+        if status == PASS:
+            status = WARN
 
     # Window metadata from the panel snapshot (if present).
     window_start = window_end = None
@@ -1419,7 +1862,11 @@ def assemble_audit_report(
     sample_superset_coverage: Sequence[SupersetCoverageResult],
     full_history_superset_coverage: Optional[FullHistorySupersetCoverageResult],
 ) -> PitUniverseAuditReport:
-    """Package audit results and compute overall status (pure, no I/O)."""
+    """Package audit results and compute overall status (pure, no I/O).
+
+    No evidence is not PASS: if any mandatory section is missing or empty, the
+    report records a blocking failure and ``overall_status`` is FAIL.
+    """
     all_statuses: list[Status] = [c.status for c in artifact_checks]
     if artifact_envelope is not None:
         all_statuses.append(artifact_envelope.status)
@@ -1431,6 +1878,25 @@ def assemble_audit_report(
 
     blocking: list[str] = []
     warnings: list[str] = []
+
+    # --- Mandatory-evidence gate: absence of evidence is a blocking failure. ---
+    mandatory_missing: list[str] = []
+    if not artifact_checks:
+        mandatory_missing.append("no artifact checks")
+    if artifact_envelope is None:
+        mandatory_missing.append("missing artifact envelope evidence")
+    if not samples:
+        mandatory_missing.append("no PIT samples evaluated")
+    if not rolling_provenance:
+        mandatory_missing.append("no rolling provenance evidence")
+    if not sample_superset_coverage:
+        mandatory_missing.append("no sample superset coverage evidence")
+    if full_history_superset_coverage is None:
+        mandatory_missing.append("no full-history superset coverage evidence")
+    if mandatory_missing:
+        all_statuses.append(FAIL)
+        blocking.extend(mandatory_missing)
+
     for c in artifact_checks:
         if c.status == FAIL:
             blocking.append(f"artifact:{c.name}: {c.message}")

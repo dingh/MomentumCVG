@@ -7,6 +7,7 @@ membership hashing, independent rolling recomputation, future invariance,
 superset coverage, and missing/new ticker classification.
 
 Test map (design memo §12 / task Part 14): T1–T33.
+C7.2A defensive-correctness follow-up adds T34–T53.
 """
 from __future__ import annotations
 
@@ -18,21 +19,27 @@ import pytest
 from src.data import pit_universe_audit as audit
 from src.data.pit_universe_audit import (
     ArtifactValidationError,
+    assemble_audit_report,
     check_artifact_envelope,
     check_build_param_homogeneity,
     check_full_history_superset_coverage,
     check_future_invariance,
     check_panel_grain,
+    check_panel_metric_integrity,
     check_required_columns,
     check_rolling_provenance,
     check_superset_coverage,
+    check_weekly_artifact,
     classify_snapshot_membership,
+    compare_numeric_values,
     compare_universe_to_reference,
     compute_reference_universe,
+    evaluate_pit_sample,
     membership_hash,
     normalize_date_column,
     normalize_date_value,
     recompute_rolling_snapshot,
+    validate_weekly_artifact,
 )
 
 SNAP1 = pd.Timestamp("2024-01-05")
@@ -765,3 +772,376 @@ def test_t33_membership_hash_changes():
         ignore_index=True,
     )
     assert membership_hash("2024-01-15", "2024-01-12", 0.20, 1.0, m3) != base
+
+
+# ===========================================================================
+# C7.2A — defensive correctness follow-up (T34–T53)
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# T34 — strict numeric comparison contract (finite / NaN / infinity)
+# ---------------------------------------------------------------------------
+
+def test_t34_finite_vs_infinity_comparison_fails():
+    C = compare_numeric_values
+    # finite vs same / different finite
+    assert C(1.0, 1.0, allow_both_nan=False, rel_tol=0.0, abs_tol=1e-9) is True
+    assert C(1.0, 2.0, allow_both_nan=False, rel_tol=0.0, abs_tol=1e-9) is False
+    # NaN vs NaN — only equal when allowed
+    assert C(float("nan"), float("nan"), allow_both_nan=True, rel_tol=1e-9) is True
+    assert C(float("nan"), float("nan"), allow_both_nan=False, rel_tol=1e-9) is False
+    # one-sided NaN never matches
+    assert C(float("nan"), 1.0, allow_both_nan=True, rel_tol=1e-9) is False
+    assert C(1.0, float("nan"), allow_both_nan=True, rel_tol=1e-9) is False
+    # infinity is never an ordinary valid match
+    assert C(1.0, float("inf"), allow_both_nan=False, rel_tol=1e-9) is False
+    assert C(float("inf"), float("inf"), allow_both_nan=False, rel_tol=1e-9) is False
+    assert C(float("-inf"), float("-inf"), allow_both_nan=False, rel_tol=1e-9) is False
+    # tolerance term can never blow up to infinity via the reference value
+    assert C(1e300, 1e300, allow_both_nan=False, rel_tol=1e-9) is True
+
+
+# ---------------------------------------------------------------------------
+# T35 — NaN production rank detected
+# ---------------------------------------------------------------------------
+
+def test_t35_nan_production_rank_detected():
+    panel = _two_snapshot_panel()
+
+    def _buggy(td, pnl, cfg):
+        return pd.DataFrame(
+            {
+                "ticker": ["A", "B", "C"],
+                "dvol_rank_pct": [float("nan"), 2 / 3, 1 / 3],
+                "spread_rank_pct": [1.0, 2 / 3, 1 / 3],
+            }
+        )
+
+    res = compare_universe_to_reference(date(2024, 1, 10), panel, 1.0, 1.0, step1_fn=_buggy)
+    assert res.status == "FAIL"
+    assert "A" in res.invalid_production_rank_tickers
+
+
+# ---------------------------------------------------------------------------
+# T36 — infinite production rank detected
+# ---------------------------------------------------------------------------
+
+def test_t36_infinite_production_rank_detected():
+    panel = _two_snapshot_panel()
+
+    def _buggy(td, pnl, cfg):
+        return pd.DataFrame(
+            {
+                "ticker": ["A", "B", "C"],
+                "dvol_rank_pct": [1.0, 2 / 3, 1 / 3],
+                "spread_rank_pct": [float("inf"), 2 / 3, 1 / 3],
+            }
+        )
+
+    res = compare_universe_to_reference(date(2024, 1, 10), panel, 1.0, 1.0, step1_fn=_buggy)
+    assert res.status == "FAIL"
+    assert "A" in res.invalid_production_rank_tickers
+
+
+# ---------------------------------------------------------------------------
+# T37 — empty report cannot PASS
+# ---------------------------------------------------------------------------
+
+def test_t37_empty_report_cannot_pass():
+    assert audit._aggregate_status([]) == "FAIL"
+    report = assemble_audit_report([], None, [], [], [], None)
+    assert report.overall_status == "FAIL"
+    assert report.blocking_failures  # non-empty
+
+
+# ---------------------------------------------------------------------------
+# T38 — missing mandatory report sections FAIL
+# ---------------------------------------------------------------------------
+
+def test_t38_missing_mandatory_sections_fail():
+    check = audit.ArtifactCheckResult(name="x", status="PASS", message="", details={})
+    env = check_artifact_envelope(0.20, 1.0, 0.20, 1.0)  # PASS
+    # Envelope + one artifact check present, but samples/rolling/coverage absent.
+    report = assemble_audit_report([check], env, [], [], [], None)
+    assert report.overall_status == "FAIL"
+    assert any("no PIT samples" in b for b in report.blocking_failures)
+    assert any("rolling provenance" in b for b in report.blocking_failures)
+    assert any("full-history" in b for b in report.blocking_failures)
+
+
+# ---------------------------------------------------------------------------
+# T39 — supplied target with unresolved snapshot FAIL
+# ---------------------------------------------------------------------------
+
+def test_t39_target_with_unresolved_snapshot_fail():
+    panel = _two_snapshot_panel()
+    # trade == first snapshot → strict `<` resolves nothing, but a target is
+    # supplied → hard FAIL (not silently skipped).
+    res = evaluate_pit_sample(SNAP1, panel, 1.0, 1.0, target_snapshot_date=SNAP1)
+    assert res.status == "FAIL"
+    assert res.resolved_snapshot_date is None
+    assert any("supplied but no snapshot resolved" in n for n in res.notes)
+
+
+# ---------------------------------------------------------------------------
+# T40 — before-first sample WARN
+# ---------------------------------------------------------------------------
+
+def test_t40_before_first_sample_warn():
+    panel = _two_snapshot_panel()
+    res = evaluate_pit_sample(SNAP1, panel, 1.0, 1.0)  # no target
+    assert res.status == "WARN"
+    assert any("before_first_snapshot" in n for n in res.notes)
+
+
+# ---------------------------------------------------------------------------
+# T41 — no-eligible sample WARN
+# ---------------------------------------------------------------------------
+
+def test_t41_no_eligible_sample_warn():
+    panel = _ref_panel(
+        [
+            dict(month_date=SNAP1, ticker="A", atm_straddle_dollar_vol=1_000_000, atm_spread_pct=0.01, has_valid_atm_pair=False),
+        ]
+    )
+    res = evaluate_pit_sample(date(2024, 1, 10), panel, 1.0, 1.0)
+    assert res.status == "WARN"
+    assert any("no_eligible_rows" in n for n in res.notes)
+
+
+# ---------------------------------------------------------------------------
+# T42 — no-threshold-pass sample WARN
+# ---------------------------------------------------------------------------
+
+def test_t42_no_threshold_pass_sample_warn():
+    # Highest-volume ticker has the widest spread and vice versa, so a narrow
+    # AND filter selects nothing.
+    panel = _ref_panel(
+        [
+            dict(month_date=SNAP1, ticker="A", atm_straddle_dollar_vol=4_000_000, atm_spread_pct=0.04, has_valid_atm_pair=True),
+            dict(month_date=SNAP1, ticker="B", atm_straddle_dollar_vol=3_000_000, atm_spread_pct=0.03, has_valid_atm_pair=True),
+            dict(month_date=SNAP1, ticker="C", atm_straddle_dollar_vol=2_000_000, atm_spread_pct=0.02, has_valid_atm_pair=True),
+            dict(month_date=SNAP1, ticker="D", atm_straddle_dollar_vol=1_000_000, atm_spread_pct=0.01, has_valid_atm_pair=True),
+        ]
+    )
+    res = evaluate_pit_sample(date(2024, 1, 10), panel, 0.25, 0.25)
+    assert res.selected_count == 0
+    assert res.status == "WARN"
+    assert any("no_rows_pass_thresholds" in n for n in res.notes)
+
+
+# ---------------------------------------------------------------------------
+# T43 — weekly duplicate grain FAIL
+# ---------------------------------------------------------------------------
+
+def test_t43_weekly_duplicate_grain_fail():
+    weekly = _weekly(
+        [
+            _wrow(W1, "AAA", 100.0, 0.02, True),
+            _wrow(W1, "AAA", 200.0, 0.03, True),  # duplicate (week, ticker)
+        ]
+    )
+    results = check_weekly_artifact(weekly)
+    assert any(r.name == "weekly_grain" and r.status == "FAIL" for r in results)
+    # recompute must not silently proceed on invalid weekly input.
+    with pytest.raises(ArtifactValidationError):
+        recompute_rolling_snapshot(W1, ["AAA"], weekly, 3, 2)
+
+
+# ---------------------------------------------------------------------------
+# T44 — weekly invalid Boolean FAIL
+# ---------------------------------------------------------------------------
+
+def test_t44_weekly_invalid_boolean_fail():
+    nan_bool = _weekly(
+        [
+            _wrow(W1, "AAA", 100.0, 0.02, True),
+            _wrow(W2, "AAA", 200.0, 0.03, float("nan")),
+        ]
+    )
+    results = check_weekly_artifact(nan_bool)
+    assert any(r.name == "weekly_has_valid_quote_domain" and r.status == "FAIL" for r in results)
+
+    str_bool = _weekly([_wrow(W1, "AAA", 100.0, 0.02, "yes")])
+    r2 = check_weekly_artifact(str_bool)
+    assert any(r.name == "weekly_has_valid_quote_domain" and r.status == "FAIL" for r in r2)
+
+
+# ---------------------------------------------------------------------------
+# T45 — weekly existing NaN / inf / negative volume FAIL
+# ---------------------------------------------------------------------------
+
+def test_t45_weekly_bad_volume_fail():
+    for badvol in (float("nan"), float("inf"), -5.0):
+        weekly = _weekly(
+            [
+                _wrow(W1, "AAA", 100.0, 0.02, True),
+                _wrow(W2, "AAA", badvol, 0.03, True),
+            ]
+        )
+        results = check_weekly_artifact(weekly)
+        assert any(
+            r.name == "weekly_volume_validity" and r.status == "FAIL" for r in results
+        ), badvol
+
+
+# ---------------------------------------------------------------------------
+# T46 — valid weekly quote requires finite spread
+# ---------------------------------------------------------------------------
+
+def test_t46_valid_quote_requires_finite_spread():
+    nan_spread = _weekly([_wrow(W1, "AAA", 100.0, float("nan"), True)])
+    r1 = check_weekly_artifact(nan_spread)
+    assert any(r.name == "weekly_spread_consistency" and r.status == "FAIL" for r in r1)
+
+    inf_spread = _weekly([_wrow(W1, "AAA", 100.0, float("inf"), True)])
+    r2 = check_weekly_artifact(inf_spread)
+    assert any(r.name == "weekly_spread_consistency" and r.status == "FAIL" for r in r2)
+
+
+# ---------------------------------------------------------------------------
+# T47 — invalid quote with NaN spread allowed; finite spread ignored
+# ---------------------------------------------------------------------------
+
+def test_t47_invalid_quote_nan_spread_allowed():
+    weekly = _weekly(
+        [
+            _wrow(W1, "AAA", 100.0, float("nan"), False),  # invalid quote, NaN ok
+            _wrow(W2, "AAA", 200.0, 0.02, True),
+        ]
+    )
+    results = check_weekly_artifact(weekly)
+    assert all(r.status == "PASS" for r in results)
+    prepared = validate_weekly_artifact(weekly)
+    assert "weeknorm" in prepared.columns
+
+    # An invalid-quote week with a finite spread is allowed but ignored by the
+    # rolling spread aggregation.
+    weekly2 = _weekly(
+        [
+            _wrow(W1, "AAA", 100.0, 0.99, False),  # finite but invalid → ignored
+            _wrow(W2, "AAA", 200.0, 0.02, True),
+            _wrow(W3, "AAA", 300.0, 0.04, True),
+        ]
+    )
+    rec = recompute_rolling_snapshot(W3, ["AAA"], weekly2, 3, 2)
+    assert rec.loc["AAA", "atm_spread_pct"] == pytest.approx(0.03)  # mean(0.02, 0.04)
+
+
+# ---------------------------------------------------------------------------
+# T48 — panel infinity validation FAIL
+# ---------------------------------------------------------------------------
+
+def test_t48_panel_infinity_validation_fail():
+    inf_panel = _ref_panel(
+        [
+            dict(month_date=SNAP1, ticker="A", atm_straddle_dollar_vol=float("inf"), atm_spread_pct=0.01, has_valid_atm_pair=True),
+        ]
+    )
+    assert check_panel_metric_integrity(inf_panel).status == "FAIL"
+
+    neg_panel = _ref_panel(
+        [
+            dict(month_date=SNAP1, ticker="A", atm_straddle_dollar_vol=-1.0, atm_spread_pct=0.01, has_valid_atm_pair=True),
+        ]
+    )
+    assert check_panel_metric_integrity(neg_panel).status == "FAIL"
+
+    # Clean panel (NaN missing-liquidity allowed) passes.
+    assert check_panel_metric_integrity(_two_snapshot_panel()).status == "PASS"
+
+
+# ---------------------------------------------------------------------------
+# T49 — independent reference exactly matches S1 on clean validated data
+# ---------------------------------------------------------------------------
+
+def test_t49_reference_matches_s1_clean():
+    panel = _two_snapshot_panel()
+    assert check_panel_metric_integrity(panel).status == "PASS"
+    res = compare_universe_to_reference(date(2024, 1, 10), panel, 1.0, 1.0)
+    assert res.match is True
+    assert res.status == "PASS"
+
+
+# ---------------------------------------------------------------------------
+# T50 — full-history ranking uses numeric values, not lexicographic
+# ---------------------------------------------------------------------------
+
+def test_t50_full_history_numeric_ranking():
+    # Object-dtype numeric strings where lexicographic order ("9" > "100" > "10")
+    # disagrees with numeric order (100 > 10 > 9).
+    rows = [
+        dict(month_date=SNAP1, ticker="LOW", atm_straddle_dollar_vol="9", atm_spread_pct="0.01", has_valid_atm_pair=True),
+        dict(month_date=SNAP1, ticker="MID", atm_straddle_dollar_vol="10", atm_spread_pct="0.01", has_valid_atm_pair=True),
+        dict(month_date=SNAP1, ticker="HIGH", atm_straddle_dollar_vol="100", atm_spread_pct="0.01", has_valid_atm_pair=True),
+    ]
+    panel = _full_panel(rows, dvol_top_pct=0.30, spread_bot_pct=1.0)
+    # Numeric top ~1/3 → HIGH only. Lexicographic ranking would pick LOW ("9").
+    res = check_full_history_superset_coverage(panel, ["HIGH"], dvol_top_pct=0.30)
+    assert res.status == "PASS"
+    assert res.unique_selected_tickers == 1
+
+
+# ---------------------------------------------------------------------------
+# T51 — datetime64 fast path matches heterogeneous fallback
+# ---------------------------------------------------------------------------
+
+def test_t51_datetime_fast_path_matches_fallback():
+    fast = pd.DataFrame(
+        {"month_date": pd.to_datetime(["2024-01-05 09:30:00", "2024-01-12 16:00:00"])}
+    )
+    assert pd.api.types.is_datetime64_dtype(fast["month_date"])
+    slow = pd.DataFrame(
+        {"month_date": pd.Series(["2024-01-05 09:30:00", "2024-01-12 16:00:00"], dtype=object)}
+    )
+    # Non-datetime dtype forces the strict per-value fallback path.
+    assert not pd.api.types.is_datetime64_dtype(slow["month_date"])
+
+    out_fast = normalize_date_column(fast, "month_date")
+    out_slow = normalize_date_column(slow, "month_date")
+    expected = [pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-12")]
+    assert list(out_fast) == expected
+    assert list(out_slow) == expected
+
+
+# ---------------------------------------------------------------------------
+# T52 — sample evaluation calls production S1 exactly once (and reference once)
+# ---------------------------------------------------------------------------
+
+def test_t52_sample_calls_s1_once(monkeypatch):
+    panel = _two_snapshot_panel()
+    calls = {"s1": 0, "ref": 0}
+
+    real_s1 = audit.step1_get_universe
+
+    def counting_s1(td, pnl, cfg):
+        calls["s1"] += 1
+        return real_s1(td, pnl, cfg)
+
+    real_ref = audit.compute_reference_universe
+
+    def counting_ref(*args, **kwargs):
+        calls["ref"] += 1
+        return real_ref(*args, **kwargs)
+
+    monkeypatch.setattr(audit, "compute_reference_universe", counting_ref)
+    res = evaluate_pit_sample(date(2024, 1, 10), panel, 1.0, 1.0, step1_fn=counting_s1)
+    assert res.production_reference_match is True
+    assert calls["s1"] == 1
+    assert calls["ref"] == 1
+
+
+# ---------------------------------------------------------------------------
+# T53 — missing production output column produces comparison FAIL
+# ---------------------------------------------------------------------------
+
+def test_t53_missing_production_column_fail():
+    panel = _two_snapshot_panel()
+
+    def _bad(td, pnl, cfg):
+        return pd.DataFrame({"ticker": ["A", "B"], "dvol_rank_pct": [1.0, 0.5]})  # no spread_rank_pct
+
+    res = compare_universe_to_reference(date(2024, 1, 10), panel, 1.0, 1.0, step1_fn=_bad)
+    assert res.status == "FAIL"
+    assert any("missing columns" in e for e in res.comparison_errors)
