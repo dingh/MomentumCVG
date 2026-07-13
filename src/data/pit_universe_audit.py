@@ -205,6 +205,7 @@ class PitResolutionResult:
     mismatch_tickers: Tuple[str, ...]
     status: Status
     notes: Tuple[str, ...] = ()
+    selected_tickers: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1582,6 +1583,74 @@ def check_superset_coverage(
     )
 
 
+def check_sample_superset_coverage_consistency(
+    samples: Sequence[PitResolutionResult],
+    coverage: Sequence[SupersetCoverageResult],
+    *,
+    max_examples: int = _MAX_EXAMPLES,
+) -> ArtifactCheckResult:
+    """Verify complete sample membership aligns with coverage certification counts."""
+    if len(samples) != len(coverage):
+        return ArtifactCheckResult(
+            name="sample_superset_coverage_consistency",
+            status=FAIL,
+            message=(
+                f"sample/coverage length mismatch: {len(samples)} samples vs "
+                f"{len(coverage)} coverage results"
+            ),
+            details={
+                "sample_count": len(samples),
+                "coverage_count": len(coverage),
+            },
+        )
+
+    mismatches: list[dict[str, object]] = []
+    for i, (sample, cov) in enumerate(zip(samples, coverage)):
+        n_tickers = len(sample.selected_tickers)
+        unique_tickers = len(set(sample.selected_tickers))
+        consistent = (
+            n_tickers == sample.selected_count
+            and cov.selected_count == sample.selected_count
+            and unique_tickers == sample.selected_count
+        )
+        if not consistent:
+            mismatches.append(
+                {
+                    "sample_index": i,
+                    "trade_date": sample.trade_date.date().isoformat(),
+                    "resolved_snapshot_date": (
+                        None
+                        if sample.resolved_snapshot_date is None
+                        else sample.resolved_snapshot_date.date().isoformat()
+                    ),
+                    "sample_selected_count": sample.selected_count,
+                    "selected_tickers_len": n_tickers,
+                    "unique_selected_ticker_count": unique_tickers,
+                    "coverage_selected_count": cov.selected_count,
+                }
+            )
+
+    capped = sorted(mismatches, key=lambda m: int(m["sample_index"]))[:max_examples]
+    if mismatches:
+        return ArtifactCheckResult(
+            name="sample_superset_coverage_consistency",
+            status=FAIL,
+            message=f"{len(mismatches)} sample(s) with membership/count mismatch",
+            details={
+                "mismatch_count": len(mismatches),
+                "mismatches": capped,
+                "examples_capped": len(mismatches) > len(capped),
+            },
+        )
+
+    return ArtifactCheckResult(
+        name="sample_superset_coverage_consistency",
+        status=PASS,
+        message=f"all {len(samples)} sample(s) have consistent superset certification counts",
+        details={"sample_count": len(samples)},
+    )
+
+
 def check_full_history_superset_coverage(
     panel: pd.DataFrame,
     liquid_tickers: object,
@@ -1827,6 +1896,17 @@ def evaluate_pit_sample(
         reference.selected,
     )
 
+    selected_tickers = tuple(
+        sorted(reference.selected["ticker"].astype(str).tolist())
+    )
+    if len(selected_tickers) != reference.selected_count:
+        raise PitAuditError(
+            "selected_tickers length != reference.selected_count "
+            f"({len(selected_tickers)} != {reference.selected_count})"
+        )
+    if len(selected_tickers) != len(set(selected_tickers)):
+        raise PitAuditError("selected_tickers contains duplicates")
+
     mismatch = tuple(sorted(set(comparison.production_only) | set(comparison.reference_only)))
 
     return PitResolutionResult(
@@ -1847,6 +1927,7 @@ def evaluate_pit_sample(
         mismatch_tickers=mismatch,
         status=status,
         notes=tuple(notes),
+        selected_tickers=selected_tickers,
     )
 
 

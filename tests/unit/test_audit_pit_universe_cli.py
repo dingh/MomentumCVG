@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from src.data.pit_universe_audit import (
+    evaluate_pit_sample,
     recompute_rolling_snapshot,
 )
 
@@ -1379,3 +1380,187 @@ def test_c56_date_invalid_count_exceeds_examples_cap(tmp_path: Path):
     assert check.details["invalid_count"] > 5
     assert len(check.details["examples"]) == 5
     assert check.details["examples_capped"] is True
+
+
+# ---------------------------------------------------------------------------
+# C57–C61 — C7.5A superset certification uses complete membership
+# ---------------------------------------------------------------------------
+
+
+def _many_ticker_cli_fixture(
+    tmp_path: Path,
+    *,
+    liquid: list[str] | None = None,
+):
+    """150-ticker synthetic fixture with one mature snapshot and rolling support."""
+    n = 150
+    tickers = [f"T{i:03d}" for i in range(n)]
+    snap = WEEKS[0]
+    trade = WEEKS[1]
+    weeks = [
+        pd.Timestamp("2023-12-15"),
+        pd.Timestamp("2023-12-22"),
+        pd.Timestamp("2023-12-29"),
+        snap,
+    ]
+    weekly_rows = []
+    for w in weeks:
+        for i, t in enumerate(tickers):
+            weekly_rows.append(_wrow(w, t, 100.0 + i, 0.02, True))
+    weekly = pd.DataFrame(weekly_rows)
+    panel = _panel_from_weekly(weekly, [snap], tickers)
+    liquid_list = tickers if liquid is None else liquid
+    paths = _write_artifacts(tmp_path, panel, weekly, liquid_list)
+    return paths, trade.date().isoformat(), panel, weekly, tickers
+
+
+def test_c57_coverage_uses_all_selected_members(tmp_path: Path):
+    (panel_path, weekly_path, liquid_path, report_path), sample, panel, _, _ = (
+        _many_ticker_cli_fixture(tmp_path)
+    )
+    pre = evaluate_pit_sample(sample, panel, 0.20, 1.0)
+    assert pre.selected_count > 20
+    code = cli.main(
+        _base_argv(
+            panel_path,
+            weekly_path,
+            liquid_path,
+            report_path,
+            "--sample-date",
+            sample,
+            "--max-examples",
+            "5",
+        )
+    )
+    assert code == 0
+    report, _, _, _ = cli.run_audit(
+        panel=panel,
+        weekly=pd.read_parquet(weekly_path),
+        liquid_tickers=pd.read_csv(liquid_path),
+        liquid_set=set(pd.read_csv(liquid_path)["Ticker"].astype(str)),
+        sample_dates=[sample],
+        discover_samples=False,
+        dvol_top_pct=0.20,
+        spread_bottom_pct=1.0,
+        max_examples=5,
+    )
+    cov = report.sample_superset_coverage[0]
+    assert cov.selected_count == pre.selected_count
+    assert cov.selected_count > 5
+    consistency = next(
+        c for c in report.artifact_checks if c.name == "sample_superset_coverage_consistency"
+    )
+    assert consistency.status == "PASS"
+
+
+def test_c58_missing_ticker_beyond_displayed_examples_detected(tmp_path: Path):
+    (panel_path, weekly_path, liquid_path, report_path), sample, panel, _, _ = (
+        _many_ticker_cli_fixture(tmp_path)
+    )
+    pre = evaluate_pit_sample(sample, panel, 0.20, 1.0)
+    assert pre.selected_count > 20
+    removed = sorted(pre.selected_tickers)[25]
+    assert removed not in sorted(pre.selected_tickers)[:20]
+    liquid = [t for t in pre.selected_tickers if t != removed]
+    pd.DataFrame({"Ticker": liquid}).to_csv(liquid_path, index=False)
+    code = cli.main(
+        _base_argv(
+            panel_path,
+            weekly_path,
+            liquid_path,
+            report_path,
+            "--sample-date",
+            sample,
+            "--max-examples",
+            "20",
+        )
+    )
+    assert code == 1
+    text = report_path.read_text(encoding="utf-8")
+    assert "overall status: `FAIL`" in text
+    report, _, _, _ = cli.run_audit(
+        panel=panel,
+        weekly=pd.read_parquet(weekly_path),
+        liquid_tickers=pd.read_csv(liquid_path),
+        liquid_set=set(liquid),
+        sample_dates=[sample],
+        discover_samples=False,
+        dvol_top_pct=0.20,
+        spread_bottom_pct=1.0,
+        max_examples=20,
+    )
+    cov = report.sample_superset_coverage[0]
+    assert cov.selected_count == pre.selected_count
+    assert removed in cov.missing_from_superset
+
+
+def test_c59_max_examples_does_not_affect_certification_count(tmp_path: Path):
+    (panel_path, weekly_path, liquid_path, report_path), sample, panel, _, _ = (
+        _many_ticker_cli_fixture(tmp_path)
+    )
+    pre = evaluate_pit_sample(sample, panel, 0.20, 1.0)
+    counts = []
+    for max_ex in ("3", "20"):
+        report, _, _, _ = cli.run_audit(
+            panel=panel,
+            weekly=pd.read_parquet(weekly_path),
+            liquid_tickers=pd.read_csv(liquid_path),
+            liquid_set=set(pd.read_csv(liquid_path)["Ticker"].astype(str)),
+            sample_dates=[sample],
+            discover_samples=False,
+            dvol_top_pct=0.20,
+            spread_bottom_pct=1.0,
+            max_examples=int(max_ex),
+        )
+        counts.append(report.sample_superset_coverage[0].selected_count)
+    assert counts[0] == counts[1] == pre.selected_count
+
+
+def test_c60_internal_membership_count_mismatch_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    (panel_path, weekly_path, liquid_path, report_path), sample, panel, _, _ = (
+        _many_ticker_cli_fixture(tmp_path)
+    )
+    real_eval = cli.evaluate_pit_sample
+
+    def _broken(*args, **kwargs):
+        res = real_eval(*args, **kwargs)
+        from dataclasses import replace
+
+        return replace(res, selected_count=res.selected_count + 999)
+
+    monkeypatch.setattr(cli, "evaluate_pit_sample", _broken)
+    code = cli.main(
+        _base_argv(
+            panel_path,
+            weekly_path,
+            liquid_path,
+            report_path,
+            "--sample-date",
+            sample,
+        )
+    )
+    assert code == 1
+    text = report_path.read_text(encoding="utf-8")
+    assert "sample_superset_coverage_consistency" in text
+    assert "overall status: `FAIL`" in text
+
+
+def test_c61_consistency_check_visible_on_pass(tmp_path: Path):
+    (panel_path, weekly_path, liquid_path, report_path), sample, _, _ = (
+        _pass_fixture(tmp_path)
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path,
+            weekly_path,
+            liquid_path,
+            report_path,
+            "--sample-date",
+            sample,
+        )
+    )
+    assert code == 0
+    text = report_path.read_text(encoding="utf-8")
+    assert "`sample_superset_coverage_consistency`: `PASS`" in text

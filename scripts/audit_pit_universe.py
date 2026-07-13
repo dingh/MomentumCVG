@@ -50,6 +50,7 @@ from src.data.pit_universe_audit import (  # noqa: E402
     check_panel_metric_integrity,
     check_required_columns,
     check_rolling_provenance,
+    check_sample_superset_coverage_consistency,
     check_superset_coverage,
     check_ticker_validity,
     check_weekly_artifact,
@@ -1558,22 +1559,6 @@ def _sample_label_key(spec: SampleSpec) -> tuple[Optional[str], str]:
     return target, trade
 
 
-def _selected_tickers_from_sample(
-    panel: pd.DataFrame,
-    sample: PitResolutionResult,
-    dvol_top_pct: float,
-    spread_bottom_pct: float,
-) -> list[str]:
-    if sample.resolved_snapshot_date is None:
-        return []
-    month = normalize_date_column(panel, "month_date")
-    snap = panel.loc[month == sample.resolved_snapshot_date]
-    if snap.empty:
-        return []
-    classification = classify_snapshot_membership(snap, dvol_top_pct, spread_bottom_pct)
-    return list(classification.selected)
-
-
 def run_audit(
     *,
     panel: pd.DataFrame,
@@ -1749,13 +1734,16 @@ def run_audit(
             )
         ]
 
-    # Sample-level superset coverage
+    # Sample-level superset coverage (complete membership, not capped diagnostics).
     coverage: list[SupersetCoverageResult] = []
     for sample in samples:
-        selected = _selected_tickers_from_sample(
-            panel, sample, dvol_top_pct, spread_bottom_pct
+        coverage.append(
+            check_superset_coverage(sample.selected_tickers, liquid_tickers)
         )
-        coverage.append(check_superset_coverage(selected, liquid_tickers))
+
+    artifact_checks = list(artifact_checks) + [
+        check_sample_superset_coverage_consistency(samples, coverage)
+    ]
 
     # Full-history (supported envelope only)
     full_history: Optional[FullHistorySupersetCoverageResult] = None

@@ -40,6 +40,7 @@ from src.data.pit_universe_audit import (
     normalize_date_value,
     recompute_rolling_snapshot,
     validate_weekly_artifact,
+    _MAX_EXAMPLES,
 )
 
 SNAP1 = pd.Timestamp("2024-01-05")
@@ -1145,3 +1146,78 @@ def test_t53_missing_production_column_fail():
     res = compare_universe_to_reference(date(2024, 1, 10), panel, 1.0, 1.0, step1_fn=_bad)
     assert res.status == "FAIL"
     assert any("missing columns" in e for e in res.comparison_errors)
+
+
+# ---------------------------------------------------------------------------
+# C7.5A — complete sample membership for superset certification (T54–T57)
+# ---------------------------------------------------------------------------
+
+
+def _many_ticker_snapshot_panel(n: int = 150, snap=SNAP1) -> pd.DataFrame:
+    rows = []
+    for i in range(n):
+        rows.append(
+            dict(
+                month_date=snap,
+                ticker=f"T{i:03d}",
+                atm_straddle_dollar_vol=float((i + 1) * 1_000_000),
+                atm_spread_pct=0.01 + i * 1e-6,
+                has_valid_atm_pair=True,
+                valid_quote_weeks=3,
+                zero_volume_weeks=0,
+                window_start_date=pd.Timestamp("2023-10-01"),
+                window_end_date=snap,
+                window_shortfall=0,
+            )
+        )
+    return _full_panel(rows)
+
+
+def test_t54_complete_membership_retained_beyond_cap():
+    panel = _many_ticker_snapshot_panel(n=150)
+    sample = evaluate_pit_sample(date(2024, 1, 10), panel, 0.20, 1.0)
+    assert sample.selected_count > 20
+    assert len(sample.selected_tickers) == sample.selected_count
+    assert sample.selected_tickers == tuple(sorted(sample.selected_tickers))
+    assert len(set(sample.selected_tickers)) == sample.selected_count
+
+
+def test_t55_membership_not_classification_capped():
+    panel = _many_ticker_snapshot_panel(n=150)
+    sample = evaluate_pit_sample(date(2024, 1, 10), panel, 0.20, 1.0)
+    snap = panel.loc[panel["month_date"] == SNAP1]
+    classification = classify_snapshot_membership(snap, 0.20, 1.0)
+    assert len(classification.selected) <= _MAX_EXAMPLES
+    assert len(sample.selected_tickers) > _MAX_EXAMPLES
+
+
+def test_t56_empty_universe_payload_consistent():
+    panel = _two_snapshot_panel()
+    sample = evaluate_pit_sample(SNAP1, panel, 1.0, 1.0)
+    assert sample.selected_count == 0
+    assert sample.selected_tickers == ()
+
+
+def test_t57_one_reference_one_s1_preserved_with_membership(monkeypatch):
+    panel = _many_ticker_snapshot_panel(n=150)
+    calls = {"s1": 0, "ref": 0}
+
+    real_s1 = audit.step1_get_universe
+
+    def counting_s1(td, pnl, cfg):
+        calls["s1"] += 1
+        return real_s1(td, pnl, cfg)
+
+    real_ref = audit.compute_reference_universe
+
+    def counting_ref(*args, **kwargs):
+        calls["ref"] += 1
+        return real_ref(*args, **kwargs)
+
+    monkeypatch.setattr(audit, "compute_reference_universe", counting_ref)
+    sample = evaluate_pit_sample(
+        date(2024, 1, 10), panel, 0.20, 1.0, step1_fn=counting_s1
+    )
+    assert calls["s1"] == 1
+    assert calls["ref"] == 1
+    assert len(sample.selected_tickers) == sample.selected_count
