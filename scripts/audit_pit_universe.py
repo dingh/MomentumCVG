@@ -341,23 +341,6 @@ def _ensure_output_parent_writable(output_report: Path) -> None:
         raise UsageError(
             f"unwritable output parent {parent}: {exc}"
         ) from exc
-    # Probe write access without leaving a permanent sentinel when possible.
-    probe = parent / f".audit_pit_universe_write_probe_{output_report.name}"
-    try:
-        probe.write_text("", encoding="utf-8")
-        probe.unlink(missing_ok=True)
-    except Exception as exc:  # noqa: BLE001
-        raise UsageError(f"unwritable output parent {parent}: {exc}") from exc
-
-
-def _ensure_output_parent_writable(output_report: Path) -> None:
-    parent = output_report.parent
-    try:
-        parent.mkdir(parents=True, exist_ok=True)
-    except Exception as exc:  # noqa: BLE001
-        raise UsageError(
-            f"unwritable output parent {parent}: {exc}"
-        ) from exc
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -376,8 +359,57 @@ def _is_strict_bool_scalar(value: object) -> bool:
     return isinstance(value, (bool, np.bool_))
 
 
-def _cap_examples(items: Sequence[str], cap: int) -> list[str]:
-    return list(items[:cap])
+def _parse_provenance_int(value: object) -> Optional[int]:
+    """Parse a strict integer provenance scalar.
+
+    Accepts only ``int``, ``float``, ``np.integer``, and ``np.floating`` values
+    that are finite and integer-valued. Rejects strings, booleans, null, and
+    non-finite values without coercion.
+    """
+    if isinstance(value, (str, bool, np.bool_)):
+        return None
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(value, (int, float, np.integer, np.floating)):
+        return None
+    numeric = float(value)
+    if not np.isfinite(numeric):
+        return None
+    if not numeric.is_integer():
+        return None
+    return int(numeric)
+
+
+def _provenance_invalid_details(
+    invalid_count: int,
+    examples: Sequence[str],
+    *,
+    max_examples: int,
+) -> dict[str, object]:
+    capped = sorted(examples[:max_examples])
+    return {
+        "invalid_count": invalid_count,
+        "examples": capped,
+        "examples_capped": invalid_count > len(capped),
+    }
+
+
+def _record_provenance_invalid(
+    *,
+    invalid_count: int,
+    examples: list[str],
+    max_examples: int,
+    example: str,
+) -> int:
+    invalid_count += 1
+    if len(examples) < max_examples:
+        examples.append(example)
+    return invalid_count
 
 
 def _check_panel_provenance_integers(
@@ -399,51 +431,66 @@ def _check_panel_provenance_integers(
         ]
 
     examples: list[str] = []
+    invalid_count = 0
 
-    def _add_example(ticker: str, snap: str, field: str, value: object) -> None:
-        if len(examples) < max_examples:
-            examples.append(f"{ticker}/{snap}/{field}={value!r}")
+    def _record(field: str, ticker: str, snap: str, value: object) -> None:
+        nonlocal invalid_count
+        invalid_count = _record_provenance_invalid(
+            invalid_count=invalid_count,
+            examples=examples,
+            max_examples=max_examples,
+            example=f"{ticker}/{snap}/{field}={value!r}",
+        )
 
-    def _parse_int(value: object, field: str, ticker: str, snap: str) -> Optional[int]:
-        if value is None:
-            _add_example(ticker, snap, field, value)
-            return None
-        try:
-            if isinstance(value, str) and value.strip() == "":
-                _add_example(ticker, snap, field, value)
-                return None
-            if not isinstance(value, (bool, np.bool_)) and pd.isna(value):
-                _add_example(ticker, snap, field, value)
-                return None
-        except (TypeError, ValueError):
-            pass
-        num = pd.to_numeric(value, errors="coerce")
-        if not np.isfinite(num):
-            _add_example(ticker, snap, field, value)
-            return None
-        if float(num) != int(num):
-            _add_example(ticker, snap, field, value)
-            return None
-        return int(num)
+    def _parse_field(value: object, field: str, ticker: str, snap: str) -> Optional[int]:
+        parsed = _parse_provenance_int(value)
+        if parsed is None:
+            _record(field, ticker, snap, value)
+        return parsed
 
     # Stamp-level build params from first row.
-    lb = _parse_int(panel["lookback_weeks"].iloc[0], "lookback_weeks", "-", "-")
-    mvqw = _parse_int(
+    lb = _parse_field(panel["lookback_weeks"].iloc[0], "lookback_weeks", "-", "-")
+    mvqw = _parse_field(
         panel["min_valid_quote_weeks"].iloc[0], "min_valid_quote_weeks", "-", "-"
     )
-    dte_min = _parse_int(panel["dte_min"].iloc[0], "dte_min", "-", "-")
-    dte_max = _parse_int(panel["dte_max"].iloc[0], "dte_max", "-", "-")
+    dte_min = _parse_field(panel["dte_min"].iloc[0], "dte_min", "-", "-")
+    dte_max = _parse_field(panel["dte_max"].iloc[0], "dte_max", "-", "-")
 
     if lb is not None and lb <= 0:
-        examples.append(f"-/-/lookback_weeks={lb}")
+        invalid_count = _record_provenance_invalid(
+            invalid_count=invalid_count,
+            examples=examples,
+            max_examples=max_examples,
+            example=f"-/-/lookback_weeks={lb}",
+        )
     if mvqw is not None and mvqw <= 0:
-        examples.append(f"-/-/min_valid_quote_weeks={mvqw}")
+        invalid_count = _record_provenance_invalid(
+            invalid_count=invalid_count,
+            examples=examples,
+            max_examples=max_examples,
+            example=f"-/-/min_valid_quote_weeks={mvqw}",
+        )
     if lb is not None and mvqw is not None and mvqw > lb:
-        examples.append(f"-/-/min_valid_quote_weeks>{lb}")
+        invalid_count = _record_provenance_invalid(
+            invalid_count=invalid_count,
+            examples=examples,
+            max_examples=max_examples,
+            example=f"-/-/min_valid_quote_weeks>{lb}",
+        )
     if dte_min is not None and dte_min < 0:
-        examples.append(f"-/-/dte_min={dte_min}")
+        invalid_count = _record_provenance_invalid(
+            invalid_count=invalid_count,
+            examples=examples,
+            max_examples=max_examples,
+            example=f"-/-/dte_min={dte_min}",
+        )
     if dte_min is not None and dte_max is not None and dte_min > dte_max:
-        examples.append(f"-/-/dte_min>{dte_max}")
+        invalid_count = _record_provenance_invalid(
+            invalid_count=invalid_count,
+            examples=examples,
+            max_examples=max_examples,
+            example=f"-/-/dte_min>{dte_max}",
+        )
 
     month = None
     if "month_date" in panel.columns:
@@ -460,15 +507,24 @@ def _check_panel_provenance_integers(
             else str(row.get("month_date", "-"))
         )
         for field in ("window_shortfall", "valid_quote_weeks", "zero_volume_weeks"):
-            val = _parse_int(row[field], field, ticker, snap)
+            val = _parse_field(row[field], field, ticker, snap)
             if val is None:
                 continue
             if val < 0:
-                _add_example(ticker, snap, field, val)
+                invalid_count = _record_provenance_invalid(
+                    invalid_count=invalid_count,
+                    examples=examples,
+                    max_examples=max_examples,
+                    example=f"{ticker}/{snap}/{field}={val}",
+                )
             if lb is not None and val > lb:
-                _add_example(ticker, snap, f"{field}>{lb}", val)
+                invalid_count = _record_provenance_invalid(
+                    invalid_count=invalid_count,
+                    examples=examples,
+                    max_examples=max_examples,
+                    example=f"{ticker}/{snap}/{field}>{lb}={val}",
+                )
 
-    invalid_count = len(examples)
     return [
         ArtifactCheckResult(
             name="panel_provenance_integers",
@@ -478,10 +534,9 @@ def _check_panel_provenance_integers(
                 if invalid_count
                 else "panel integer provenance values valid"
             ),
-            details={
-                "invalid_count": invalid_count,
-                "examples": _cap_examples(sorted(examples), max_examples),
-            },
+            details=_provenance_invalid_details(
+                invalid_count, examples, max_examples=max_examples
+            ),
         )
     ]
 
@@ -504,6 +559,7 @@ def _check_panel_provenance_dates(
         ]
 
     examples: list[str] = []
+    invalid_count = 0
     try:
         month = normalize_date_column(panel, "month_date")
     except ArtifactValidationError as exc:
@@ -525,22 +581,36 @@ def _check_panel_provenance_dates(
             try:
                 parsed[field] = normalize_date_value(row[field], label=field)
             except ArtifactValidationError:
-                examples.append(f"{ticker}/{snap}/{field}=unparseable")
+                invalid_count = _record_provenance_invalid(
+                    invalid_count=invalid_count,
+                    examples=examples,
+                    max_examples=max_examples,
+                    example=f"{ticker}/{snap}/{field}=unparseable",
+                )
                 parsed = {}
                 break
         if not parsed:
             continue
         if parsed["window_start_date"] > parsed["window_end_date"]:
-            examples.append(
-                f"{ticker}/{snap}/window_start>{parsed['window_end_date'].date()}"
+            invalid_count = _record_provenance_invalid(
+                invalid_count=invalid_count,
+                examples=examples,
+                max_examples=max_examples,
+                example=(
+                    f"{ticker}/{snap}/window_start>{parsed['window_end_date'].date()}"
+                ),
             )
-        # C4 convention: window_end_date equals snapshot month_date.
         if parsed["window_end_date"] != snap_ts.normalize():
-            examples.append(
-                f"{ticker}/{snap}/window_end!={snap} (got {parsed['window_end_date'].date()})"
+            invalid_count = _record_provenance_invalid(
+                invalid_count=invalid_count,
+                examples=examples,
+                max_examples=max_examples,
+                example=(
+                    f"{ticker}/{snap}/window_end!={snap} "
+                    f"(got {parsed['window_end_date'].date()})"
+                ),
             )
 
-    invalid_count = len(examples)
     return [
         ArtifactCheckResult(
             name="panel_provenance_dates",
@@ -550,10 +620,9 @@ def _check_panel_provenance_dates(
                 if invalid_count
                 else "panel provenance dates valid"
             ),
-            details={
-                "invalid_count": invalid_count,
-                "examples": _cap_examples(sorted(examples), max_examples),
-            },
+            details=_provenance_invalid_details(
+                invalid_count, examples, max_examples=max_examples
+            ),
         )
     ]
 
@@ -565,6 +634,7 @@ def _check_panel_provenance_boolean(
         return []
 
     examples: list[str] = []
+    invalid_count = 0
     month = None
     try:
         month = normalize_date_column(panel, "month_date")
@@ -579,10 +649,13 @@ def _check_panel_provenance_boolean(
                 if month is not None
                 else str(panel.at[idx, "month_date"])
             )
-            if len(examples) < max_examples:
-                examples.append(f"{ticker}/{snap}/has_valid_atm_pair={value!r}")
+            invalid_count = _record_provenance_invalid(
+                invalid_count=invalid_count,
+                examples=examples,
+                max_examples=max_examples,
+                example=f"{ticker}/{snap}/has_valid_atm_pair={value!r}",
+            )
 
-    invalid_count = len(examples)
     return [
         ArtifactCheckResult(
             name="panel_provenance_boolean",
@@ -592,10 +665,9 @@ def _check_panel_provenance_boolean(
                 if invalid_count
                 else "has_valid_atm_pair is strictly boolean"
             ),
-            details={
-                "invalid_count": invalid_count,
-                "examples": _cap_examples(sorted(examples), max_examples),
-            },
+            details=_provenance_invalid_details(
+                invalid_count, examples, max_examples=max_examples
+            ),
         )
     ]
 

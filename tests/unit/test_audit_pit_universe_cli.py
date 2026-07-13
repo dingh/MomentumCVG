@@ -11,6 +11,7 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -1215,3 +1216,166 @@ def test_c43_revised_c14_target_resolved(tmp_path: Path):
 
 def test_c44_revised_c17_exact_warn(tmp_path: Path):
     test_c17_fewer_than_three_discoverable_cases_warn(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# C45–C56 — C7.3B final defensive cleanup
+# ---------------------------------------------------------------------------
+
+
+def _provenance_int_check(panel: pd.DataFrame, *, max_examples: int = 20):
+    checks = cli._check_panel_provenance_fields(panel, max_examples=max_examples)
+    return next(c for c in checks if c.name == "panel_provenance_integers")
+
+
+def _provenance_bool_check(panel: pd.DataFrame, *, max_examples: int = 20):
+    checks = cli._check_panel_provenance_fields(panel, max_examples=max_examples)
+    return next(c for c in checks if c.name == "panel_provenance_boolean")
+
+
+def _provenance_date_check(panel: pd.DataFrame, *, max_examples: int = 20):
+    checks = cli._check_panel_provenance_fields(panel, max_examples=max_examples)
+    return next(c for c in checks if c.name == "panel_provenance_dates")
+
+
+def test_c45_lookback_weeks_string_produces_fail(tmp_path: Path):
+    def _mut(p):
+        p["lookback_weeks"] = "12"
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+    assert "panel_provenance_integers" in report_path.read_text(encoding="utf-8")
+
+
+def test_c46_valid_quote_weeks_string_produces_fail(tmp_path: Path):
+    def _mut(p):
+        p["valid_quote_weeks"] = p["valid_quote_weeks"].astype(str)
+        p.loc[p.index[0], "valid_quote_weeks"] = "3"
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+    assert "panel_provenance_integers" in report_path.read_text(encoding="utf-8")
+
+
+def test_c47_lookback_weeks_true_produces_fail(tmp_path: Path):
+    def _mut(p):
+        p["lookback_weeks"] = True
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+
+
+def test_c48_window_shortfall_false_produces_fail(tmp_path: Path):
+    _, _, panel, _ = _pass_fixture(tmp_path)
+    bad = panel.copy()
+    bad["window_shortfall"] = bad["window_shortfall"].astype(object)
+    bad.at[bad.index[0], "window_shortfall"] = False
+    check = _provenance_int_check(bad)
+    assert check.status == "FAIL"
+    assert check.details["invalid_count"] >= 1
+
+
+def test_c49_np_bool_in_integer_provenance_produces_fail(tmp_path: Path):
+    def _mut(p):
+        p["lookback_weeks"] = np.bool_(True)
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+
+
+def test_c50_numpy_integer_scalar_accepted():
+    assert cli._parse_provenance_int(np.int64(12)) == 12
+
+
+def test_c51_float_integer_scalar_accepted():
+    assert cli._parse_provenance_int(12.0) == 12
+
+
+def test_c52_fractional_numeric_produces_fail(tmp_path: Path):
+    def _mut(p):
+        p["valid_quote_weeks"] = p["valid_quote_weeks"].astype(float)
+        p.loc[p.index[0], "valid_quote_weeks"] = 12.5
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+
+
+def test_c53_single_safe_write_probe_definition():
+    source = CLI_PATH.read_text(encoding="utf-8")
+    assert source.count("def _ensure_output_parent_writable") == 1
+    assert "NamedTemporaryFile" in source
+    assert ".audit_pit_universe_write_probe_" not in source
+
+
+def test_c54_integer_invalid_count_exceeds_examples_cap(tmp_path: Path):
+    _, _, panel, _ = _pass_fixture(tmp_path)
+    bad = panel.copy()
+    bad["valid_quote_weeks"] = bad["valid_quote_weeks"].astype(str)
+    for i, idx in enumerate(bad.index):
+        bad.loc[idx, "valid_quote_weeks"] = str(i)
+    check = _provenance_int_check(bad, max_examples=5)
+    assert check.status == "FAIL"
+    assert check.details["invalid_count"] > 5
+    assert len(check.details["examples"]) == 5
+    assert check.details["examples_capped"] is True
+
+
+def test_c55_boolean_invalid_count_exceeds_examples_cap(tmp_path: Path):
+    _, _, panel, _ = _pass_fixture(tmp_path)
+    bad = panel.copy()
+    bad["has_valid_atm_pair"] = bad["has_valid_atm_pair"].astype(str)
+    for idx in bad.index:
+        bad.loc[idx, "has_valid_atm_pair"] = "yes"
+    check = _provenance_bool_check(bad, max_examples=5)
+    assert check.status == "FAIL"
+    assert check.details["invalid_count"] > 5
+    assert len(check.details["examples"]) == 5
+    assert check.details["examples_capped"] is True
+
+
+def test_c56_date_invalid_count_exceeds_examples_cap(tmp_path: Path):
+    _, _, panel, _ = _pass_fixture(tmp_path)
+    bad = panel.copy()
+    bad["window_end_date"] = bad["window_end_date"].apply(
+        lambda x: (x - pd.Timedelta(days=1)).date().isoformat()
+    )
+    check = _provenance_date_check(bad, max_examples=5)
+    assert check.status == "FAIL"
+    assert check.details["invalid_count"] > 5
+    assert len(check.details["examples"]) == 5
+    assert check.details["examples_capped"] is True
