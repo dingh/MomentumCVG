@@ -1,7 +1,7 @@
 # Current sprint — 004
 
-**Updated:** 2026-07-11 (C6 closed; option-surface producer and audit accepted)  
-**Status:** Active — **C1** + **C2** + **C4** + **C5** + **C6 closed**; **C3** deferred until C4–C8  
+**Updated:** 2026-07-12  
+**Status:** Active — **C1** + **C2** + **C4** + **C5** + **C6** + **C7 closed**; **C3** deferred until C4–C8  
 **Mode:** Build (HD decisions locked below)
 
 **C4 closeout memo:** [sprint_memos/004_c4_liquidity_panel.md](../sprint_memos/004_c4_liquidity_panel.md)
@@ -9,6 +9,8 @@
 **C5 closeout memo:** [sprint_memos/004_c5_adjusted_liquid.md](../sprint_memos/004_c5_adjusted_liquid.md)
 
 **C6 closeout memo:** [sprint_memos/004_c6_option_surface.md](../sprint_memos/004_c6_option_surface.md)
+
+**C7 closeout memo:** [sprint_memos/004_c7_pit_universe.md](../sprint_memos/004_c7_pit_universe.md)
 
 **C1 receipt design (canonical):** [docs/tmp/c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md)
 
@@ -77,7 +79,7 @@ Build the **trustworthy weekly input layer** for future real-data backtesting an
 | 3 | **`snapshot_id`** (deterministic) + **`build_id`** (timestamped); manifest on executed runs |
 | 4 | Input **inventory / validation report** (PASS / WARN / FAIL) for **A1, A2, A3** + splits + spot — **not A4** |
 | 5 | Rolling **3-month liquidity panel**: **rebuild attempted**; PASS/WARN on success, or **explicit FAIL** if source data insufficient (§ Blocks Sprint 005) |
-| 6 | **PIT universe validation** on sample dates (§ PIT universe criteria) |
+| 6 | **PIT universe validation** on sample dates (§ PIT universe criteria) — **CLOSED** (C7, 2026-07-12) |
 | 7 | **Split unit/golden tests** on ≥1 multi-split fixture |
 | 8 | **Split audit** script + ≥1 substantive documented run (scope configurable) |
 | 9 | **`precompute_option_surface.py` audit + tests** (§ Option surface precompute spec) — **CLOSED** (C6, 2026-07-11) |
@@ -435,7 +437,7 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 | **C4** ✓ | Rolling weekly PIT panel in `build_liquidity_panel.py` | script + `tests/unit/test_build_liquidity_panel.py` | panel rebuild or FAIL report |
 | **C5** ✓ | Split golden tests + adjusted-liquid backfill + `audit_adjusted_liquid` | `split_adjuster`, `audit_adjusted_liquid.py`, `paths.py`, tests | pytest + full production audit PASS |
 | **C6** ✓ | Surface tests T1–T6 + `surface-audit` | extend contract/unit, audit module | pytest + `surface-audit` sample run |
-| **C7** | PIT universe harness (tests + audit module) | tests + CLI harness | sample dates in PIT report section |
+| **C7** ✓ | PIT universe harness (tests + audit module) | tests + CLI harness | sample dates in PIT report section |
 | **C8** | `refresh --dry-run` + bounded `refresh` subprocess wiring | CLI | dry-run manifest shape |
 | **C3** | `validate` + default report paths + umbrella inventory | CLI + report writer; wires C5/C6/C7 checks | `validate --as-of …` writes markdown |
 | **C9** | Runbook + `v1_universe_protocol` + data-contract drift + **CLI plan output cleanup** (blocker #13) | `docs/` + `scripts/refresh_weekly_inputs.py` + `tests/unit/test_refresh_weekly_inputs_cli.py` | review; plan has no commit-label deferrals |
@@ -461,7 +463,7 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 | 4 | Rolling liquidity panel | `scripts/build_liquidity_panel.py` | **Blocker** (rebuild attempt; FAIL if source insufficient) |
 | 5 | Split tests + adjusted-liquid audit | tests + `audit_adjusted_liquid.py` (CLI `split-audit` → C8) | **Done (C5)** |
 | 6 | Surface precompute audit + tests | tests + `surface-audit`; extend contract | **Done (C6)** |
-| 7 | PIT universe harness | tests + harness (C7); wired into `validate` in C3 | **Blocker** |
+| 7 | PIT universe harness | tests + harness (C7); wired into `validate` in C3 | **Done (C7)** |
 | 8 | Runbook | [v1_weekly_runbook.md](../v1_weekly_runbook.md) | **Blocker** |
 | 9 | Universe protocol update | [v1_universe_protocol.md](../v1_universe_protocol.md) | **Blocker at closeout** |
 | 10 | Drift register | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | **Blocker at closeout** |
@@ -477,7 +479,7 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 | **2** | Rolling 3-month panel **rebuild attempt** (C4) | Panel on disk with PASS/WARN, or **FAIL** documented (insufficient source months) |
 | **3** | Split unit/golden + adjusted-liquid audit (C5) ✓ | Production backfill audited; downstream defaults wired |
 | **4** ✓ | Surface tests T1–T6 + `surface-audit` (C6) | ≥1 sample run; report archived |
-| **5** | PIT universe harness (C7) | § PIT universe criteria |
+| **5** ✓ | PIT universe harness (C7) | § PIT universe criteria |
 | **6** | Bounded `refresh` + `--dry-run` (core + surface) (C8) | Wired; no feature steps |
 | **7** | `validate` umbrella inventory (A1/A2/A3, splits, spot) (C3) | PASS/WARN/FAIL report |
 | **8** | Runbook + universe protocol + drift + pytest (C9) | Docs + suite green |
@@ -520,7 +522,7 @@ Invariants: snapshot date < `trade_date` (strict prior snapshot — C7.2; same-d
 - [ ] `snapshot_id` + `build_id` in manifest
 - [ ] Validation report for **A1/A2/A3** + splits + spot (**no A4**)
 - [ ] Rolling panel: **rebuild attempted**; PASS/WARN, or **FAIL** with documented insufficient source data (does not fake rolling)
-- [ ] PIT universe samples pass
+- [x] PIT universe samples pass
 - [x] Split golden tests + adjusted-liquid audit ≥1 substantive run (`audit_adjusted_liquid.py` on production root; CLI `split-audit` wiring → C8)
 - [x] Surface spec T1–T7 + surface-audit ≥1 sample run (C6; memo [004_c6_option_surface.md](../sprint_memos/004_c6_option_surface.md))
 - [ ] Runbook + **v1_universe_protocol** updated at closeout
@@ -584,6 +586,7 @@ Stale docs (e.g. `backtest_evaluation_protocol.md` “Sprint 004–005 baseline�
 | 2026-06-29 v12 | **C4 closed:** smoke tests PASS; full backfill 2017→2026-02-20 on `input/liquidity`; incremental fix + progress bar; memo [004_c4_liquidity_panel.md](../sprint_memos/004_c4_liquidity_panel.md) |
 | 2026-07-04 v13 | **C5 closed:** scoped splits + filtered adjust → `input/adjusted_liquid` (2299 parquets); C5.10D audit PASS; C5.11A downstream defaults; memo [004_c5_adjusted_liquid.md](../sprint_memos/004_c5_adjusted_liquid.md) |
 | 2026-07-11 v14 | **C6 closed:** three-layer A1/A2 trust gate (producer + contract + readiness + C6.4 real-cache/smoke evidence); blocker #9 closed; memo [004_c6_option_surface.md](../sprint_memos/004_c6_option_surface.md) |
+| 2026-07-12 v15 | **C7 closed:** strict prior-snapshot S1 accepted; independent PIT/rolling audit accepted; C7.4R production PASS; complete sample coverage counts 737/728/735; 477-snapshot full-history coverage; zero missing superset tickers; memo [004_c7_pit_universe.md](../sprint_memos/004_c7_pit_universe.md) |
 
 ---
 
