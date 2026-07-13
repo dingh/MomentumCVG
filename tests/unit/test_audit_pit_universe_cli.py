@@ -7,6 +7,7 @@ C:/MomentumCVG_env or C:/ORATS.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -520,7 +521,19 @@ def test_c13_neither_sample_date_nor_discover_returns_2(tmp_path: Path):
 
 
 def test_c14_discovery_maps_target_to_later_t(tmp_path: Path):
-    (panel_path, weekly_path, liquid_path, report_path), _, _, _ = _pass_fixture(tmp_path)
+    (panel_path, weekly_path, liquid_path, report_path), _, panel, weekly = _pass_fixture(
+        tmp_path
+    )
+    specs, check = cli.discover_audit_samples(panel, weekly)
+    assert check.name == "sample_discovery"
+    for spec in specs:
+        assert spec.target_snapshot_date is not None
+        assert spec.trade_date > spec.target_snapshot_date
+        resolved = cli._resolve_prior_snapshot(
+            spec.trade_date, cli._panel_snapshots(panel)
+        )
+        assert resolved == spec.target_snapshot_date
+
     code = cli.main(
         _base_argv(
             panel_path,
@@ -532,12 +545,24 @@ def test_c14_discovery_maps_target_to_later_t(tmp_path: Path):
     )
     assert code in (0, 1)
     text = report_path.read_text(encoding="utf-8")
-    assert "Sample discovery" in text
-    # Every discovered sample should show target == resolved in PIT results.
-    # Parse lightly: lines with target_snapshot_date and resolved should match when target set.
-    assert "target_snapshot_date: `None`" not in text or "normal" in text.lower() or True
-    # Stronger: discovery details include mapped pairs with T > S.
-    assert "case labels=" in text
+    blocks = text.split("### Sample ")
+    for block in blocks[1:]:
+        if "missing_or_new_liquidity" not in block and "normal" not in block and "boundary" not in block:
+            continue
+        lines = block.splitlines()
+        target = next(
+            (ln for ln in lines if ln.startswith("- target_snapshot_date:")), ""
+        )
+        trade = next((ln for ln in lines if ln.startswith("- trade_date:")), "")
+        resolved = next(
+            (ln for ln in lines if ln.startswith("- resolved_snapshot_date:")), ""
+        )
+        tval = target.split("`")[1]
+        rval = resolved.split("`")[1]
+        trade_val = trade.split("`")[1]
+        assert tval != "None"
+        assert trade_val > tval
+        assert tval == rval
 
 
 def test_c15_discovery_never_uses_trade_date_eq_target(tmp_path: Path):
@@ -566,7 +591,7 @@ def test_c16_discovery_deterministic_labels_order(tmp_path: Path):
 
 
 def test_c17_fewer_than_three_discoverable_cases_warn(tmp_path: Path):
-    # Tiny panel: two snapshots only → cannot find 3 distinct mapped cases.
+    # Two snapshots with clean tickers → normal + baseline missing map (2 cases, WARN).
     weeks = [WEEKS[0], WEEKS[1], WEEKS[2]]
     weekly = pd.DataFrame(
         [
@@ -578,10 +603,14 @@ def test_c17_fewer_than_three_discoverable_cases_warn(tmp_path: Path):
             _wrow(weeks[2], "BBB", 200.0, 0.02, True),
         ]
     )
-    panel = _panel_from_weekly(weekly, [weeks[0], weeks[1]], ["AAA", "BBB"])
+    panel = _panel_from_weekly(weekly, [weeks[1], weeks[2]], ["AAA", "BBB"])
     panel_path, weekly_path, liquid_path, report_path = _write_artifacts(
         tmp_path, panel, weekly, ["AAA", "BBB"]
     )
+    _, discovery_check = cli.discover_audit_samples(panel, weekly)
+    assert discovery_check.status == "WARN"
+    assert discovery_check.details["mapped_case_count"] in (1, 2)
+
     code = cli.main(
         _base_argv(
             panel_path,
@@ -594,13 +623,9 @@ def test_c17_fewer_than_three_discoverable_cases_warn(tmp_path: Path):
         )
     )
     text = report_path.read_text(encoding="utf-8")
-    # sample_discovery should be WARN (1 or 2 cases) or FAIL (0); assert not silent PASS on discovery.
-    assert "sample_discovery" in text
+    assert "`sample_discovery`: `WARN`" in text
+    assert discovery_check.details["mapped_case_count"] in (1, 2)
     assert code in (0, 1)
-    # If discovery found 1–2 cases, overall may be WARN.
-    disc_line = [ln for ln in text.splitlines() if "sample_discovery" in ln]
-    assert disc_line
-    assert any("WARN" in ln or "FAIL" in ln or "PASS" in ln for ln in disc_line)
 
 
 def test_c18_zero_discovered_samples_produces_fail(tmp_path: Path):
@@ -614,6 +639,7 @@ def test_c18_zero_discovered_samples_produces_fail(tmp_path: Path):
         ]
     )
     # Build panel snapshot after all weekly dates so no T > S exists in weekly.
+    snap = pd.Timestamp("2024-06-01")
     panel = pd.DataFrame(
         [
             dict(
@@ -625,7 +651,7 @@ def test_c18_zero_discovered_samples_produces_fail(tmp_path: Path):
                 valid_quote_weeks=3,
                 zero_volume_weeks=0,
                 window_start_date=pd.Timestamp("2024-05-01"),
-                window_end_date=pd.Timestamp("2024-05-15"),
+                window_end_date=snap,
                 window_shortfall=0,
                 **BUILD,
             )
@@ -646,7 +672,7 @@ def test_c18_zero_discovered_samples_produces_fail(tmp_path: Path):
     assert code == 1
     text = report_path.read_text(encoding="utf-8")
     assert "overall status: `FAIL`" in text
-    assert "zero mapped" in text.lower() or "sample_discovery" in text
+    assert "sample_discovery" in text or "zero mapped" in text.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -755,3 +781,437 @@ def test_discovery_target_equals_resolved_in_report(tmp_path: Path):
             assert tval == rval
             checked += 1
     assert checked >= 1
+
+
+# ---------------------------------------------------------------------------
+# C23–C44 — C7.3A defensive fixes
+# ---------------------------------------------------------------------------
+
+
+def _artifact_paths_and_sample(tmp_path: Path):
+    paths, sample, panel, weekly = _pass_fixture(tmp_path)
+    return paths, sample, panel, weekly
+
+
+def test_c23_output_report_equal_panel_path_returns_2(tmp_path: Path):
+    (panel_path, weekly_path, liquid_path, _), sample, panel, _ = _artifact_paths_and_sample(
+        tmp_path
+    )
+    before = panel_path.read_bytes()
+    code = cli.main(
+        _base_argv(
+            panel_path,
+            weekly_path,
+            liquid_path,
+            panel_path,
+            "--sample-date",
+            sample,
+        )
+    )
+    assert code == 2
+    assert panel_path.read_bytes() == before
+
+
+def test_c24_output_report_equal_weekly_path_returns_2(tmp_path: Path):
+    (panel_path, weekly_path, liquid_path, _), sample, _, weekly = _artifact_paths_and_sample(
+        tmp_path
+    )
+    before = weekly_path.read_bytes()
+    code = cli.main(
+        _base_argv(
+            panel_path,
+            weekly_path,
+            liquid_path,
+            weekly_path,
+            "--sample-date",
+            sample,
+        )
+    )
+    assert code == 2
+    assert weekly_path.read_bytes() == before
+
+
+def test_c25_output_report_equal_ticker_csv_returns_2(tmp_path: Path):
+    (panel_path, weekly_path, liquid_path, _), sample, _, _ = _artifact_paths_and_sample(
+        tmp_path
+    )
+    before = liquid_path.read_bytes()
+    code = cli.main(
+        _base_argv(
+            panel_path,
+            weekly_path,
+            liquid_path,
+            liquid_path,
+            "--sample-date",
+            sample,
+        )
+    )
+    assert code == 2
+    assert liquid_path.read_bytes() == before
+
+
+def test_c26_symlink_alias_output_collision_returns_2(tmp_path: Path):
+    if os.name == "nt":
+        pytest.importorskip("ntpath")
+    (panel_path, weekly_path, liquid_path, report_path), sample, _, _ = (
+        _artifact_paths_and_sample(tmp_path)
+    )
+    alias = tmp_path / "panel_alias.md"
+    try:
+        os.symlink(panel_path, alias)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not supported on this platform")
+    code = cli.main(
+        _base_argv(
+            panel_path,
+            weekly_path,
+            liquid_path,
+            alias,
+            "--sample-date",
+            sample,
+        )
+    )
+    assert code == 2
+
+
+def test_c27_write_probe_does_not_overwrite_existing_file(tmp_path: Path):
+    (panel_path, weekly_path, liquid_path, report_path), sample, _, _ = (
+        _artifact_paths_and_sample(tmp_path)
+    )
+    parent = report_path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    sentinel = parent / ".audit_pit_universe_probe_sentinel"
+    sentinel.write_bytes(b"KEEP")
+    before = sentinel.read_bytes()
+    code = cli.main(
+        _base_argv(
+            panel_path,
+            weekly_path,
+            liquid_path,
+            report_path,
+            "--sample-date",
+            sample,
+        )
+    )
+    assert code == 0
+    assert sentinel.read_bytes() == before
+
+
+def _fail_panel_fixture(tmp_path: Path, mutate) -> tuple[Path, Path, Path, Path, str]:
+    (panel_path, weekly_path, liquid_path, report_path), sample, panel, weekly = (
+        _pass_fixture(tmp_path)
+    )
+    bad = panel.copy()
+    mutate(bad)
+    bad.to_parquet(panel_path, index=False)
+    return panel_path, weekly_path, liquid_path, report_path, sample
+
+
+def _stringify_date_column(frame: pd.DataFrame, column: str) -> None:
+    frame[column] = frame[column].apply(
+        lambda x: x.date().isoformat() if pd.notna(x) else None
+    )
+
+
+def test_c28_malformed_window_start_date_fail_report(tmp_path: Path):
+    def _mut(p):
+        _stringify_date_column(p, "window_start_date")
+        p.loc[0, "window_start_date"] = "not-a-date"
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+    text = report_path.read_text(encoding="utf-8")
+    assert "panel_provenance_dates" in text
+    assert "overall status: `FAIL`" in text
+
+
+def test_c29_malformed_window_end_date_fail_report(tmp_path: Path):
+    def _mut(p):
+        _stringify_date_column(p, "window_end_date")
+        p.loc[0, "window_end_date"] = "bad-date"
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+    assert "panel_provenance_dates" in report_path.read_text(encoding="utf-8")
+
+
+def test_c30_nonnumeric_window_shortfall_fail_report(tmp_path: Path):
+    def _mut(p):
+        p["window_shortfall"] = p["window_shortfall"].astype(str)
+        p.loc[0, "window_shortfall"] = "nan"
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+    assert "panel_provenance_integers" in report_path.read_text(encoding="utf-8")
+
+
+def test_c31_fractional_valid_quote_weeks_fail_report(tmp_path: Path):
+    def _mut(p):
+        p["valid_quote_weeks"] = p["valid_quote_weeks"].astype(float)
+        p.loc[0, "valid_quote_weeks"] = 1.5
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+    assert "panel_provenance_integers" in report_path.read_text(encoding="utf-8")
+
+
+def test_c32_invalid_lookback_weeks_zero_fail(tmp_path: Path):
+    def _mut(p):
+        p["lookback_weeks"] = 0
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+    assert "panel_provenance_integers" in report_path.read_text(encoding="utf-8")
+
+
+def test_c33_min_valid_quote_weeks_gt_lookback_fail(tmp_path: Path):
+    def _mut(p):
+        p["lookback_weeks"] = 2
+        p["min_valid_quote_weeks"] = 3
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+    assert "panel_provenance_integers" in report_path.read_text(encoding="utf-8")
+
+
+def test_c34_dte_min_gt_dte_max_fail(tmp_path: Path):
+    def _mut(p):
+        p["dte_min"] = 60
+        p["dte_max"] = 5
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+    assert "panel_provenance_integers" in report_path.read_text(encoding="utf-8")
+
+
+def test_c35_non_boolean_has_valid_atm_pair_fail(tmp_path: Path):
+    def _mut(p):
+        p["has_valid_atm_pair"] = p["has_valid_atm_pair"].astype(str)
+        p.loc[0, "has_valid_atm_pair"] = "1"
+
+    panel_path, weekly_path, liquid_path, report_path, sample = _fail_panel_fixture(
+        tmp_path, _mut
+    )
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+    assert "panel_provenance_boolean" in report_path.read_text(encoding="utf-8")
+
+
+def test_c36_runtime_artifact_exception_converted(tmp_path: Path, monkeypatch):
+    (panel_path, weekly_path, liquid_path, report_path), sample, _, _ = (
+        _pass_fixture(tmp_path)
+    )
+
+    def _boom(**_kwargs):
+        raise ValueError("synthetic artifact validation failure")
+
+    monkeypatch.setattr(cli, "evaluate_pit_sample", _boom)
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 1
+    text = report_path.read_text(encoding="utf-8")
+    assert "audit_runtime_validation" in text
+    assert "overall status: `FAIL`" in text
+
+
+def test_c37_unexpected_internal_exception_exit_2(tmp_path: Path, monkeypatch):
+    (panel_path, weekly_path, liquid_path, report_path), sample, _, _ = (
+        _pass_fixture(tmp_path)
+    )
+
+    def _boom(**_kwargs):
+        raise RuntimeError("unexpected internal")
+
+    monkeypatch.setattr(cli, "run_audit", _boom)
+    code = cli.main(
+        _base_argv(
+            panel_path, weekly_path, liquid_path, report_path, "--sample-date", sample
+        )
+    )
+    assert code == 2
+    assert not report_path.exists()
+
+
+def _clean_two_snap_panel(tmp_path: Path):
+    weeks = [WEEKS[0], WEEKS[1], WEEKS[2]]
+    weekly = pd.DataFrame(
+        [
+            _wrow(weeks[0], "AAA", 300.0, 0.02, True),
+            _wrow(weeks[1], "AAA", 300.0, 0.02, True),
+            _wrow(weeks[2], "AAA", 300.0, 0.02, True),
+            _wrow(weeks[0], "BBB", 200.0, 0.02, True),
+            _wrow(weeks[1], "BBB", 200.0, 0.02, True),
+            _wrow(weeks[2], "BBB", 200.0, 0.02, True),
+        ]
+    )
+    # Use later snapshots so rolling windows are mature (avoid short-history P1).
+    panel = _panel_from_weekly(weekly, [weeks[1], weeks[2]], ["AAA", "BBB"])
+    return panel, weekly, weeks
+
+
+def test_c38_missing_new_not_first_snapshot_baseline_only(tmp_path: Path):
+    panel, weekly, weeks = _clean_two_snap_panel(tmp_path)
+    snap, notes = cli._discover_missing_or_new_snapshot(panel, [weeks[1], weeks[2]])
+    assert snap == weeks[1]
+    assert any("baseline_initial_population" in n for n in notes)
+
+
+def test_c39_later_first_seen_ticker_selected(tmp_path: Path):
+    weeks = [WEEKS[0], WEEKS[1], WEEKS[2]]
+    weekly = pd.DataFrame(
+        [
+            _wrow(weeks[0], "AAA", 300.0, 0.02, True),
+            _wrow(weeks[1], "AAA", 300.0, 0.02, True),
+            _wrow(weeks[2], "AAA", 300.0, 0.02, True),
+            _wrow(weeks[0], "BBB", 200.0, 0.02, True),
+            _wrow(weeks[1], "BBB", 200.0, 0.02, True),
+            _wrow(weeks[2], "BBB", 200.0, 0.02, True),
+            _wrow(weeks[1], "NEW2", 150.0, 0.02, True),
+            _wrow(weeks[2], "NEW2", 150.0, 0.02, True),
+        ]
+    )
+    panel = _panel_from_weekly(weekly, [weeks[1], weeks[2]], ["AAA", "BBB"])
+    rec = recompute_rolling_snapshot(weeks[2], ["NEW2"], weekly, LOOKBACK, MIN_VQW)
+    r = rec.loc["NEW2"]
+    extra = pd.DataFrame(
+        [
+            dict(
+                month_date=weeks[2],
+                ticker="NEW2",
+                atm_straddle_dollar_vol=float(r["atm_straddle_dollar_vol"]),
+                atm_spread_pct=float(r["atm_spread_pct"]),
+                has_valid_atm_pair=bool(r["has_valid_atm_pair"]),
+                valid_quote_weeks=int(r["valid_quote_weeks"]),
+                zero_volume_weeks=int(r["zero_volume_weeks"]),
+                window_start_date=r["window_start_date"],
+                window_end_date=r["window_end_date"],
+                window_shortfall=int(r["window_shortfall"]),
+                **BUILD,
+            )
+        ]
+    )
+    panel = pd.concat([panel, extra], ignore_index=True)
+    snap, notes = cli._discover_missing_or_new_snapshot(panel, [weeks[1], weeks[2]])
+    assert snap == weeks[2]
+    assert not any("baseline_initial_population" in n for n in notes)
+
+
+def test_c40_invalid_liquidity_priority_over_new_ticker(tmp_path: Path):
+    weeks = [WEEKS[0], WEEKS[1], WEEKS[2]]
+    weekly = pd.DataFrame(
+        [
+            _wrow(weeks[0], "AAA", 300.0, 0.02, True),
+            _wrow(weeks[1], "AAA", 300.0, 0.02, True),
+            _wrow(weeks[2], "AAA", 300.0, 0.02, True),
+            _wrow(weeks[0], "BAD1", 50.0, 0.02, False),
+            _wrow(weeks[1], "BAD1", 50.0, 0.02, False),
+            _wrow(weeks[2], "BAD1", 50.0, 0.02, False),
+            _wrow(weeks[2], "NEW3", 80.0, 0.02, True),
+        ]
+    )
+    panel = _panel_from_weekly(weekly, [weeks[0], weeks[1], weeks[2]], ["AAA", "BAD1"])
+    snap, _ = cli._discover_missing_or_new_snapshot(panel, [weeks[0], weeks[1], weeks[2]])
+    assert snap == weeks[0]
+
+
+def test_c41_baseline_fallback_note_deterministic(tmp_path: Path):
+    panel, weekly, weeks = _clean_two_snap_panel(tmp_path)
+    a, na = cli._discover_missing_or_new_snapshot(panel, [weeks[1], weeks[2]])
+    b, nb = cli._discover_missing_or_new_snapshot(panel, [weeks[1], weeks[2]])
+    assert a == b
+    assert na == nb
+    assert na == [
+        "missing_or_new_liquidity used baseline_initial_population fallback"
+    ]
+
+
+def test_c42_artifact_fail_details_in_markdown_capped(tmp_path: Path):
+    (panel_path, weekly_path, liquid_path, report_path), sample, panel, _ = (
+        _pass_fixture(tmp_path)
+    )
+    bad = panel.copy()
+    bad["has_valid_atm_pair"] = bad["has_valid_atm_pair"].astype(str)
+    bad.loc[0, "has_valid_atm_pair"] = "True"
+    bad.loc[1, "has_valid_atm_pair"] = "yes"
+    bad.to_parquet(panel_path, index=False)
+    code = cli.main(
+        _base_argv(
+            panel_path,
+            weekly_path,
+            liquid_path,
+            report_path,
+            "--sample-date",
+            sample,
+            "--max-examples",
+            "5",
+        )
+    )
+    assert code == 1
+    text = report_path.read_text(encoding="utf-8")
+    assert "panel_provenance_boolean" in text
+    assert "invalid_count" in text
+    assert "examples" in text
+
+
+def test_c43_revised_c14_target_resolved(tmp_path: Path):
+    test_c14_discovery_maps_target_to_later_t(tmp_path)
+
+
+def test_c44_revised_c17_exact_warn(tmp_path: Path):
+    test_c17_fewer_than_three_discoverable_cases_warn(tmp_path)

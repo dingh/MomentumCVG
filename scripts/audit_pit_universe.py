@@ -10,12 +10,15 @@ Does not mutate artifacts, wire into refresh, or run production evidence.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
+import numpy as np
 import pandas as pd
 
 # ── project root on sys.path ──────────────────────────────────────────────────
@@ -29,10 +32,12 @@ from src.data.pit_universe_audit import (  # noqa: E402
     FULL_REQUIRED_COLUMNS,
     PASS,
     WARN,
+    ArtifactValidationError,
     ArtifactCheckResult,
     ArtifactEnvelopeResult,
     FullHistorySupersetCoverageResult,
     PitResolutionResult,
+    PitAuditError,
     PitUniverseAuditReport,
     RollingProvenanceResult,
     Status,
@@ -80,6 +85,30 @@ DISCOVERY_LABEL_ORDER = (
 
 class UsageError(Exception):
     """CLI usage / configuration / path / read / write error (exit 2)."""
+
+
+class InternalError(Exception):
+    """Unexpected internal programming failure (exit 2)."""
+
+
+_ARTIFACT_RUNTIME_EXCEPTIONS = (
+    ArtifactValidationError,
+    PitAuditError,
+    ValueError,
+    TypeError,
+    OverflowError,
+)
+
+_PROVENANCE_INT_COLUMNS = (
+    "lookback_weeks",
+    "min_valid_quote_weeks",
+    "dte_min",
+    "dte_max",
+    "window_shortfall",
+    "valid_quote_weeks",
+    "zero_volume_weeks",
+)
+_PROVENANCE_DATE_COLUMNS = ("window_start_date", "window_end_date")
 
 
 @dataclass(frozen=True)
@@ -217,6 +246,37 @@ def _parse_iso_sample_date(raw: str) -> pd.Timestamp:
 # ---------------------------------------------------------------------------
 
 
+def _normalize_path_for_safety(path: Path) -> Path:
+    """Absolute normalized path; does not require the path to exist."""
+    try:
+        return path.resolve()
+    except OSError:
+        return Path(os.path.normpath(os.path.abspath(str(path))))
+
+
+def validate_output_path_safety(
+    output_report: Path,
+    input_paths: Sequence[Path],
+) -> None:
+    """Reject output paths that alias or overwrite input artifacts."""
+    out = _normalize_path_for_safety(output_report)
+    labels = ("panel", "weekly", "liquid-tickers")
+    for label, raw in zip(labels, input_paths):
+        inp = _normalize_path_for_safety(raw)
+        if out == inp:
+            raise UsageError(
+                f"output-report conflicts with {label} path: output={out} input={inp}"
+            )
+        if out.exists() and inp.exists():
+            try:
+                if out.samefile(inp):
+                    raise UsageError(
+                        f"output-report aliases {label} path: output={out} input={inp}"
+                    )
+            except OSError:
+                pass
+
+
 def _require_readable_file(path: Path, *, label: str) -> Path:
     if not path.exists():
         raise UsageError(f"missing {label} path: {path}")
@@ -288,6 +348,267 @@ def _ensure_output_parent_writable(output_report: Path) -> None:
         probe.unlink(missing_ok=True)
     except Exception as exc:  # noqa: BLE001
         raise UsageError(f"unwritable output parent {parent}: {exc}") from exc
+
+
+def _ensure_output_parent_writable(output_report: Path) -> None:
+    parent = output_report.parent
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:  # noqa: BLE001
+        raise UsageError(
+            f"unwritable output parent {parent}: {exc}"
+        ) from exc
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=parent,
+            prefix=".audit_pit_universe_probe_",
+            delete=True,
+        ) as probe:
+            probe.write("")
+            probe.flush()
+    except Exception as exc:  # noqa: BLE001
+        raise UsageError(f"unwritable output parent {parent}: {exc}") from exc
+
+
+def _is_strict_bool_scalar(value: object) -> bool:
+    return isinstance(value, (bool, np.bool_))
+
+
+def _cap_examples(items: Sequence[str], cap: int) -> list[str]:
+    return list(items[:cap])
+
+
+def _check_panel_provenance_integers(
+    panel: pd.DataFrame, *, max_examples: int
+) -> list[ArtifactCheckResult]:
+    """CLI-level integer provenance validation before sample execution."""
+    if len(panel) == 0:
+        return []
+
+    missing_cols = [c for c in _PROVENANCE_INT_COLUMNS if c not in panel.columns]
+    if missing_cols:
+        return [
+            ArtifactCheckResult(
+                name="panel_provenance_integers",
+                status=FAIL,
+                message=f"missing provenance integer columns: {missing_cols}",
+                details={"missing": missing_cols},
+            )
+        ]
+
+    examples: list[str] = []
+
+    def _add_example(ticker: str, snap: str, field: str, value: object) -> None:
+        if len(examples) < max_examples:
+            examples.append(f"{ticker}/{snap}/{field}={value!r}")
+
+    def _parse_int(value: object, field: str, ticker: str, snap: str) -> Optional[int]:
+        if value is None:
+            _add_example(ticker, snap, field, value)
+            return None
+        try:
+            if isinstance(value, str) and value.strip() == "":
+                _add_example(ticker, snap, field, value)
+                return None
+            if not isinstance(value, (bool, np.bool_)) and pd.isna(value):
+                _add_example(ticker, snap, field, value)
+                return None
+        except (TypeError, ValueError):
+            pass
+        num = pd.to_numeric(value, errors="coerce")
+        if not np.isfinite(num):
+            _add_example(ticker, snap, field, value)
+            return None
+        if float(num) != int(num):
+            _add_example(ticker, snap, field, value)
+            return None
+        return int(num)
+
+    # Stamp-level build params from first row.
+    lb = _parse_int(panel["lookback_weeks"].iloc[0], "lookback_weeks", "-", "-")
+    mvqw = _parse_int(
+        panel["min_valid_quote_weeks"].iloc[0], "min_valid_quote_weeks", "-", "-"
+    )
+    dte_min = _parse_int(panel["dte_min"].iloc[0], "dte_min", "-", "-")
+    dte_max = _parse_int(panel["dte_max"].iloc[0], "dte_max", "-", "-")
+
+    if lb is not None and lb <= 0:
+        examples.append(f"-/-/lookback_weeks={lb}")
+    if mvqw is not None and mvqw <= 0:
+        examples.append(f"-/-/min_valid_quote_weeks={mvqw}")
+    if lb is not None and mvqw is not None and mvqw > lb:
+        examples.append(f"-/-/min_valid_quote_weeks>{lb}")
+    if dte_min is not None and dte_min < 0:
+        examples.append(f"-/-/dte_min={dte_min}")
+    if dte_min is not None and dte_max is not None and dte_min > dte_max:
+        examples.append(f"-/-/dte_min>{dte_max}")
+
+    month = None
+    if "month_date" in panel.columns:
+        try:
+            month = normalize_date_column(panel, "month_date")
+        except ArtifactValidationError:
+            month = None
+
+    for idx, row in panel.iterrows():
+        ticker = str(row.get("ticker", idx))
+        snap = (
+            month.loc[idx].date().isoformat()
+            if month is not None
+            else str(row.get("month_date", "-"))
+        )
+        for field in ("window_shortfall", "valid_quote_weeks", "zero_volume_weeks"):
+            val = _parse_int(row[field], field, ticker, snap)
+            if val is None:
+                continue
+            if val < 0:
+                _add_example(ticker, snap, field, val)
+            if lb is not None and val > lb:
+                _add_example(ticker, snap, f"{field}>{lb}", val)
+
+    invalid_count = len(examples)
+    return [
+        ArtifactCheckResult(
+            name="panel_provenance_integers",
+            status=FAIL if invalid_count else PASS,
+            message=(
+                f"{invalid_count} invalid integer provenance value(s)"
+                if invalid_count
+                else "panel integer provenance values valid"
+            ),
+            details={
+                "invalid_count": invalid_count,
+                "examples": _cap_examples(sorted(examples), max_examples),
+            },
+        )
+    ]
+
+
+def _check_panel_provenance_dates(
+    panel: pd.DataFrame, *, max_examples: int
+) -> list[ArtifactCheckResult]:
+    if len(panel) == 0:
+        return []
+
+    missing_cols = [c for c in _PROVENANCE_DATE_COLUMNS if c not in panel.columns]
+    if missing_cols:
+        return [
+            ArtifactCheckResult(
+                name="panel_provenance_dates",
+                status=FAIL,
+                message=f"missing provenance date columns: {missing_cols}",
+                details={"missing": missing_cols},
+            )
+        ]
+
+    examples: list[str] = []
+    try:
+        month = normalize_date_column(panel, "month_date")
+    except ArtifactValidationError as exc:
+        return [
+            ArtifactCheckResult(
+                name="panel_provenance_dates",
+                status=FAIL,
+                message=f"cannot normalize month_date: {exc}",
+                details={},
+            )
+        ]
+
+    for idx, row in panel.iterrows():
+        ticker = str(row.get("ticker", idx))
+        snap_ts = month.loc[idx]
+        snap = snap_ts.date().isoformat()
+        parsed: dict[str, pd.Timestamp] = {}
+        for field in _PROVENANCE_DATE_COLUMNS:
+            try:
+                parsed[field] = normalize_date_value(row[field], label=field)
+            except ArtifactValidationError:
+                examples.append(f"{ticker}/{snap}/{field}=unparseable")
+                parsed = {}
+                break
+        if not parsed:
+            continue
+        if parsed["window_start_date"] > parsed["window_end_date"]:
+            examples.append(
+                f"{ticker}/{snap}/window_start>{parsed['window_end_date'].date()}"
+            )
+        # C4 convention: window_end_date equals snapshot month_date.
+        if parsed["window_end_date"] != snap_ts.normalize():
+            examples.append(
+                f"{ticker}/{snap}/window_end!={snap} (got {parsed['window_end_date'].date()})"
+            )
+
+    invalid_count = len(examples)
+    return [
+        ArtifactCheckResult(
+            name="panel_provenance_dates",
+            status=FAIL if invalid_count else PASS,
+            message=(
+                f"{invalid_count} invalid provenance date value(s)"
+                if invalid_count
+                else "panel provenance dates valid"
+            ),
+            details={
+                "invalid_count": invalid_count,
+                "examples": _cap_examples(sorted(examples), max_examples),
+            },
+        )
+    ]
+
+
+def _check_panel_provenance_boolean(
+    panel: pd.DataFrame, *, max_examples: int
+) -> list[ArtifactCheckResult]:
+    if len(panel) == 0 or "has_valid_atm_pair" not in panel.columns:
+        return []
+
+    examples: list[str] = []
+    month = None
+    try:
+        month = normalize_date_column(panel, "month_date")
+    except ArtifactValidationError:
+        month = None
+
+    for idx, value in panel["has_valid_atm_pair"].items():
+        if not _is_strict_bool_scalar(value):
+            ticker = str(panel.at[idx, "ticker"]) if "ticker" in panel.columns else str(idx)
+            snap = (
+                month.loc[idx].date().isoformat()
+                if month is not None
+                else str(panel.at[idx, "month_date"])
+            )
+            if len(examples) < max_examples:
+                examples.append(f"{ticker}/{snap}/has_valid_atm_pair={value!r}")
+
+    invalid_count = len(examples)
+    return [
+        ArtifactCheckResult(
+            name="panel_provenance_boolean",
+            status=FAIL if invalid_count else PASS,
+            message=(
+                f"{invalid_count} non-boolean has_valid_atm_pair value(s)"
+                if invalid_count
+                else "has_valid_atm_pair is strictly boolean"
+            ),
+            details={
+                "invalid_count": invalid_count,
+                "examples": _cap_examples(sorted(examples), max_examples),
+            },
+        )
+    ]
+
+
+def _check_panel_provenance_fields(
+    panel: pd.DataFrame, *, max_examples: int
+) -> list[ArtifactCheckResult]:
+    """CLI-level provenance validation before expensive sample work."""
+    checks: list[ArtifactCheckResult] = []
+    checks.extend(_check_panel_provenance_integers(panel, max_examples=max_examples))
+    checks.extend(_check_panel_provenance_dates(panel, max_examples=max_examples))
+    checks.extend(_check_panel_provenance_boolean(panel, max_examples=max_examples))
+    return checks
 
 
 # ---------------------------------------------------------------------------
@@ -413,7 +734,7 @@ def _cli_nonempty_checks(
 
 
 def _run_full_artifact_checks(
-    panel: pd.DataFrame, weekly: pd.DataFrame
+    panel: pd.DataFrame, weekly: pd.DataFrame, *, max_examples: int
 ) -> list[ArtifactCheckResult]:
     checks: list[ArtifactCheckResult] = []
     checks.extend(_cli_nonempty_checks(panel, weekly))
@@ -461,6 +782,7 @@ def _run_full_artifact_checks(
                     details={},
                 )
             )
+        checks.extend(_check_panel_provenance_fields(panel, max_examples=max_examples))
     try:
         checks.extend(check_weekly_artifact(weekly))
     except Exception as exc:  # noqa: BLE001
@@ -575,21 +897,25 @@ def _discover_boundary_snapshot(
 
 def _discover_missing_or_new_snapshot(
     panel: pd.DataFrame, snapshots: Sequence[pd.Timestamp]
-) -> Optional[pd.Timestamp]:
+) -> tuple[Optional[pd.Timestamp], list[str]]:
+    """Priority: liquidity defect → genuinely new ticker → baseline fallback."""
+    notes: list[str] = []
+    if not snapshots:
+        return None, notes
+
     month = normalize_date_column(panel, "month_date")
-    seen: set[str] = set()
     min_vqw = None
     if "min_valid_quote_weeks" in panel.columns and len(panel):
-        min_vqw = int(panel["min_valid_quote_weeks"].iloc[0])
+        try:
+            min_vqw = int(panel["min_valid_quote_weeks"].iloc[0])
+        except (TypeError, ValueError):
+            min_vqw = None
 
+    # Priority 1 — actual liquidity defect or insufficient history.
     for s in snapshots:
-        snap = panel.loc[month == s].copy()
+        snap = panel.loc[month == s]
         if snap.empty:
             continue
-        tickers = sorted(snap["ticker"].astype(str).tolist())
-        first_seen = [t for t in tickers if t not in seen]
-        seen.update(tickers)
-
         invalid = (snap["has_valid_atm_pair"] != True).any()  # noqa: E712
         missing_dvol = snap["atm_straddle_dollar_vol"].isna().any()
         missing_spread = snap["atm_spread_pct"].isna().any()
@@ -597,12 +923,27 @@ def _discover_missing_or_new_snapshot(
         if min_vqw is not None and "valid_quote_weeks" in snap.columns:
             vqw = pd.to_numeric(snap["valid_quote_weeks"], errors="coerce")
             short_hist = bool((vqw < min_vqw).any())
+        if invalid or missing_dvol or missing_spread or short_hist:
+            return s, notes
 
-        if invalid or missing_dvol or missing_spread or short_hist or first_seen:
-            # Prefer deterministic earliest snapshot; first_seen alone qualifies.
-            if invalid or missing_dvol or missing_spread or short_hist or first_seen:
-                return s
-    return None
+    # Priority 2 — genuinely new ticker after the first snapshot.
+    if len(snapshots) >= 2:
+        seen: set[str] = set()
+        first = snapshots[0]
+        seen.update(panel.loc[month == first, "ticker"].astype(str).tolist())
+        for s in snapshots[1:]:
+            snap = panel.loc[month == s]
+            if snap.empty:
+                continue
+            tickers = sorted(snap["ticker"].astype(str).tolist())
+            new_tickers = [t for t in tickers if t not in seen]
+            seen.update(tickers)
+            if new_tickers:
+                return s, notes
+
+    # Priority 3 — baseline fallback on initial population only.
+    notes.append("missing_or_new_liquidity used baseline_initial_population fallback")
+    return snapshots[0], notes
 
 
 def discover_audit_samples(
@@ -638,7 +979,8 @@ def discover_audit_samples(
         else:
             chosen[DISCOVERY_LABEL_BOUNDARY] = (boundary_s, t)
 
-    missing_s = _discover_missing_or_new_snapshot(panel, snapshots)
+    missing_s, missing_notes = _discover_missing_or_new_snapshot(panel, snapshots)
+    notes.extend(missing_notes)
     if missing_s is not None:
         t = map_snapshot_to_trade_date(missing_s, snapshots, candidates)
         if t is None:
@@ -849,6 +1191,29 @@ def _iso(value: object) -> str:
         return _md_escape(value)
 
 
+def _render_check_details(
+    details: Mapping[str, object], *, max_examples: int, indent: str = "  "
+) -> list[str]:
+    lines: list[str] = []
+    for key in sorted(details.keys()):
+        value = details[key]
+        if isinstance(value, Mapping):
+            capped = {k: value[k] for k in sorted(value.keys())}
+            lines.append(f"{indent}- {_md_escape(key)}:")
+            for sub_k in sorted(capped.keys()):
+                lines.append(
+                    f"{indent}  - {_md_escape(sub_k)}: `{_md_escape(capped[sub_k])}`"
+                )
+        elif isinstance(value, (list, tuple)):
+            seq = list(value)
+            if len(seq) > max_examples:
+                seq = seq[:max_examples]
+            lines.append(f"{indent}- {_md_escape(key)}: `{_md_escape(seq)}`")
+        else:
+            lines.append(f"{indent}- {_md_escape(key)}: `{_md_escape(value)}`")
+    return lines
+
+
 def _status_line(status: object) -> str:
     return _md_escape(status)
 
@@ -868,6 +1233,7 @@ def render_markdown_report(
     liquid_ticker_count: int,
     rolling_na_notes: Sequence[str] = (),
     discovery_check: Optional[ArtifactCheckResult] = None,
+    max_examples: int = 20,
 ) -> str:
     lines: list[str] = []
     lines.append("# C7 PIT Universe Audit")
@@ -912,6 +1278,8 @@ def render_markdown_report(
             lines.append(
                 f"- `{_md_escape(c.name)}`: `{_status_line(c.status)}` — {_md_escape(c.message)}"
             )
+            if c.status in (FAIL, WARN) and c.details:
+                lines.extend(_render_check_details(c.details, max_examples=max_examples))
     lines.append("")
 
     # Envelope
@@ -957,6 +1325,8 @@ def render_markdown_report(
         notes = details.get("notes", [])
         for note in notes:
             lines.append(f"- note: {_md_escape(note)}")
+        if disc.status in (FAIL, WARN) and details:
+            lines.extend(_render_check_details(details, max_examples=max_examples))
     lines.append("")
 
     # PIT samples
@@ -1149,7 +1519,7 @@ def run_audit(
     list[str],
     Optional[ArtifactCheckResult],
 ]:
-    artifact_checks = _run_full_artifact_checks(panel, weekly)
+    artifact_checks = _run_full_artifact_checks(panel, weekly, max_examples=max_examples)
     discovery_check: Optional[ArtifactCheckResult] = None
     sample_labels: dict[tuple[Optional[str], str], tuple[str, ...]] = {}
     rolling_na_notes: list[str] = []
@@ -1336,6 +1706,28 @@ def run_audit(
     return report, sample_labels, rolling_na_notes, discovery_check
 
 
+def _assemble_runtime_validation_fail(
+    exc: Exception,
+    stage: str,
+    *,
+    prior_checks: Optional[Sequence[ArtifactCheckResult]] = None,
+) -> PitUniverseAuditReport:
+    runtime_check = ArtifactCheckResult(
+        name="audit_runtime_validation",
+        status=FAIL,
+        message=(
+            f"stage={stage}; {type(exc).__name__}: {exc}"
+        ),
+        details={
+            "stage": stage,
+            "exception_type": type(exc).__name__,
+            "message": str(exc),
+        },
+    )
+    checks = list(prior_checks or []) + [runtime_check]
+    return assemble_audit_report(checks, None, [], [], [], None)
+
+
 def _exit_code(overall: Status, *, strict: bool) -> int:
     if overall == FAIL:
         return 1
@@ -1345,9 +1737,17 @@ def _exit_code(overall: Status, *, strict: bool) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    panel: Optional[pd.DataFrame] = None
+    weekly: Optional[pd.DataFrame] = None
+    liquid_tickers: Optional[pd.DataFrame] = None
+    liquid_set: set[str] = set()
     try:
         args = parse_args(argv)
         _validate_cli_args(args)
+        validate_output_path_safety(
+            args.output_report,
+            (args.panel_path, args.weekly_path, args.liquid_tickers_path),
+        )
         _ensure_output_parent_writable(args.output_report)
         panel, weekly, liquid_tickers, liquid_set = _load_artifacts(
             args.panel_path,
@@ -1363,40 +1763,102 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    report, sample_labels, rolling_na_notes, discovery_check = run_audit(
-        panel=panel,
-        weekly=weekly,
-        liquid_tickers=liquid_tickers,
-        liquid_set=liquid_set,
-        sample_dates=args.sample_dates,
-        discover_samples=bool(args.discover_samples),
-        dvol_top_pct=float(args.dvol_top_pct),
-        spread_bottom_pct=float(args.spread_bottom_pct),
-        max_examples=int(args.max_examples),
-    )
+    assert panel is not None and weekly is not None and liquid_tickers is not None
 
-    md = render_markdown_report(
-        report,
-        panel_path=args.panel_path,
-        weekly_path=args.weekly_path,
-        liquid_tickers_path=args.liquid_tickers_path,
-        dvol_top_pct=float(args.dvol_top_pct),
-        spread_bottom_pct=float(args.spread_bottom_pct),
-        strict=bool(args.strict),
-        sample_labels=sample_labels,
-        panel_row_count=int(len(panel)),
-        weekly_row_count=int(len(weekly)),
-        liquid_ticker_count=len(liquid_set),
-        rolling_na_notes=rolling_na_notes,
-        discovery_check=discovery_check,
-    )
+    try:
+        report, sample_labels, rolling_na_notes, discovery_check = run_audit(
+            panel=panel,
+            weekly=weekly,
+            liquid_tickers=liquid_tickers,
+            liquid_set=liquid_set,
+            sample_dates=args.sample_dates,
+            discover_samples=bool(args.discover_samples),
+            dvol_top_pct=float(args.dvol_top_pct),
+            spread_bottom_pct=float(args.spread_bottom_pct),
+            max_examples=int(args.max_examples),
+        )
+    except _ARTIFACT_RUNTIME_EXCEPTIONS as exc:
+        report = _assemble_runtime_validation_fail(exc, "run_audit")
+        sample_labels = {}
+        rolling_na_notes = ()
+        discovery_check = None
+    except InternalError as exc:
+        print(f"error: internal error: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001
+        print(f"error: internal error: {exc}", file=sys.stderr)
+        return 2
+    else:
+        try:
+            md = render_markdown_report(
+                report,
+                panel_path=args.panel_path,
+                weekly_path=args.weekly_path,
+                liquid_tickers_path=args.liquid_tickers_path,
+                dvol_top_pct=float(args.dvol_top_pct),
+                spread_bottom_pct=float(args.spread_bottom_pct),
+                strict=bool(args.strict),
+                sample_labels=sample_labels,
+                panel_row_count=int(len(panel)),
+                weekly_row_count=int(len(weekly)),
+                liquid_ticker_count=len(liquid_set),
+                rolling_na_notes=rolling_na_notes,
+                discovery_check=discovery_check,
+                max_examples=int(args.max_examples),
+            )
+        except _ARTIFACT_RUNTIME_EXCEPTIONS as exc:
+            report = _assemble_runtime_validation_fail(
+                exc,
+                "render_markdown_report",
+                prior_checks=report.artifact_checks,
+            )
+        except InternalError as exc:
+            print(f"error: internal error: {exc}", file=sys.stderr)
+            return 2
+        except Exception as exc:  # noqa: BLE001
+            print(f"error: internal error: {exc}", file=sys.stderr)
+            return 2
+        else:
+            try:
+                write_report(args.output_report, md)
+            except Exception as exc:  # noqa: BLE001
+                print(f"error: failed to write report: {exc}", file=sys.stderr)
+                return 2
+            return _exit_code(report.overall_status, strict=bool(args.strict))
+
+    # run_audit artifact failure path
+    try:
+        md = render_markdown_report(
+            report,
+            panel_path=args.panel_path,
+            weekly_path=args.weekly_path,
+            liquid_tickers_path=args.liquid_tickers_path,
+            dvol_top_pct=float(args.dvol_top_pct),
+            spread_bottom_pct=float(args.spread_bottom_pct),
+            strict=bool(args.strict),
+            sample_labels={},
+            panel_row_count=int(len(panel)),
+            weekly_row_count=int(len(weekly)),
+            liquid_ticker_count=len(liquid_set),
+            rolling_na_notes=(),
+            discovery_check=None,
+            max_examples=int(args.max_examples),
+        )
+    except _ARTIFACT_RUNTIME_EXCEPTIONS as exc:
+        print(
+            f"error: internal error during report render: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    except Exception as exc:  # noqa: BLE001
+        print(f"error: internal error during report render: {exc}", file=sys.stderr)
+        return 2
     try:
         write_report(args.output_report, md)
     except Exception as exc:  # noqa: BLE001
         print(f"error: failed to write report: {exc}", file=sys.stderr)
         return 2
-
-    return _exit_code(report.overall_status, strict=bool(args.strict))
+    return 1
 
 
 if __name__ == "__main__":
