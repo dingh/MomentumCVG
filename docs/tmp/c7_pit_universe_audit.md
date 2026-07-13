@@ -1,28 +1,29 @@
-# C7.4 production audit evidence
+# C7.4R production audit evidence
 
 ## Evidence header
 
 | Field | Value |
 |-------|-------|
-| Task | C7.4 production PIT-universe audit |
-| Repository HEAD | `77b61eca6442c869a909138deba17941e6c1da2d` |
-| Audit CLI commit | `77b61eca6442c869a909138deba17941e6c1da2d` |
-| Execution date (UTC) | 2026-07-13T04:30:50Z – 2026-07-13T04:39:54Z |
+| Task | C7.4R production PIT-universe audit rerun after C7.5A |
+| Repository HEAD | `e0cf020430465c9f5a033017d5736dc819e681ff` |
+| Audit CLI commit | `e0cf020430465c9f5a033017d5736dc819e681ff` |
+| Supersedes prior evidence | `47060d56a74885a5aca37413aebc541ccbbd000d` |
+| Execution date (UTC) | 2026-07-13T05:02:07Z – 2026-07-13T05:11:13Z |
 | Panel path | `C:/MomentumCVG_env/input/liquidity/ticker_liquidity_panel.parquet` |
 | Panel SHA-256 | `67e30956cd78bea97e9f90bfbd699f5e12e302e30db0e91912abd564dcf778de` |
 | Weekly path | `C:/MomentumCVG_env/input/liquidity/ticker_liquidity_weekly_observations.parquet` |
 | Weekly SHA-256 | `40f507fb165add28c5fdfb1dc9ef7a2e0176874f3bc240732bc538b990673f42` |
 | Liquid ticker path | `C:/MomentumCVG_env/input/liquidity/liquid_tickers.csv` |
 | Liquid ticker SHA-256 | `e3094e6f1c8138ef5934f2b3158a37b3cc92ea01250c0dcfb8703ec03eb4b68a` |
-| Exact command | see primary run log |
 | Exit code | `0` |
-| Focused pytest result | `118 passed, 1 skipped in 5.56s` |
-| Primary runtime (seconds) | `543.7` |
+| Runtime (seconds) | `545.6` |
+| Focused pytest result | `127 passed, 1 skipped in 6.26s` |
+| Input hashes unchanged | `yes` |
 
-**Exact command:**
+**Exact production command:**
 
 ```powershell
-C:/MomentumCVG_env/venv/Scripts/python.exe C:/MomentumCVG/scripts/audit_pit_universe.py --panel-path C:/MomentumCVG_env/input/liquidity/ticker_liquidity_panel.parquet --weekly-path C:/MomentumCVG_env/input/liquidity/ticker_liquidity_weekly_observations.parquet --liquid-tickers-path C:/MomentumCVG_env/input/liquidity/liquid_tickers.csv --discover-samples --dvol-top-pct 0.20 --spread-bottom-pct 1.0 --max-examples 20 --output-report C:/MomentumCVG_env/log/pit_universe_audit/c7_pit_universe_audit_primary.md
+C:/MomentumCVG_env/venv/Scripts/python.exe C:/MomentumCVG/scripts/audit_pit_universe.py --panel-path C:/MomentumCVG_env/input/liquidity/ticker_liquidity_panel.parquet --weekly-path C:/MomentumCVG_env/input/liquidity/ticker_liquidity_weekly_observations.parquet --liquid-tickers-path C:/MomentumCVG_env/input/liquidity/liquid_tickers.csv --discover-samples --dvol-top-pct 0.20 --spread-bottom-pct 1.0 --max-examples 20 --output-report C:/MomentumCVG_env/log/pit_universe_audit/c7_4r/c7_pit_universe_audit_primary.md
 ```
 
 ---
@@ -73,6 +74,7 @@ C:/MomentumCVG_env/venv/Scripts/python.exe C:/MomentumCVG/scripts/audit_pit_univ
 - `weekly_volume_validity`: `PASS` — weekly volume numeric, finite, non-negative
 - `weekly_spread_consistency`: `PASS` — weekly spread consistent with valid flag
 - `sample_discovery`: `PASS` — 3 distinct mapped discovery cases found
+- `sample_superset_coverage_consistency`: `PASS` — all 3 sample(s) have consistent superset certification counts
 
 ## Supported parameter envelope
 
@@ -198,9 +200,9 @@ C:/MomentumCVG_env/venv/Scripts/python.exe C:/MomentumCVG/scripts/audit_pit_univ
 
 ## Sample superset coverage
 
-- sample[0]: status=`PASS` selected_count=`20` missing=`[]`
-- sample[1]: status=`PASS` selected_count=`20` missing=`[]`
-- sample[2]: status=`PASS` selected_count=`20` missing=`[]`
+- sample[0]: status=`PASS` selected_count=`737` missing=`[]`
+- sample[1]: status=`PASS` selected_count=`728` missing=`[]`
+- sample[2]: status=`PASS` selected_count=`735` missing=`[]`
 
 ## Full-history superset coverage
 
@@ -222,50 +224,60 @@ _None._
 
 ---
 
-## C7.4 operator verification
+## C7.4R operator verification
 
-### Discovered sample mapping table
+### Sample mapping table
 
-| Label(s) | Target snapshot | Trade date | Resolved snapshot | Lag days | Sample status | Eligible | Selected | Membership hash |
-|----------|-----------------|------------|-------------------|----------|---------------|----------|----------|-----------------|
-| missing_or_new_liquidity | 2017-01-06 | 2017-01-13 | 2017-01-06 | 7 | PASS | 3680 | 737 | bee45625afeb8e63 |
-| boundary_or_gap | 2017-04-21 | 2017-04-28 | 2017-04-21 | 7 | PASS | 3639 | 728 | df3efd03cef16529 |
-| normal | 2021-09-17 | 2021-09-24 | 2021-09-17 | 7 | PASS | 3670 | 735 | 3e22ad47610c6ee4 |
+| Label | Target snapshot | Trade date | Resolved snapshot | Lag days | Sample status |
+|-------|-----------------|------------|-------------------|----------|---------------|
+| missing_or_new_liquidity | 2017-01-06 | 2017-01-13 | 2017-01-06 | 7 | PASS |
+| boundary_or_gap | 2017-04-21 | 2017-04-28 | 2017-04-21 | 7 | PASS |
+| normal | 2021-09-17 | 2021-09-24 | 2021-09-17 | 7 | PASS |
 
-Discovery status: **PASS** — 3 distinct mapped cases (normal, boundary_or_gap, missing_or_new_liquidity).
+Discovery: **PASS** — 3 distinct mapped cases. All satisfy strict prior-snapshot mapping.
 
-The `missing_or_new_liquidity` case targets the earliest panel snapshot (`2017-01-06`). That snapshot contains substantive liquidity defects (`invalid_atm_pair=840` on 4520 rows), so discovery did **not** rely solely on `baseline_initial_population` fallback.
+### Sample count-consistency table (C7.5A certification)
 
-All samples satisfy: `trade_date > target_snapshot_date`, `resolved_snapshot_date == target_snapshot_date`, `resolved_snapshot_date < trade_date`.
+| Label | PIT selected_count | Coverage selected_count | Counts match | Missing tickers | Coverage status |
+|-------|-------------------:|------------------------:|--------------|-----------------|-----------------|
+| missing_or_new_liquidity | 737 | 737 | yes | [] | PASS |
+| boundary_or_gap | 728 | 728 | yes | [] | PASS |
+| normal | 735 | 735 | yes | [] | PASS |
 
-### Independent strict-prior resolution results
+`sample_superset_coverage_consistency`: **PASS**
 
-| Sample | Trade date | Independent S = max(month_date < T) | Report resolved | Match |
-|--------|------------|---------------------------------------|-----------------|-------|
-| missing_or_new_liquidity | 2017-01-13 | 2017-01-06 | 2017-01-06 | yes |
-| boundary_or_gap | 2017-04-28 | 2017-04-21 | 2017-04-21 | yes |
-| normal | 2021-09-24 | 2021-09-17 | 2021-09-17 | yes |
+Counts are complete (not capped at 20). Values match prior C7.4 production run because input hashes are unchanged.
 
-No sample consumed `month_date == trade_date` or `month_date > trade_date` for resolution (strict prior snapshot rule holds).
+### Independent strict-prior results
 
-### Independent membership spot-check results
+| Sample | Independent S | Report resolved | Match |
+|--------|---------------|-----------------|-------|
+| missing_or_new_liquidity | 2017-01-06 | 2017-01-06 | yes |
+| boundary_or_gap | 2017-04-21 | 2017-04-21 | yes |
+| normal | 2021-09-17 | 2021-09-17 | yes |
 
-Independent recomputation used `compute_reference_universe()` with canonical parameters (`dvol_top_pct=0.20`, `spread_bottom_pct=1.0`, average rank, AND filter).
+### Independent complete-membership results
 
-| Sample | Report selected count | Independent selected count | Membership match |
-|--------|----------------------:|---------------------------:|------------------|
-| missing_or_new_liquidity | 737 | 737 | yes |
-| boundary_or_gap | 728 | 728 | yes |
-| normal | 735 | 735 | yes |
+| Sample | Independent count | PIT count | Coverage count | Membership match | Missing from liquid |
+|--------|------------------:|----------:|---------------:|------------------|---------------------|
+| missing_or_new_liquidity | 737 | 737 | 737 | yes | [] |
+| boundary_or_gap | 728 | 728 | 728 | yes | [] |
+| normal | 735 | 735 | 735 | yes | [] |
 
-All samples: `production_reference_match=True`, audit status `PASS`, membership hashes match report.
+### Input hash before/after confirmation
 
-### Primary audit exit code
+| Input | SHA-256 | Unchanged |
+|-------|---------|-----------|
+| panel | `67e30956cd78bea97e9f90bfbd699f5e12e302e30db0e91912abd564dcf778de` | yes |
+| weekly | `40f507fb165add28c5fdfb1dc9ef7a2e0176874f3bc240732bc538b990673f42` | yes |
+| liquid_tickers | `e3094e6f1c8138ef5934f2b3158a37b3cc92ea01250c0dcfb8703ec03eb4b68a` | yes |
+
+### Primary exit code
 
 `0` (overall status **PASS**, non-strict)
 
 ### Final disposition
 
-**ACCEPT C7.4** — all mandatory correctness evidence passes on production artifacts. No blocking failures, no warnings. Proceed to C7.6 (or next scheduled C7 closeout step per sprint plan).
+**ACCEPT C7.4R** — corrected C7.5A certification passes on production artifacts. Proceed to C7.6.
 
-Operational artifacts preserved under `C:/MomentumCVG_env/log/pit_universe_audit/`.
+Operational artifacts: `C:/MomentumCVG_env/log/pit_universe_audit/c7_4r/`
