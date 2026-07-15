@@ -285,6 +285,45 @@ def test_discover_dates_sorted_ascending(cli_module, data_root):
     assert dates == [DAY_1, DAY_2]
 
 
+def test_empty_weekend_file_is_excluded_from_inventory(
+    cli_module, data_root, output_path
+):
+    _seed_two_good_days(data_root)
+    sunday = date(2024, 1, 7)
+    empty = pd.DataFrame(columns=["ticker", "stkPx", "adj_stkPx"])
+    _write_day(data_root, sunday, empty)
+
+    dates = cli_module.discover_adjusted_dates(data_root, 2024, 2024)
+    assert dates == [DAY_1, DAY_2]  # Sunday excluded
+
+    code = cli_module.main(_argv(data_root, output_path))
+    assert code == 0
+    out = pd.read_parquet(output_path)
+    out_dates = set(pd.to_datetime(out["date"]).dt.date)
+    assert sunday not in out_dates
+
+
+def test_nonempty_weekend_file_fails(cli_module, data_root, output_path):
+    _seed_two_good_days(data_root)
+    saturday = date(2024, 1, 6)
+    _write_day(data_root, saturday, _good_frame())  # data on a non-trading day
+
+    code = cli_module.main(_argv(data_root, output_path))
+    assert code == 1
+    assert not output_path.exists()
+
+
+def test_empty_weekday_file_still_fails(cli_module, data_root, output_path):
+    _seed_two_good_days(data_root)
+    thursday = date(2024, 1, 4)
+    empty = pd.DataFrame(columns=["ticker", "stkPx", "adj_stkPx"])
+    _write_day(data_root, thursday, empty)
+
+    code = cli_module.main(_argv(data_root, output_path))
+    assert code == 1
+    assert not output_path.exists()
+
+
 # ---------------------------------------------------------------------------
 # Date-processing failures (one bad date among good dates -> whole run fails)
 # ---------------------------------------------------------------------------
@@ -400,7 +439,61 @@ def test_extract_for_date_raises_instead_of_returning_empty(
 # ---------------------------------------------------------------------------
 
 
-def test_inconsistent_repeated_stk_px_fails(cli_module, data_root, output_path):
+def test_inconsistent_ticker_is_dropped_not_fatal(
+    cli_module, data_root, output_path, caplog
+):
+    """A ticker with inconsistent repeated stkPx is dropped for that date;
+    the remaining tickers still publish."""
+    day2 = pd.DataFrame(
+        [
+            {"ticker": "AAPL", "stkPx": 170.0, "adj_stkPx": 42.5},
+            {"ticker": "AAPL", "stkPx": 170.0, "adj_stkPx": 42.5},
+            {"ticker": "DJX", "stkPx": 489.0, "adj_stkPx": 489.0},
+            {"ticker": "DJX", "stkPx": 501.0, "adj_stkPx": 501.0},
+        ]
+    )
+    _write_day(data_root, DAY_1, _good_frame())
+    _write_day(data_root, DAY_2, day2)
+
+    with caplog.at_level(logging.WARNING):
+        code = cli_module.main(_argv(data_root, output_path))
+
+    assert code == 0
+    out = pd.read_parquet(output_path)
+    out["date"] = pd.to_datetime(out["date"]).dt.date
+
+    day2_tickers = set(out[out["date"] == DAY_2]["ticker"])
+    assert day2_tickers == {"AAPL"}  # DJX dropped on the inconsistent date
+    day1_tickers = set(out[out["date"] == DAY_1]["ticker"])
+    assert day1_tickers == {"AAPL", "MSFT"}  # other dates unaffected
+    assert any(
+        "dropping" in record.getMessage() and "DJX" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_inconsistent_adj_stk_px_also_drops_ticker(
+    cli_module, data_root, output_path
+):
+    day2 = pd.DataFrame(
+        [
+            {"ticker": "AAPL", "stkPx": 170.0, "adj_stkPx": 42.5},
+            {"ticker": "MSFT", "stkPx": 85.0, "adj_stkPx": 85.0},
+            {"ticker": "MSFT", "stkPx": 85.0, "adj_stkPx": 85.1},
+        ]
+    )
+    _write_day(data_root, DAY_1, _good_frame())
+    _write_day(data_root, DAY_2, day2)
+
+    code = cli_module.main(_argv(data_root, output_path))
+
+    assert code == 0
+    out = pd.read_parquet(output_path)
+    out["date"] = pd.to_datetime(out["date"]).dt.date
+    assert set(out[out["date"] == DAY_2]["ticker"]) == {"AAPL"}
+
+
+def test_all_tickers_inconsistent_fails_date(cli_module, data_root, output_path):
     bad = pd.DataFrame(
         [
             {"ticker": "AAPL", "stkPx": 170.0, "adj_stkPx": 42.5},
@@ -412,16 +505,25 @@ def test_inconsistent_repeated_stk_px_fails(cli_module, data_root, output_path):
     assert not output_path.exists()
 
 
-def test_inconsistent_repeated_adj_stk_px_fails(cli_module, data_root, output_path):
-    bad = pd.DataFrame(
+def test_extract_for_date_reports_dropped_tickers(cli_module, data_root):
+    frame = pd.DataFrame(
         [
             {"ticker": "AAPL", "stkPx": 170.0, "adj_stkPx": 42.5},
-            {"ticker": "AAPL", "stkPx": 170.0, "adj_stkPx": 42.6},
+            {"ticker": "SPX", "stkPx": 5000.0, "adj_stkPx": 5000.0},
+            {"ticker": "SPX", "stkPx": 5050.0, "adj_stkPx": 5050.0},
         ]
     )
-    code = _run_with_bad_second_day(cli_module, data_root, output_path, bad)
-    assert code == 1
-    assert not output_path.exists()
+    _write_day(data_root, DAY_1, frame)
+    provider = cli_module.ORATSDataProvider(
+        data_root=str(data_root), min_volume=0, min_open_interest=0,
+        min_bid=0.0, max_spread_pct=1.0, cache_size=1,
+    )
+
+    result = cli_module.extract_spot_prices_for_date(provider, DAY_1)
+
+    assert result.dropped_tickers == frozenset({"SPX"})
+    assert result.expected_tickers == frozenset({"AAPL"})
+    assert [r["ticker"] for r in result.records] == ["AAPL"]
 
 
 def test_differences_within_tolerance_pass(cli_module, data_root, output_path):

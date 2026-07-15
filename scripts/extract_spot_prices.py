@@ -8,11 +8,17 @@ split-adjusted) from the adjusted daily parquet store. It exits successfully
 and publishes an output parquet only when:
 
 1. Every expected adjusted-chain date (discovered from filenames under the
-   requested year range) was processed successfully.
+   requested year range) was processed successfully. Weekend-dated files are
+   excluded from the expected inventory when empty (non-trading days); a
+   weekend file that contains data fails the run.
 2. The combined output contains exactly one valid spot row for every
-   normalized ticker present in every adjusted daily file.
-3. Every spot value is finite and strictly positive, and repeated source
-   spot values within one ticker-date agree within a tight tolerance.
+   retained normalized ticker in every adjusted daily file. A ticker-date
+   whose repeated source spot values disagree beyond the tolerance (e.g.
+   cash-index tickers carrying per-expiry forward levels) is dropped from
+   the output with a logged warning; the downstream effect is simply that
+   no surface is extracted for that ticker-date. A date where every ticker
+   is dropped still fails the run.
+3. Every published spot value is finite and strictly positive.
 4. The output was written through a same-directory temporary parquet,
    read back, revalidated, and atomically published via ``os.replace``.
 
@@ -93,11 +99,17 @@ class UsageError(RuntimeError):
 
 @dataclass(frozen=True)
 class DateSpotResult:
-    """Validated one-date extraction result."""
+    """Validated one-date extraction result.
+
+    ``expected_tickers`` is the retained ticker set (after dropping tickers
+    with inconsistent repeated spot values); ``dropped_tickers`` records the
+    ticker-date entries excluded from the output for that reason.
+    """
 
     trade_date: date
     expected_tickers: frozenset[str]
     records: tuple[dict[str, object], ...]
+    dropped_tickers: frozenset[str] = frozenset()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -188,14 +200,20 @@ def discover_adjusted_dates(
 ) -> list[date]:
     """Discover expected trading dates from adjusted parquet filenames.
 
+    Weekend-dated files (Saturday/Sunday) are not trading days: they are
+    excluded from the expected inventory after verifying they contain no
+    rows. A weekend file with data fails the run so real rows can never be
+    silently skipped.
+
     Fails closed on a missing data root, a missing requested year directory,
     a malformed filename, a duplicate date, a file date outside its containing
-    year directory, or an empty inventory.
+    year directory, a non-empty weekend file, or an empty inventory.
     """
     if not data_root.is_dir():
         raise SpotExtractionError(f"data root does not exist: {data_root}")
 
     discovered: list[tuple[date, int]] = []
+    weekend_excluded: list[date] = []
     for year in range(start_year, end_year + 1):
         year_dir = data_root / str(year)
         if not year_dir.is_dir():
@@ -214,7 +232,28 @@ def discover_adjusted_dates(
                 raise SpotExtractionError(
                     f"invalid date in adjusted filename: {file_path}"
                 ) from exc
+            if trade_date.weekday() >= 5:  # Saturday/Sunday: not a trading day
+                try:
+                    weekend_frame = pd.read_parquet(file_path)
+                except Exception as exc:
+                    raise SpotExtractionError(
+                        f"failed to read weekend-dated file {file_path}: {exc}"
+                    ) from exc
+                if not weekend_frame.empty:
+                    raise SpotExtractionError(
+                        f"weekend-dated file contains data: {file_path}"
+                    )
+                weekend_excluded.append(trade_date)
+                continue
             discovered.append((trade_date, year))
+
+    if weekend_excluded:
+        logger.info(
+            "Excluded %d empty weekend-dated files from the expected "
+            "inventory: %s",
+            len(weekend_excluded),
+            ", ".join(d.isoformat() for d in sorted(weekend_excluded)),
+        )
 
     if not discovered:
         raise SpotExtractionError(
@@ -280,15 +319,17 @@ def _validated_numeric(
     return values
 
 
-def _check_repeated_spot_consistency(
-    frame: pd.DataFrame, column: str, trade_date: date
-) -> None:
-    """Verify all source rows for each ticker agree on ``column``.
+def _find_inconsistent_tickers(frame: pd.DataFrame, column: str) -> set[str]:
+    """Return tickers whose source rows disagree on ``column``.
 
     Values are already finite and positive. Each value is compared against
     the ticker's first value with ``math.isclose``. Exactly-equal repeated
-    values (the expected production case) take a vectorized fast path.
+    values (the expected production case for equities) take a vectorized
+    fast path. Cash-index tickers routinely carry per-expiry forward levels
+    in this column, so disagreement marks the ticker-date for exclusion
+    rather than failing the whole date.
     """
+    inconsistent: set[str] = set()
     for ticker, values in frame.groupby("ticker")[column]:
         arr = values.to_numpy(dtype=float)
         reference = float(arr[0])
@@ -301,11 +342,9 @@ def _check_repeated_spot_consistency(
                 rel_tol=SPOT_CONSISTENCY_REL_TOL,
                 abs_tol=SPOT_CONSISTENCY_ABS_TOL,
             ):
-                raise SpotExtractionError(
-                    f"{trade_date.isoformat()}: inconsistent repeated {column} "
-                    f"values for ticker {ticker} "
-                    f"(reference={reference!r}, value={float(value)!r})"
-                )
+                inconsistent.add(str(ticker))
+                break
+    return inconsistent
 
 
 def extract_spot_prices_for_date(
@@ -314,10 +353,15 @@ def extract_spot_prices_for_date(
 ) -> DateSpotResult:
     """Extract exactly one validated spot record per normalized ticker.
 
+    Tickers whose repeated source spot values disagree beyond the tolerance
+    (raw or adjusted) are dropped from the result and reported via
+    ``dropped_tickers``; every retained ticker produces exactly one record.
+
     Raises:
         SpotExtractionError: on read failure, empty/missing frame, missing
-            columns, invalid tickers, invalid values, or inconsistent repeated
-            spot values. Failures are never converted into empty results.
+            columns, invalid tickers, invalid values, or when every ticker
+            on the date is dropped. Failures are never converted into empty
+            results.
     """
     try:
         df = provider._load_day_data(trade_date)
@@ -352,9 +396,26 @@ def extract_spot_prices_for_date(
     )
 
     # Repeated-value consistency must be established before selecting one
-    # row per ticker.
-    _check_repeated_spot_consistency(work, "stkPx", trade_date)
-    _check_repeated_spot_consistency(work, "adj_stkPx", trade_date)
+    # row per ticker. Inconsistent tickers (e.g. cash indices with
+    # per-expiry forward levels) are dropped from this date's output.
+    dropped = _find_inconsistent_tickers(work, "stkPx")
+    dropped |= _find_inconsistent_tickers(work, "adj_stkPx")
+
+    if dropped:
+        logger.warning(
+            "%s: dropping %d ticker(s) with inconsistent repeated spot "
+            "values: %s",
+            trade_date.isoformat(),
+            len(dropped),
+            ", ".join(sorted(dropped)),
+        )
+        work = work[~work["ticker"].isin(dropped)]
+
+    if work.empty:
+        raise SpotExtractionError(
+            f"{trade_date.isoformat()}: no valid tickers remain after "
+            "dropping inconsistent spot values"
+        )
 
     per_ticker = work.groupby("ticker", sort=True)[["adj_stkPx", "stkPx"]].first()
 
@@ -380,6 +441,7 @@ def extract_spot_prices_for_date(
         trade_date=trade_date,
         expected_tickers=expected_tickers,
         records=records,
+        dropped_tickers=frozenset(dropped),
     )
 
 
@@ -659,11 +721,25 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("output validation/write failure: %s", exc)
         return 1
 
+    dropped_entries = sum(len(result.dropped_tickers) for result in results)
+    dropped_unique = sorted(
+        {ticker for result in results for ticker in result.dropped_tickers}
+    )
+
     logger.info("Extraction summary:")
     logger.info("  Expected dates: %d", len(expected_dates))
     logger.info("  Processed dates: %d", len(results))
     logger.info("  Rows: %d", len(validated))
     logger.info("  Tickers: %d", validated["ticker"].nunique())
+    if dropped_entries:
+        logger.info(
+            "  Dropped inconsistent ticker-date entries: %d "
+            "(%d unique tickers: %s)",
+            dropped_entries,
+            len(dropped_unique),
+            ", ".join(dropped_unique[:20])
+            + (", ..." if len(dropped_unique) > 20 else ""),
+        )
     logger.info(
         "  Date range: %s to %s",
         expected_dates[0].isoformat(),
