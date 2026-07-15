@@ -7,6 +7,7 @@ files laid out as ``<root>/<YYYY>/ORATS_SMV_Strikes_YYYYMMDD.parquet``.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import math
 import sys
 from datetime import date
@@ -741,3 +742,247 @@ def test_resolve_year_range_single_year(cli_module):
 def test_resolve_year_range_explicit_bounds(cli_module):
     args = cli_module.parse_args(["--start-year", "2019", "--end-year", "2021"])
     assert cli_module.resolve_year_range(args) == (2019, 2021)
+
+
+# ---------------------------------------------------------------------------
+# C8.2R Fix 1 — output path inside the input data root is rejected
+# ---------------------------------------------------------------------------
+
+
+def _snapshot_tree_bytes(root: Path) -> dict[Path, bytes]:
+    return {p: p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def test_output_equal_to_adjusted_daily_parquet_is_rejected(
+    cli_module, data_root
+):
+    _seed_two_good_days(data_root)
+    before = _snapshot_tree_bytes(data_root)
+
+    target = _day_path(data_root, DAY_1)
+    code = cli_module.main(_argv(data_root, target))
+
+    assert code == 2
+    assert _snapshot_tree_bytes(data_root) == before  # source bytes untouched
+    assert list(data_root.rglob("*.tmp-*")) == []
+
+
+def test_output_elsewhere_inside_data_root_is_rejected(cli_module, data_root):
+    _seed_two_good_days(data_root)
+    before = _snapshot_tree_bytes(data_root)
+
+    inside = data_root / "cache" / "spot_prices_adjusted.parquet"
+    code = cli_module.main(_argv(data_root, inside))
+
+    assert code == 2
+    assert not inside.exists()
+    assert not inside.parent.exists()  # no directory created inside the root
+    assert _snapshot_tree_bytes(data_root) == before
+
+
+def test_output_inside_unrequested_year_directory_is_rejected(
+    cli_module, data_root
+):
+    _seed_two_good_days(data_root)
+    (data_root / "2023").mkdir()
+
+    inside = data_root / "2023" / "spot.parquet"
+    code = cli_module.main(_argv(data_root, inside))
+
+    assert code == 2
+    assert not inside.exists()
+    assert list(data_root.rglob("*.tmp-*")) == []
+
+
+def test_output_equal_to_data_root_is_rejected(cli_module, data_root):
+    _seed_two_good_days(data_root)
+
+    code = cli_module.main(_argv(data_root, data_root))
+    assert code == 2
+
+    # The guard itself also rejects the root, independent of the parquet
+    # suffix check that fires first in main.
+    with pytest.raises(cli_module.UsageError, match="outside data root"):
+        cli_module.ensure_output_outside_data_root(data_root, data_root)
+
+
+def test_guard_rejects_nested_output_directly(cli_module, data_root):
+    nested = data_root / "2024" / "deep" / "spot.parquet"
+    with pytest.raises(cli_module.UsageError, match="outside data root"):
+        cli_module.ensure_output_outside_data_root(data_root, nested)
+
+
+def test_sibling_cache_output_outside_data_root_succeeds(cli_module, tmp_path):
+    # Valid snapshot layout: output is a sibling of the adjusted root.
+    snapshot = tmp_path / "snapshot"
+    adjusted_root = snapshot / "input" / "adjusted_liquid"
+    adjusted_root.mkdir(parents=True)
+    _write_day(adjusted_root, DAY_1, _good_frame())
+    _write_day(adjusted_root, DAY_2, _good_frame())
+
+    output = snapshot / "cache" / "spot_prices_adjusted.parquet"
+    code = cli_module.main(_argv(adjusted_root, output))
+
+    assert code == 0
+    assert output.exists()
+    out = pd.read_parquet(output)
+    assert len(out) == 4
+
+
+def test_similarly_prefixed_separate_directory_is_allowed(cli_module, tmp_path):
+    # C:/data/root2 must not be treated as a child of C:/data/root.
+    adjusted_root = tmp_path / "data" / "root"
+    adjusted_root.mkdir(parents=True)
+    _write_day(adjusted_root, DAY_1, _good_frame())
+
+    output = tmp_path / "data" / "root2" / "spot.parquet"
+    cli_module.ensure_output_outside_data_root(adjusted_root, output)  # no raise
+
+    code = cli_module.main(_argv(adjusted_root, output))
+    assert code == 0
+    assert output.exists()
+
+
+# ---------------------------------------------------------------------------
+# C8.2R Fix 2 — output-directory creation failure is controlled (exit 1)
+# ---------------------------------------------------------------------------
+
+
+def test_mkdir_failure_returns_one_and_preserves_output(
+    cli_module, data_root, output_path, monkeypatch
+):
+    _seed_two_good_days(data_root)  # seed before patching mkdir
+
+    existing_bytes = b"existing sentinel artifact"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(existing_bytes)
+
+    real_mkdir = Path.mkdir
+
+    def _failing_mkdir(self, *args, **kwargs):
+        if self == output_path.parent:
+            raise OSError("simulated mkdir failure")
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", _failing_mkdir)
+
+    code = cli_module.main(_argv(data_root, output_path))  # must not raise
+
+    assert code == 1
+    assert output_path.read_bytes() == existing_bytes
+    assert list(output_path.parent.glob("*.tmp-*")) == []
+
+
+def test_write_parquet_atomically_mkdir_failure_raises_spot_error(
+    cli_module, tmp_path, monkeypatch
+):
+    validated = cli_module.validate_complete_spot_frame(
+        _valid_combined_frame(), [DAY_1, DAY_2], _expected_map()
+    )
+    output = tmp_path / "blocked" / "spot.parquet"
+
+    real_mkdir = Path.mkdir
+
+    def _failing_mkdir(self, *args, **kwargs):
+        if self == output.parent:
+            raise OSError("simulated mkdir failure")
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", _failing_mkdir)
+
+    with pytest.raises(cli_module.SpotExtractionError, match="failed to write"):
+        cli_module.write_parquet_atomically(validated, output)
+
+    # temp_path was never created; cleanup must tolerate that.
+    assert not output.parent.exists()
+
+
+# ---------------------------------------------------------------------------
+# C8.2R Fix 3 — os.replace failure is controlled and non-destructive
+# ---------------------------------------------------------------------------
+
+
+def test_replace_failure_through_main_preserves_existing_output(
+    cli_module, data_root, output_path, monkeypatch
+):
+    _seed_two_good_days(data_root)
+
+    existing_bytes = b"published sentinel that must survive"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(existing_bytes)
+
+    def _failing_replace(src, dst, *args, **kwargs):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(cli_module.os, "replace", _failing_replace)
+
+    code = cli_module.main(_argv(data_root, output_path))
+
+    assert code == 1
+    assert output_path.read_bytes() == existing_bytes
+    assert list(output_path.parent.iterdir()) == [output_path]  # no extras
+
+
+def test_replace_failure_direct_cleans_temp_and_raises(
+    cli_module, tmp_path, monkeypatch
+):
+    validated = cli_module.validate_complete_spot_frame(
+        _valid_combined_frame(), [DAY_1, DAY_2], _expected_map()
+    )
+    output = tmp_path / "out" / "spot.parquet"
+
+    def _failing_replace(src, dst, *args, **kwargs):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(cli_module.os, "replace", _failing_replace)
+
+    with pytest.raises(cli_module.SpotExtractionError, match="failed to write"):
+        cli_module.write_parquet_atomically(validated, output)
+
+    assert not output.exists()
+    assert list(output.parent.iterdir()) == []  # temp parquet deleted
+
+
+# ---------------------------------------------------------------------------
+# C8.2R Fix 4 — post-publication size stat is best effort
+# ---------------------------------------------------------------------------
+
+
+def test_stat_failure_after_publication_still_returns_zero(
+    cli_module, data_root, output_path, monkeypatch, caplog
+):
+    _seed_two_good_days(data_root)
+
+    real_stat = Path.stat
+
+    def _failing_stat(self, *args, **kwargs):
+        if self == output_path:
+            raise OSError("simulated stat failure")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _failing_stat)
+
+    with caplog.at_level(logging.WARNING):
+        code = cli_module.main(_argv(data_root, output_path))
+
+    assert code == 0
+    monkeypatch.undo()
+    assert output_path.exists()
+    out = pd.read_parquet(output_path)
+    assert len(out) == 4
+    assert any(
+        "size could not be read" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_log_output_size_best_effort_missing_file_warns(
+    cli_module, tmp_path, caplog
+):
+    missing = tmp_path / "never_written.parquet"
+    with caplog.at_level(logging.WARNING):
+        cli_module.log_output_size_best_effort(missing)  # must not raise
+    assert any(
+        "size could not be read" in record.getMessage()
+        for record in caplog.records
+    )

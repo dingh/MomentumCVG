@@ -129,6 +129,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def ensure_output_outside_data_root(
+    data_root: Path,
+    output_path: Path,
+) -> None:
+    """Reject an output path that resolves inside the adjusted input root.
+
+    The extractor must never overwrite or create files anywhere inside the
+    adjusted-chain input root (including the root itself, any year directory,
+    and any adjusted daily parquet). Uses resolved path ancestry, not string
+    prefixes, so sibling directories with a shared prefix remain valid.
+
+    Raises:
+        UsageError: if the resolved output equals or lies inside the resolved
+            data root.
+    """
+    resolved_data_root = data_root.resolve()
+    resolved_output = output_path.resolve(strict=False)
+
+    try:
+        resolved_output.relative_to(resolved_data_root)
+    except ValueError:
+        return
+
+    raise UsageError(
+        f"output must be outside data root: {resolved_output}"
+    )
+
+
 def resolve_year_range(args: argparse.Namespace) -> tuple[int, int]:
     """Resolve and validate the requested year range.
 
@@ -496,27 +524,51 @@ def _verify_readback(frame: pd.DataFrame, readback: pd.DataFrame) -> None:
 def write_parquet_atomically(frame: pd.DataFrame, output_path: Path) -> None:
     """Write the validated frame via temp file + read-back + ``os.replace``.
 
-    On any failure the temporary file is removed and an existing output file
-    is left untouched.
+    On any failure the temporary file (if it was created) is removed and an
+    existing output file is left untouched. Output-directory creation,
+    temporary write, read-back validation, and the ``os.replace`` publication
+    all share the same controlled error handling.
     """
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = output_path.parent / (
-        f"{output_path.stem}.tmp-{uuid.uuid4().hex}.parquet"
-    )
+    temp_path: Path | None = None
 
     try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        temp_path = output_path.parent / (
+            f"{output_path.stem}.tmp-{uuid.uuid4().hex}.parquet"
+        )
+
         frame.to_parquet(temp_path, index=False, compression="snappy")
         readback = read_parquet_for_validation(temp_path)
         _verify_readback(frame, readback)
         os.replace(temp_path, output_path)
     except SpotExtractionError:
-        temp_path.unlink(missing_ok=True)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
         raise
     except Exception as exc:
-        temp_path.unlink(missing_ok=True)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
         raise SpotExtractionError(
             f"failed to write output parquet {output_path}: {exc}"
         ) from exc
+
+
+def log_output_size_best_effort(output_path: Path) -> None:
+    """Log the published output size; never fail after successful publication.
+
+    The output has already been atomically published when this runs, so a
+    ``stat`` failure must not turn the success into an apparent failure.
+    """
+    try:
+        output_size_mb = output_path.stat().st_size / 1024**2
+    except OSError as exc:
+        logger.warning(
+            "Output published successfully, but size could not be read: %s",
+            exc,
+        )
+    else:
+        logger.info("  Output size: %.2f MB", output_size_mb)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -536,6 +588,8 @@ def main(argv: list[str] | None = None) -> int:
             raise UsageError(
                 f"output must be a parquet path: {output_path}"
             )
+
+        ensure_output_outside_data_root(data_root, output_path)
     except UsageError as exc:
         logger.error("usage error: %s", exc)
         return 2
@@ -616,9 +670,7 @@ def main(argv: list[str] | None = None) -> int:
         expected_dates[-1].isoformat(),
     )
     logger.info("  Output: %s", output_path)
-    logger.info(
-        "  Output size: %.2f MB", output_path.stat().st_size / 1024**2
-    )
+    log_output_size_best_effort(output_path)
     return 0
 
 
