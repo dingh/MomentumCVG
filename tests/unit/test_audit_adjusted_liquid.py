@@ -497,6 +497,182 @@ def test_raw_math_opra_aware_merge_passes_spx_spxw_duplicate_keys(cli_module, tm
     ]
 
 
+def _write_zip_named(tmp_path: Path, date_str: str, rows: list[dict] | None = None) -> Path:
+    rows = rows if rows is not None else _raw_csv_rows()
+    zip_dir = tmp_path / "raw" / date_str[:4]
+    zip_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = zip_dir / f"ORATS_SMV_Strikes_{date_str}.zip"
+    csv_buf = io.StringIO()
+    pd.DataFrame(rows).to_csv(csv_buf, index=False)
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr(f"ORATS_SMV_Strikes_{date_str}.csv", csv_buf.getvalue().encode("utf-8"))
+    return zip_path
+
+
+def _write_parquet_named(tmp_path: Path, date_str: str, rows: list[dict] | None = None) -> Path:
+    rows = rows if rows is not None else _valid_adjusted_rows()
+    adj_dir = tmp_path / "adj" / date_str[:4]
+    adj_dir.mkdir(parents=True, exist_ok=True)
+    out = adj_dir / f"ORATS_SMV_Strikes_{date_str}.parquet"
+    pd.DataFrame(rows).to_parquet(out, index=False)
+    return out
+
+
+def _write_expected_dates(path: Path, lines: list[str]) -> Path:
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+# ── C8.3A: --expected-dates frozen inventory boundary ──────────────────────────
+
+
+def test_expected_dates_legacy_behavior_unchanged_without_flag(cli_module, tmp_path):
+    _passing_fixture(tmp_path)
+    result = cli_module.audit_inventory(tmp_path / "raw", tmp_path / "adj", [2020])
+    assert result.status == "PASS"
+    yr = result.metrics["years"][0]
+    assert yr["missing_adjusted_count"] == 0
+    assert "expected_date_count" not in yr
+
+
+def test_expected_dates_later_raw_outside_set_is_ignored(cli_module, tmp_path):
+    _write_zip_named(tmp_path, "20200102")
+    _write_zip_named(tmp_path, "20200109")  # later raw date, not expected
+    _write_parquet_named(tmp_path, "20200102")
+
+    result = cli_module.audit_inventory(
+        tmp_path / "raw", tmp_path / "adj", [2020], {"20200102"}
+    )
+    assert result.status == "PASS"
+    yr = result.metrics["years"][0]
+    assert yr["expected_date_count"] == 1
+    assert yr["missing_adjusted_count"] == 0
+    assert yr["extra_adjusted_count"] == 0
+    assert yr["missing_raw_count"] == 0
+
+
+def test_expected_date_missing_raw_zip_fails(cli_module, tmp_path):
+    _write_zip_named(tmp_path, "20200109")  # raw dir exists but not expected date
+    _write_parquet_named(tmp_path, "20200102")
+
+    result = cli_module.audit_inventory(
+        tmp_path / "raw", tmp_path / "adj", [2020], {"20200102"}
+    )
+    assert result.status == "FAIL"
+    assert any("missing raw" in f.lower() for f in result.failures)
+
+
+def test_expected_date_missing_adjusted_parquet_fails(cli_module, tmp_path):
+    _write_zip_named(tmp_path, "20200102")
+    _write_parquet_named(tmp_path, "20200109")  # adj dir exists but not expected date
+
+    result = cli_module.audit_inventory(
+        tmp_path / "raw", tmp_path / "adj", [2020], {"20200102"}
+    )
+    assert result.status == "FAIL"
+    assert any("missing" in f.lower() and "adjusted parquet" in f.lower() for f in result.failures)
+
+
+def test_adjusted_date_outside_expected_set_fails(cli_module, tmp_path):
+    _write_zip_named(tmp_path, "20200102")
+    _write_zip_named(tmp_path, "20200103")
+    _write_parquet_named(tmp_path, "20200102")
+    _write_parquet_named(tmp_path, "20200103")  # outside expected set
+
+    result = cli_module.audit_inventory(
+        tmp_path / "raw", tmp_path / "adj", [2020], {"20200102"}
+    )
+    assert result.status == "FAIL"
+    assert any("outside the expected set" in f for f in result.failures)
+
+
+def test_duplicate_expected_date_fails(cli_module, tmp_path):
+    path = _write_expected_dates(tmp_path / "exp.txt", ["2020-01-02", "2020-01-02"])
+    with pytest.raises(cli_module.ExpectedDatesError, match="duplicate"):
+        cli_module.parse_expected_dates(path)
+
+
+def test_malformed_expected_date_fails(cli_module, tmp_path):
+    path = _write_expected_dates(tmp_path / "exp.txt", ["2020-13-40"])
+    with pytest.raises(cli_module.ExpectedDatesError, match="malformed"):
+        cli_module.parse_expected_dates(path)
+
+
+def test_expected_dates_parses_comments_and_blank_lines(cli_module, tmp_path):
+    path = _write_expected_dates(
+        tmp_path / "exp.txt",
+        ["# header", "", "2020-01-03", "  2020-01-02  ", "# trailing"],
+    )
+    dates = cli_module.parse_expected_dates(path)
+    assert [d.isoformat() for d in dates] == ["2020-01-02", "2020-01-03"]
+
+
+def test_empty_expected_dates_file_fails(cli_module, tmp_path):
+    path = _write_expected_dates(tmp_path / "exp.txt", ["# only comments", ""])
+    with pytest.raises(cli_module.ExpectedDatesError, match="no dates"):
+        cli_module.parse_expected_dates(path)
+
+
+def test_math_sampling_limited_to_expected_dates(cli_module, tmp_path):
+    # Two adjusted files; only the expected one has a matching raw ZIP.
+    _write_zip_named(tmp_path, "20200102")
+    _write_parquet_named(tmp_path, "20200102")
+    _write_parquet_named(tmp_path, "20200103")  # not expected, no raw
+
+    result = cli_module.audit_raw_math_sample(
+        tmp_path / "raw",
+        tmp_path / "adj",
+        [2020],
+        set(_UNIVERSE),
+        sample_files=10,
+        sample_rows=100,
+        seed=57,
+        expected_date_strs={"20200102"},
+    )
+    assert result.metrics["sampled_files"] == 1
+    assert result.status == "PASS"
+    assert result.metrics["matched_rows"] >= 1
+
+
+def test_expected_dates_incompatible_years_fails_via_main(cli_module, tmp_path):
+    fx = _passing_fixture(tmp_path)
+    exp = _write_expected_dates(tmp_path / "exp.txt", ["2021-01-04"])  # year 2021
+    with pytest.raises(SystemExit) as excinfo:
+        cli_module.main(
+            [
+                "--raw-root", str(fx["raw_root"]),
+                "--adj-root", str(fx["adj_root"]),
+                "--splits", str(fx["splits"]),
+                "--ticker-universe", str(fx["universe"]),
+                "--years", "2020",
+                "--report-path", str(tmp_path / "report.md"),
+                "--expected-dates", str(exp),
+            ]
+        )
+    assert excinfo.value.code == 1
+
+
+def test_expected_dates_happy_path_via_main(cli_module, tmp_path):
+    fx = _passing_fixture(tmp_path)  # raw+adj for 20200102
+    exp = _write_expected_dates(tmp_path / "exp.txt", ["2020-01-02"])
+    report = tmp_path / "report.md"
+    # PASS path returns None (no SystemExit).
+    cli_module.main(
+        [
+            "--raw-root", str(fx["raw_root"]),
+            "--adj-root", str(fx["adj_root"]),
+            "--splits", str(fx["splits"]),
+            "--ticker-universe", str(fx["universe"]),
+            "--years", "2020",
+            "--sample-files", "1",
+            "--sample-rows", "100",
+            "--report-path", str(report),
+            "--expected-dates", str(exp),
+        ]
+    )
+    assert report.is_file()
+
+
 def test_raw_math_fails_on_fallback_duplicate_keys_without_opra(cli_module, tmp_path):
     """Fallback 3-key join must fail clearly when OPRA columns are absent."""
     universe = _write_universe_csv(tmp_path / "liquid_tickers.csv", ["SPX"])

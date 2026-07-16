@@ -7,6 +7,7 @@ files laid out as ``<root>/<YYYY>/ORATS_SMV_Strikes_YYYYMMDD.parquet``.
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import math
 import sys
@@ -16,6 +17,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from src.data.snapshot_foundation import (
+    GATE_PASS,
+    gate_spot_summary_reconciliation,
+)
 from src.data.spot_price_db import SpotPriceDB
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1119,3 +1124,151 @@ def test_log_output_size_best_effort_missing_file_warns(
         "size could not be read" in record.getMessage()
         for record in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# C8.3A shared inventory resolver + compact spot summary
+# ---------------------------------------------------------------------------
+
+_SUMMARY_FIELDS = {
+    "resolved_date_count",
+    "resolved_date_min",
+    "resolved_date_max",
+    "weekend_excluded_dates",
+    "source_ticker_date_key_count",
+    "source_ticker_date_key_digest",
+    "output_ticker_date_key_count",
+    "output_ticker_date_key_digest",
+    "ambiguous_exclusion_count",
+    "ambiguous_exclusions",
+    "output_row_count",
+    "producer_status",
+    "warnings",
+}
+
+
+def test_shared_inventory_resolver_preserves_accepted_behavior(cli_module, data_root):
+    _seed_two_good_days(data_root)
+    sunday = date(2024, 1, 7)
+    _write_day(data_root, sunday, pd.DataFrame(columns=["ticker", "stkPx", "adj_stkPx"]))
+
+    inventory = cli_module.resolve_inventory_or_fail(data_root, 2024, 2024)
+    assert list(inventory.resolved_trading_dates) == [DAY_1, DAY_2]
+    assert inventory.weekend_excluded_dates == (sunday,)
+    # Backward-compatible wrapper still returns just the resolved trading dates.
+    assert cli_module.discover_adjusted_dates(data_root, 2024, 2024) == [DAY_1, DAY_2]
+
+
+def test_summary_absent_when_not_requested(cli_module, data_root, output_path):
+    _seed_two_good_days(data_root)
+    assert cli_module.main(_argv(data_root, output_path)) == 0
+    # No summary file anywhere in the output directory.
+    assert list(output_path.parent.glob("*.json")) == []
+
+
+def test_compact_summary_contains_no_retained_key_list(
+    cli_module, data_root, output_path, tmp_path
+):
+    _seed_two_good_days(data_root)
+    summary_path = tmp_path / "reports" / "spot_summary.json"
+    code = cli_module.main(
+        _argv(data_root, output_path, extra=["--summary-path", str(summary_path)])
+    )
+    assert code == 0
+    assert summary_path.exists()
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    # Exactly the documented compact fields — no dump of all retained keys.
+    assert set(summary.keys()) == _SUMMARY_FIELDS
+    # Output keys are counted, not enumerated.
+    assert summary["output_ticker_date_key_count"] == 4
+    assert summary["ambiguous_exclusions"] == []
+    assert summary["producer_status"] == "PASS"
+    assert list(summary_path.parent.glob("*.tmp-*")) == []
+
+
+def test_summary_counts_and_digests_are_deterministic(
+    cli_module, data_root, output_path, tmp_path
+):
+    _seed_two_good_days(data_root)
+    first = tmp_path / "s1.json"
+    second = tmp_path / "s2.json"
+
+    assert cli_module.main(_argv(data_root, output_path, extra=["--summary-path", str(first)])) == 0
+    assert cli_module.main(_argv(data_root, output_path, extra=["--summary-path", str(second)])) == 0
+
+    assert json.loads(first.read_text()) == json.loads(second.read_text())
+    summary = json.loads(first.read_text())
+    assert len(summary["source_ticker_date_key_digest"]) == 64
+    assert len(summary["output_ticker_date_key_digest"]) == 64
+    # Reconciles through the shared gate.
+    assert gate_spot_summary_reconciliation(summary).status == GATE_PASS
+
+
+def test_ambiguous_exclusions_reconcile_in_summary(
+    cli_module, data_root, output_path, tmp_path
+):
+    day2 = pd.DataFrame(
+        [
+            {"ticker": "AAPL", "stkPx": 170.0, "adj_stkPx": 42.5},
+            {"ticker": "DJX", "stkPx": 489.0, "adj_stkPx": 489.0},
+            {"ticker": "DJX", "stkPx": 501.0, "adj_stkPx": 501.0},  # inconsistent
+        ]
+    )
+    _write_day(data_root, DAY_1, _good_frame())
+    _write_day(data_root, DAY_2, day2)
+
+    summary_path = tmp_path / "spot_summary.json"
+    code = cli_module.main(
+        _argv(data_root, output_path, extra=["--summary-path", str(summary_path)])
+    )
+    assert code == 0
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["ambiguous_exclusion_count"] == 1
+    assert summary["ambiguous_exclusions"] == [[DAY_2.isoformat(), "DJX"]]
+    # source keys (5: DAY_1 AAPL/MSFT, DAY_2 AAPL/DJX ... DJX counted once) minus
+    # the one ambiguous exclusion == output keys.
+    assert (
+        summary["source_ticker_date_key_count"]
+        - summary["ambiguous_exclusion_count"]
+        == summary["output_ticker_date_key_count"]
+    )
+    assert gate_spot_summary_reconciliation(summary).status == GATE_PASS
+
+
+def test_summary_write_is_atomic_no_temp_leftover(
+    cli_module, data_root, output_path, tmp_path
+):
+    _seed_two_good_days(data_root)
+    summary_path = tmp_path / "reports" / "spot_summary.json"
+    assert cli_module.main(
+        _argv(data_root, output_path, extra=["--summary-path", str(summary_path)])
+    ) == 0
+    assert summary_path.exists()
+    assert list(summary_path.parent.glob("*.tmp-*")) == []
+
+
+def test_failed_rerun_preserves_existing_output_and_summary(
+    cli_module, data_root, output_path, tmp_path
+):
+    summary_path = tmp_path / "spot_summary.json"
+    existing_output = b"existing valid spot artifact"
+    existing_summary = b'{"producer_status": "PASS"}'
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(existing_output)
+    summary_path.write_bytes(existing_summary)
+
+    _write_day(data_root, DAY_1, _good_frame())
+    _write_day(
+        data_root,
+        DAY_2,
+        pd.DataFrame([{"ticker": "AAPL", "stkPx": -1.0, "adj_stkPx": 42.5}]),
+    )
+
+    code = cli_module.main(
+        _argv(data_root, output_path, extra=["--summary-path", str(summary_path)])
+    )
+    assert code == 1
+    assert output_path.read_bytes() == existing_output
+    assert summary_path.read_bytes() == existing_summary

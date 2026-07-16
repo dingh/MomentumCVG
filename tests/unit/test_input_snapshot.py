@@ -8,8 +8,13 @@ from pathlib import Path
 
 import pytest
 
+from src.data import input_snapshot
 from src.data.input_snapshot import (
+    ARTIFACT_ADJUSTED_CHAINS_ROOT,
+    ARTIFACT_LIQUID_TICKERS,
+    ARTIFACT_LIQUIDITY_DAILY,
     ARTIFACT_LIQUIDITY_PANEL,
+    ARTIFACT_LIQUIDITY_WEEKLY,
     ARTIFACT_OPTION_SURFACE_META,
     ARTIFACT_OPTION_SURFACE_QUOTES,
     ARTIFACT_SPLITS,
@@ -289,6 +294,148 @@ class TestManifestIO:
         path = tmp_path / "manifests" / "input_snapshot_test.json"
         write_manifest(path, manifest)
         restored = read_manifest(path)
+        assert restored == manifest
+
+    def test_atomic_write_success_leaves_no_temp_file(self, tmp_path):
+        manifest = _sample_manifest()
+        path = tmp_path / "manifests" / "input_snapshot_test.json"
+        write_manifest(path, manifest)
+        assert path.exists()
+        assert list(path.parent.glob("*.tmp-*")) == []
+        assert read_manifest(path) == manifest
+
+    def test_failed_write_preserves_existing_manifest(self, tmp_path, monkeypatch):
+        path = tmp_path / "manifests" / "input_snapshot_test.json"
+        write_manifest(path, _sample_manifest())
+        original_bytes = path.read_bytes()
+
+        # A serialization failure must not damage the existing target or leave
+        # a temp file behind.
+        def _boom(*args, **kwargs):
+            raise OSError("simulated serialization failure")
+
+        monkeypatch.setattr(input_snapshot.json, "dump", _boom)
+
+        changed = _sample_manifest(notes=["changed"])
+        with pytest.raises(OSError):
+            write_manifest(path, changed)
+
+        assert path.read_bytes() == original_bytes
+        assert list(path.parent.glob("*.tmp-*")) == []
+
+
+class TestSchemaV1Compatibility:
+    def test_existing_schema_v1_manifest_still_loads(self):
+        # A pre-C8 manifest with no production_accepted / new artifact keys.
+        legacy = {
+            "schema_version": "1",
+            "snapshot_id": "abc123def4567890",
+            "build_id": "20260621T143022Z_a1b2c3",
+            "created_at_utc": "2026-06-21T14:30:22Z",
+            "as_of_requested": "2026-06-26",
+            "as_of_resolved_trading_day": "2026-06-26",
+            "data_source": DEFAULT_DATA_SOURCE,
+            "cache_dir": "C:/MomentumCVG_env/cache",
+            "artifacts": {
+                ARTIFACT_SPLITS: "splits_hist.parquet",
+                ARTIFACT_SPOT_PRICES: "spot_prices_adjusted.parquet",
+            },
+            "params": {"rolling_months": 3},
+            "reports": {"validate": None},
+            "overall_status": None,
+            "blocking_failures": [],
+            "notes": [],
+        }
+        manifest = manifest_from_dict(legacy)
+        assert manifest.schema_version == "1"
+        assert manifest.production_accepted is None
+        # Round-trips without introducing a production_accepted key.
+        assert "production_accepted" not in manifest_to_dict(manifest)
+
+    def test_existing_snapshot_id_vector_is_unchanged(self):
+        # Golden vector pinned against the accepted C1 identity.
+        assert compute_snapshot_id(_identity_fields()) == "4a42436f29f77a4a"
+
+
+class TestC8IdentityAndArtifacts:
+    def test_scope_in_params_changes_snapshot_id(self):
+        base = _identity_fields()
+        params = dict(base["params"])
+        params["scope"] = "full"
+        with_scope = _identity_fields(params=params)
+        assert compute_snapshot_id(with_scope) != compute_snapshot_id(base)
+
+    def test_execution_outcome_changes_do_not_change_snapshot_id(self):
+        base_id = compute_snapshot_id(_identity_fields())
+        accepted = _sample_manifest(
+            overall_status="PASS",
+            production_accepted=True,
+            blocking_failures=[],
+            notes=["published"],
+        )
+        rejected = _sample_manifest(
+            overall_status="FAIL",
+            production_accepted=False,
+            blocking_failures=["gate SF failed"],
+            notes=["not published"],
+        )
+        assert compute_snapshot_id(accepted) == base_id
+        assert compute_snapshot_id(rejected) == base_id
+
+    def test_new_artifact_constants_round_trip(self):
+        artifacts = {
+            ARTIFACT_LIQUIDITY_DAILY: "input/liquidity/ticker_liquidity_daily_observations.parquet",
+            ARTIFACT_LIQUIDITY_WEEKLY: "input/liquidity/ticker_liquidity_weekly_observations.parquet",
+            ARTIFACT_LIQUIDITY_PANEL: "input/liquidity/ticker_liquidity_panel.parquet",
+            ARTIFACT_LIQUID_TICKERS: "input/liquidity/liquid_tickers.csv",
+            ARTIFACT_SPLITS: "input/adjusted_liquid/splits_hist_liquid.parquet",
+            ARTIFACT_ADJUSTED_CHAINS_ROOT: "input/adjusted_liquid",
+            ARTIFACT_SPOT_PRICES: "cache/spot_prices_adjusted.parquet",
+            ARTIFACT_OPTION_SURFACE_META: "cache/option_surface_meta_weekly_2018_2026.parquet",
+            ARTIFACT_OPTION_SURFACE_QUOTES: "cache/option_surface_quotes_weekly_2018_2026.parquet",
+        }
+        manifest = _sample_manifest(artifacts=artifacts)
+        restored = manifest_from_dict(manifest_to_dict(manifest))
+        assert restored.artifacts == artifacts
+
+    def test_new_c8_manifest_round_trips_without_field_loss(self, tmp_path):
+        params = {
+            "scope": "full",
+            "upstream_bundle_id": "0123456789abcdef",
+            "effective_ticker_universe_sha256": "e" * 64,
+            "frequency": "weekly",
+            "adjusted_inventory_digest": "d" * 64,
+            "feature_ready_start": "2018-01-05",
+            "feature_ready_end": "2026-02-20",
+        }
+        artifacts = {
+            ARTIFACT_LIQUID_TICKERS: "input/liquidity/liquid_tickers.csv",
+            ARTIFACT_SPLITS: "input/adjusted_liquid/splits_hist_liquid.parquet",
+            ARTIFACT_ADJUSTED_CHAINS_ROOT: "input/adjusted_liquid",
+            ARTIFACT_SPOT_PRICES: "cache/spot_prices_adjusted.parquet",
+        }
+        reports = {
+            "copy_identity": "reports/copy_identity.json",
+            "c5_audit": "reports/c5_audit.md",
+            "spot_summary": "reports/spot_summary.json",
+        }
+        manifest = _sample_manifest(
+            params=params,
+            artifacts=artifacts,
+            reports=reports,
+            overall_status="PASS",
+            production_accepted=True,
+            notes=["scope=full"],
+        )
+        path = tmp_path / "manifests" / "input_snapshot_c8.json"
+        write_manifest(path, manifest)
+        restored = read_manifest(path)
+
+        assert restored.params == params
+        assert restored.artifacts == artifacts
+        assert restored.reports == reports
+        assert restored.production_accepted is True
+        assert restored.overall_status == "PASS"
         assert restored == manifest
 
 

@@ -22,7 +22,7 @@ import random
 import sys
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +70,10 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+class ExpectedDatesError(RuntimeError):
+    """Raised for a malformed, duplicate, or empty ``--expected-dates`` file."""
 
 
 @dataclass
@@ -127,6 +131,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Markdown report output path.",
     )
     p.add_argument(
+        "--expected-dates",
+        type=Path,
+        default=None,
+        help=(
+            "Optional file listing the complete physical adjusted inventory "
+            "(one YYYY-MM-DD per line; blank lines and # comments allowed). "
+            "When set, the audit denominator is this date set rather than all "
+            "raw ZIP dates in --years."
+        ),
+    )
+    p.add_argument(
         "--sample-files",
         type=int,
         default=10,
@@ -145,6 +160,41 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Random seed for deterministic file/row sampling.",
     )
     return p.parse_args(argv)
+
+
+def parse_expected_dates(path: Path) -> list[date]:
+    """Parse and validate a complete expected-date inventory file.
+
+    Format: UTF-8, one ``YYYY-MM-DD`` per line; blank lines and lines
+    beginning with ``#`` are ignored. Fails closed on a malformed date, a
+    duplicate date, or an empty date set.
+    """
+    if not path.is_file():
+        raise ExpectedDatesError(f"expected-dates file not found: {path}")
+
+    dates: list[date] = []
+    seen: set[date] = set()
+    for lineno, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            parsed = date.fromisoformat(line)
+        except ValueError as exc:
+            raise ExpectedDatesError(
+                f"malformed expected date on line {lineno}: {raw_line!r}"
+            ) from exc
+        if parsed in seen:
+            raise ExpectedDatesError(
+                f"duplicate expected date on line {lineno}: {parsed.isoformat()}"
+            )
+        seen.add(parsed)
+        dates.append(parsed)
+
+    if not dates:
+        raise ExpectedDatesError(f"expected-dates file has no dates: {path}")
+
+    return sorted(dates)
 
 
 def _date_str_from_filename(name: str) -> str | None:
@@ -270,7 +320,16 @@ def audit_inventory(
     raw_root: Path,
     adj_root: Path,
     years: list[int],
+    expected_date_strs: set[str] | None = None,
 ) -> CategoryResult:
+    """Audit raw-vs-adjusted inventory per year.
+
+    Without ``expected_date_strs`` the denominator is all raw ZIP dates in
+    ``years`` (legacy behavior). With it, the denominator is the supplied
+    complete physical adjusted inventory: every expected date must have an
+    adjusted parquet and a matching raw ZIP, no adjusted date may fall outside
+    the expected set, and raw dates outside the expected set are ignored.
+    """
     result = CategoryResult(name="Adjusted output inventory audit", status="PASS")
     year_results: list[dict[str, Any]] = []
 
@@ -292,37 +351,81 @@ def audit_inventory(
 
         raw_dates = _inventory_dates(raw_year, ".zip") if raw_exists else set()
         adj_dates = _inventory_dates(adj_year, ".parquet") if adj_exists else set()
-        missing = sorted(raw_dates - adj_dates)
-        extra = sorted(adj_dates - raw_dates)
 
-        yr.update(
-            {
-                "raw_zip_count": len(raw_dates),
-                "adjusted_parquet_count": len(adj_dates),
-                "missing_adjusted_count": len(missing),
-                "extra_adjusted_count": len(extra),
-                "raw_date_min": min(raw_dates) if raw_dates else None,
-                "raw_date_max": max(raw_dates) if raw_dates else None,
-                "adj_date_min": min(adj_dates) if adj_dates else None,
-                "adj_date_max": max(adj_dates) if adj_dates else None,
-            }
-        )
+        if expected_date_strs is None:
+            missing = sorted(raw_dates - adj_dates)
+            extra = sorted(adj_dates - raw_dates)
 
-        if missing:
-            yr["status"] = "FAIL"
-            result.status = "FAIL"
-            result.failures.append(
-                f"Year {year}: {len(missing)} raw ZIP date(s) missing adjusted "
-                f"parquet (examples: {missing[:5]})"
+            yr.update(
+                {
+                    "raw_zip_count": len(raw_dates),
+                    "adjusted_parquet_count": len(adj_dates),
+                    "missing_adjusted_count": len(missing),
+                    "extra_adjusted_count": len(extra),
+                    "raw_date_min": min(raw_dates) if raw_dates else None,
+                    "raw_date_max": max(raw_dates) if raw_dates else None,
+                    "adj_date_min": min(adj_dates) if adj_dates else None,
+                    "adj_date_max": max(adj_dates) if adj_dates else None,
+                }
             )
-        if extra:
-            yr["status"] = "WARN" if yr["status"] == "PASS" else yr["status"]
-            if result.status == "PASS":
-                result.status = "WARN"
-            result.warnings.append(
-                f"Year {year}: {len(extra)} adjusted parquet file(s) without "
-                f"matching raw ZIP (examples: {extra[:5]})"
+
+            if missing:
+                yr["status"] = "FAIL"
+                result.status = "FAIL"
+                result.failures.append(
+                    f"Year {year}: {len(missing)} raw ZIP date(s) missing adjusted "
+                    f"parquet (examples: {missing[:5]})"
+                )
+            if extra:
+                yr["status"] = "WARN" if yr["status"] == "PASS" else yr["status"]
+                if result.status == "PASS":
+                    result.status = "WARN"
+                result.warnings.append(
+                    f"Year {year}: {len(extra)} adjusted parquet file(s) without "
+                    f"matching raw ZIP (examples: {extra[:5]})"
+                )
+        else:
+            expected_year = {ds for ds in expected_date_strs if ds[:4] == str(year)}
+            missing_adjusted = sorted(expected_year - adj_dates)
+            extra_adjusted = sorted(adj_dates - expected_year)
+            missing_raw = sorted(expected_year - raw_dates)
+
+            yr.update(
+                {
+                    "expected_date_count": len(expected_year),
+                    "raw_zip_count": len(raw_dates),
+                    "adjusted_parquet_count": len(adj_dates),
+                    "missing_adjusted_count": len(missing_adjusted),
+                    "extra_adjusted_count": len(extra_adjusted),
+                    "missing_raw_count": len(missing_raw),
+                    "raw_date_min": min(raw_dates) if raw_dates else None,
+                    "raw_date_max": max(raw_dates) if raw_dates else None,
+                    "adj_date_min": min(adj_dates) if adj_dates else None,
+                    "adj_date_max": max(adj_dates) if adj_dates else None,
+                }
             )
+
+            if missing_adjusted:
+                yr["status"] = "FAIL"
+                result.status = "FAIL"
+                result.failures.append(
+                    f"Year {year}: {len(missing_adjusted)} expected date(s) missing "
+                    f"adjusted parquet (examples: {missing_adjusted[:5]})"
+                )
+            if extra_adjusted:
+                yr["status"] = "FAIL"
+                result.status = "FAIL"
+                result.failures.append(
+                    f"Year {year}: {len(extra_adjusted)} adjusted parquet date(s) "
+                    f"outside the expected set (examples: {extra_adjusted[:5]})"
+                )
+            if missing_raw:
+                yr["status"] = "FAIL"
+                result.status = "FAIL"
+                result.failures.append(
+                    f"Year {year}: {len(missing_raw)} expected date(s) missing raw "
+                    f"ZIP (examples: {missing_raw[:5]})"
+                )
 
         year_results.append(yr)
 
@@ -330,12 +433,21 @@ def audit_inventory(
     return result
 
 
-def _collect_adj_parquet_paths(adj_root: Path, years: list[int]) -> list[Path]:
+def _collect_adj_parquet_paths(
+    adj_root: Path,
+    years: list[int],
+    expected_date_strs: set[str] | None = None,
+) -> list[Path]:
     paths: list[Path] = []
     for year in years:
         adj_year = adj_root / str(year)
         if adj_year.is_dir():
-            paths.extend(sorted(adj_year.glob(f"{ZIP_PREFIX}*.parquet")))
+            for path in sorted(adj_year.glob(f"{ZIP_PREFIX}*.parquet")):
+                if expected_date_strs is not None:
+                    date_str = _date_str_from_filename(path.name)
+                    if date_str is None or date_str not in expected_date_strs:
+                        continue
+                paths.append(path)
     return paths
 
 
@@ -343,12 +455,13 @@ def audit_universe_containment(
     adj_root: Path,
     years: list[int],
     universe: set[str],
+    expected_date_strs: set[str] | None = None,
 ) -> CategoryResult:
     result = CategoryResult(name="Universe containment audit", status="PASS")
     all_tickers: set[str] = set()
     outside_examples: list[str] = []
 
-    for path in _collect_adj_parquet_paths(adj_root, years):
+    for path in _collect_adj_parquet_paths(adj_root, years, expected_date_strs):
         df = pd.read_parquet(path, columns=["ticker"])
         tickers = df["ticker"].astype(str).str.strip().str.upper().unique()
         all_tickers.update(tickers)
@@ -373,6 +486,7 @@ def audit_universe_containment(
 def audit_adjusted_structure(
     adj_root: Path,
     years: list[int],
+    expected_date_strs: set[str] | None = None,
 ) -> CategoryResult:
     result = CategoryResult(name="Adjusted-column structural audit", status="PASS")
     files_checked = 0
@@ -384,7 +498,7 @@ def audit_adjusted_structure(
     spot_px_mismatch_count = 0
     trade_date_mismatch_count = 0
 
-    for path in _collect_adj_parquet_paths(adj_root, years):
+    for path in _collect_adj_parquet_paths(adj_root, years, expected_date_strs):
         files_checked += 1
         df = pd.read_parquet(path)
         missing = [c for c in REQUIRED_ADJ_COLUMNS if c not in df.columns]
@@ -566,9 +680,10 @@ def audit_raw_math_sample(
     sample_files: int,
     sample_rows: int,
     seed: int,
+    expected_date_strs: set[str] | None = None,
 ) -> CategoryResult:
     result = CategoryResult(name="Raw-vs-adjusted math spot-check", status="PASS")
-    all_adj = _collect_adj_parquet_paths(adj_root, years)
+    all_adj = _collect_adj_parquet_paths(adj_root, years, expected_date_strs)
     rng = random.Random(seed)
     if len(all_adj) <= sample_files:
         sampled_paths = list(all_adj)
@@ -864,27 +979,55 @@ def main(argv: list[str] | None = None) -> None:
     universe_list = load_ticker_universe(args.ticker_universe)
     universe = set(universe_list)
 
+    expected_date_strs: set[str] | None = None
+    audit_years = list(args.years)
+    if args.expected_dates is not None:
+        try:
+            expected_dates = parse_expected_dates(args.expected_dates)
+        except ExpectedDatesError as exc:
+            logger.error("expected-dates error: %s", exc)
+            raise SystemExit(1)
+        # Derive the required years from the expected set; the expected dates
+        # define the denominator, so --years may not widen or narrow it.
+        required_years = sorted({d.year for d in expected_dates})
+        provided_years = sorted(set(args.years))
+        incompatible = [y for y in required_years if y not in provided_years]
+        if incompatible:
+            logger.error(
+                "--years %s is incompatible with --expected-dates years %s "
+                "(missing %s)",
+                provided_years,
+                required_years,
+                incompatible,
+            )
+            raise SystemExit(1)
+        audit_years = required_years
+        expected_date_strs = {d.strftime("%Y%m%d") for d in expected_dates}
+
     logger.info("Auditing adjusted liquid layer")
     logger.info("  raw-root         : %s", args.raw_root)
     logger.info("  adj-root         : %s", args.adj_root)
     logger.info("  splits           : %s", args.splits_path)
     logger.info("  ticker-universe  : %s (%d tickers)", args.ticker_universe, len(universe))
-    logger.info("  years            : %s", args.years)
+    logger.info("  years            : %s", audit_years)
+    if expected_date_strs is not None:
+        logger.info("  expected-dates   : %s (%d dates)", args.expected_dates, len(expected_date_strs))
     logger.info("  report-path      : %s", args.report_path)
 
     categories = [
         audit_split_file(args.splits_path, universe),
-        audit_inventory(args.raw_root, args.adj_root, args.years),
-        audit_universe_containment(args.adj_root, args.years, universe),
-        audit_adjusted_structure(args.adj_root, args.years),
+        audit_inventory(args.raw_root, args.adj_root, audit_years, expected_date_strs),
+        audit_universe_containment(args.adj_root, audit_years, universe, expected_date_strs),
+        audit_adjusted_structure(args.adj_root, audit_years, expected_date_strs),
         audit_raw_math_sample(
             args.raw_root,
             args.adj_root,
-            args.years,
+            audit_years,
             universe,
             sample_files=args.sample_files,
             sample_rows=args.sample_rows,
             seed=args.seed,
+            expected_date_strs=expected_date_strs,
         ),
     ]
 

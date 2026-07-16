@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -35,12 +37,19 @@ DEFAULT_DATA_SOURCE = "orats_adjusted_cache"
 INPUT_SNAPSHOT_SCHEMA_VERSION = "1"
 SNAPSHOT_ID_PREFIX_LEN = 16
 
-# Fixed artifact keys written into manifests. Values are cache-relative paths.
+# Fixed artifact keys written into manifests. Values are snapshot-root-relative
+# (or cache-relative) path strings. C1 established a minimal set; C8 expands the
+# contract so one manifest can describe the complete copied input bundle.
 ARTIFACT_SPLITS = "splits"
 ARTIFACT_SPOT_PRICES = "spot_prices"
 ARTIFACT_LIQUIDITY_PANEL = "liquidity_panel"
 ARTIFACT_OPTION_SURFACE_META = "option_surface_meta"
 ARTIFACT_OPTION_SURFACE_QUOTES = "option_surface_quotes"
+# C8 artifact contract additions (C8.3A).
+ARTIFACT_LIQUIDITY_DAILY = "liquidity_daily"
+ARTIFACT_LIQUIDITY_WEEKLY = "liquidity_weekly"
+ARTIFACT_LIQUID_TICKERS = "liquid_tickers"
+ARTIFACT_ADJUSTED_CHAINS_ROOT = "adjusted_chains_root"
 
 # Fields that feed snapshot_id hashing (see _identity_dict / _hash_identity).
 _IDENTITY_KEYS = (
@@ -88,6 +97,9 @@ class InputSnapshotManifest:
     overall_status: ValidationStatus | None  # aggregate PASS/WARN/FAIL; C3+
     blocking_failures: list[str]
     notes: list[str]
+    # Optional publication outcome (C8). Not an identity field; omitted from
+    # serialized JSON when None so pure C1 receipts are unchanged.
+    production_accepted: bool | None = None
 
 
 # ── Field validation helpers ──────────────────────────────────────────────────
@@ -145,6 +157,14 @@ def _parse_status(value: Any) -> ValidationStatus | None:
     if value is not None and value not in ("PASS", "WARN", "FAIL"):
         raise ValueError(f"Invalid overall_status: {value!r}")
     return value
+
+
+def _parse_production_accepted(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"production_accepted must be a boolean or null; got {value!r}")
 
 
 def _parse_date(value: Any, field_name: str) -> date:
@@ -280,7 +300,7 @@ def generate_build_id(*, now: datetime, command: str) -> str:
 
 def manifest_to_dict(manifest: InputSnapshotManifest) -> dict[str, Any]:
     """Convert manifest to a JSON-ready dict; validates fields on the way out."""
-    return {
+    payload: dict[str, Any] = {
         "schema_version": manifest.schema_version,
         "snapshot_id": manifest.snapshot_id,
         "build_id": manifest.build_id,
@@ -296,6 +316,12 @@ def manifest_to_dict(manifest: InputSnapshotManifest) -> dict[str, Any]:
         "blocking_failures": list(manifest.blocking_failures),
         "notes": list(manifest.notes),
     }
+    # Optional outcome field: present only when set, so pure C1 receipts keep
+    # their exact shape while C8 manifests round-trip the flag without loss.
+    production_accepted = _parse_production_accepted(manifest.production_accepted)
+    if production_accepted is not None:
+        payload["production_accepted"] = production_accepted
+    return payload
 
 
 def manifest_from_dict(data: Mapping[str, Any]) -> InputSnapshotManifest:
@@ -343,6 +369,7 @@ def manifest_from_dict(data: Mapping[str, Any]) -> InputSnapshotManifest:
         overall_status=overall_status,
         blocking_failures=[str(item) for item in blocking_failures],
         notes=[str(item) for item in notes],
+        production_accepted=_parse_production_accepted(data.get("production_accepted")),
     )
 
 
@@ -350,13 +377,40 @@ def manifest_from_dict(data: Mapping[str, Any]) -> InputSnapshotManifest:
 
 
 def write_manifest(path: Path | str, manifest: InputSnapshotManifest) -> None:
-    """Write manifest JSON (indent=2). Does not recompute snapshot_id."""
+    """Atomically write manifest JSON (indent=2). Does not recompute snapshot_id.
+
+    Serializes to a temporary file in the destination directory, closes it,
+    reads it back through the normal parser to validate, then atomically
+    replaces the target via ``os.replace``. Any existing target is preserved
+    if serialization, writing, or readback validation fails; the temporary
+    file is cleaned up on ordinary failure.
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+
+    # Validate/serialize before touching the destination so a bad in-memory
+    # manifest never removes or replaces an existing target.
     payload = manifest_to_dict(manifest)
-    with target.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
-        handle.write("\n")
+
+    temp_path = target.parent / f"{target.name}.tmp-{uuid.uuid4().hex}"
+    try:
+        with temp_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.write("\n")
+        # Readback through the normal parser: reject a temp file that would
+        # not load cleanly before it can replace the target.
+        with temp_path.open(encoding="utf-8") as handle:
+            readback = json.load(handle)
+        if not isinstance(readback, dict):
+            raise ValueError("Manifest JSON must be an object")
+        manifest_from_dict(readback)
+        os.replace(temp_path, target)
+    except BaseException:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def read_manifest(path: Path | str) -> InputSnapshotManifest:

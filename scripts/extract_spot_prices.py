@@ -45,14 +45,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import math
 import os
-import re
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -71,6 +71,12 @@ sys.path.insert(0, str(project_root))
 
 from src.data.orats_provider import ORATSDataProvider
 from src.data.paths import DEFAULT_ADJUSTED_LIQUID_ROOT
+from src.data.snapshot_foundation import (
+    AdjustedInventory,
+    AdjustedInventoryError,
+    resolve_adjusted_inventory,
+    ticker_date_keys_digest,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,8 +91,6 @@ SPOT_CONSISTENCY_ABS_TOL = 1e-8
 
 REQUIRED_SOURCE_COLUMNS = ("ticker", "stkPx", "adj_stkPx")
 OUTPUT_COLUMNS = ("date", "ticker", "adj_spot_price", "spot_price")
-
-_ADJUSTED_FILENAME_RE = re.compile(r"^ORATS_SMV_Strikes_(\d{8})\.parquet$")
 
 
 class SpotExtractionError(RuntimeError):
@@ -137,6 +141,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--year",
         type=int,
         help="Single year to process (shorthand for --start-year Y --end-year Y)",
+    )
+    parser.add_argument(
+        "--summary-path",
+        type=str,
+        default=None,
+        help=(
+            "Optional path for a compact JSON producer summary written only on "
+            "success (counts, digests, and explicit ambiguous exclusions)."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -193,92 +206,54 @@ def resolve_year_range(args: argparse.Namespace) -> tuple[int, int]:
     return start_year, end_year
 
 
-def discover_adjusted_dates(
+def resolve_inventory_or_fail(
     data_root: Path,
     start_year: int,
     end_year: int,
-) -> list[date]:
-    """Discover expected trading dates from adjusted parquet filenames.
+) -> AdjustedInventory:
+    """Resolve the adjusted inventory via the shared resolver, fail-closed.
 
-    Weekend-dated files (Saturday/Sunday) are not trading days: they are
-    excluded from the expected inventory after verifying they contain no
-    rows. A weekend file with data fails the run so real rows can never be
-    silently skipped. Year-directory membership is validated before weekend
-    exclusion, so an empty weekend file in the wrong year directory still
-    fails.
-
-    Fails closed on a missing data root, a missing requested year directory,
-    a malformed filename, a duplicate date, a file date outside its containing
-    year directory, a non-empty weekend file, or an empty inventory.
+    Uses the shared C8.2 inventory semantics (year membership before weekend
+    exclusion; verified-empty weekend files excluded from the resolved trading
+    inventory; non-empty weekend files fail). Errors are surfaced as
+    ``SpotExtractionError`` and an inventory with no resolved trading dates is
+    rejected, preserving the accepted spot-extractor behavior.
     """
-    if not data_root.is_dir():
-        raise SpotExtractionError(f"data root does not exist: {data_root}")
+    try:
+        inventory = resolve_adjusted_inventory(data_root, start_year, end_year)
+    except AdjustedInventoryError as exc:
+        raise SpotExtractionError(str(exc)) from exc
 
-    discovered: list[tuple[date, int]] = []
-    weekend_excluded: list[date] = []
-    for year in range(start_year, end_year + 1):
-        year_dir = data_root / str(year)
-        if not year_dir.is_dir():
-            raise SpotExtractionError(
-                f"requested year directory missing: {year_dir}"
-            )
-        for file_path in sorted(year_dir.glob("ORATS_SMV_Strikes_*.parquet")):
-            match = _ADJUSTED_FILENAME_RE.match(file_path.name)
-            if match is None:
-                raise SpotExtractionError(
-                    f"malformed adjusted filename: {file_path}"
-                )
-            try:
-                trade_date = datetime.strptime(match.group(1), "%Y%m%d").date()
-            except ValueError as exc:
-                raise SpotExtractionError(
-                    f"invalid date in adjusted filename: {file_path}"
-                ) from exc
-            # Year membership must be checked before weekend exclusion so an
-            # empty weekend file in the wrong year directory still fails.
-            if trade_date.year != year:
-                raise SpotExtractionError(
-                    f"adjusted file date {trade_date.isoformat()} does not belong "
-                    f"to its containing year directory {year}"
-                )
-            if trade_date.weekday() >= 5:  # Saturday/Sunday: not a trading day
-                try:
-                    weekend_frame = pd.read_parquet(file_path)
-                except Exception as exc:
-                    raise SpotExtractionError(
-                        f"failed to read weekend-dated file {file_path}: {exc}"
-                    ) from exc
-                if not weekend_frame.empty:
-                    raise SpotExtractionError(
-                        f"weekend-dated file contains data: {file_path}"
-                    )
-                weekend_excluded.append(trade_date)
-                continue
-            discovered.append((trade_date, year))
-
-    if weekend_excluded:
-        logger.info(
-            "Excluded %d empty weekend-dated files from the expected "
-            "inventory: %s",
-            len(weekend_excluded),
-            ", ".join(d.isoformat() for d in sorted(weekend_excluded)),
-        )
-
-    if not discovered:
+    if not inventory.resolved_trading_dates:
         raise SpotExtractionError(
             f"no adjusted dates discovered under {data_root} "
             f"for years {start_year}-{end_year}"
         )
 
-    seen: set[date] = set()
-    for trade_date, _ in discovered:
-        if trade_date in seen:
-            raise SpotExtractionError(
-                f"duplicate adjusted date discovered: {trade_date.isoformat()}"
-            )
-        seen.add(trade_date)
+    if inventory.weekend_excluded_dates:
+        logger.info(
+            "Excluded %d empty weekend-dated files from the expected "
+            "inventory: %s",
+            len(inventory.weekend_excluded_dates),
+            ", ".join(d.isoformat() for d in inventory.weekend_excluded_dates),
+        )
 
-    return sorted(d for d, _ in discovered)
+    return inventory
+
+
+def discover_adjusted_dates(
+    data_root: Path,
+    start_year: int,
+    end_year: int,
+) -> list[date]:
+    """Return resolved trading dates from adjusted parquet filenames.
+
+    Thin wrapper over :func:`resolve_inventory_or_fail` preserved for
+    backward compatibility; see that function for the fail-closed contract.
+    """
+    return list(
+        resolve_inventory_or_fail(data_root, start_year, end_year).resolved_trading_dates
+    )
 
 
 def _normalize_tickers(raw: pd.Series, trade_date: date) -> pd.Series:
@@ -618,6 +593,77 @@ def write_parquet_atomically(frame: pd.DataFrame, output_path: Path) -> None:
         ) from exc
 
 
+def build_spot_summary(
+    results: list[DateSpotResult],
+    resolved_dates: list[date],
+    weekend_excluded_dates: tuple[date, ...],
+    output_row_count: int,
+    warnings: list[str],
+) -> dict[str, object]:
+    """Build the compact producer summary for C8.3B Gate SP reconciliation.
+
+    The summary carries counts, canonical key digests, and the (expected
+    small) explicit ambiguous-exclusion list — never the full retained key
+    set. Source keys are the valid source ticker-date keys before ambiguous
+    exclusions; output keys are the final written spot keys. Counts and
+    digests plus the explicit exclusions make reconciliation possible.
+    """
+    source_keys: set[tuple[date, str]] = set()
+    output_keys: set[tuple[date, str]] = set()
+    ambiguous_exclusions: list[list[str]] = []
+
+    for result in results:
+        for ticker in result.expected_tickers:
+            source_keys.add((result.trade_date, ticker))
+            output_keys.add((result.trade_date, ticker))
+        for ticker in result.dropped_tickers:
+            # Dropped tickers were valid in the source but excluded from output.
+            source_keys.add((result.trade_date, ticker))
+            ambiguous_exclusions.append([result.trade_date.isoformat(), ticker])
+
+    ambiguous_exclusions.sort()
+
+    return {
+        "resolved_date_count": len(resolved_dates),
+        "resolved_date_min": resolved_dates[0].isoformat() if resolved_dates else None,
+        "resolved_date_max": resolved_dates[-1].isoformat() if resolved_dates else None,
+        "weekend_excluded_dates": [d.isoformat() for d in weekend_excluded_dates],
+        "source_ticker_date_key_count": len(source_keys),
+        "source_ticker_date_key_digest": ticker_date_keys_digest(source_keys),
+        "output_ticker_date_key_count": len(output_keys),
+        "output_ticker_date_key_digest": ticker_date_keys_digest(output_keys),
+        "ambiguous_exclusion_count": len(ambiguous_exclusions),
+        "ambiguous_exclusions": ambiguous_exclusions,
+        "output_row_count": output_row_count,
+        "producer_status": "PASS",
+        "warnings": list(warnings),
+    }
+
+
+def write_summary_atomically(summary: dict[str, object], summary_path: Path) -> None:
+    """Write the JSON summary via same-directory temp file + ``os.replace``.
+
+    On any failure the temporary file (if created) is removed and an existing
+    summary is left untouched.
+    """
+    temp_path: Path | None = None
+    try:
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = summary_path.parent / (
+            f"{summary_path.stem}.tmp-{uuid.uuid4().hex}.json"
+        )
+        with temp_path.open("w", encoding="utf-8") as handle:
+            json.dump(summary, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(temp_path, summary_path)
+    except Exception as exc:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise SpotExtractionError(
+            f"failed to write spot summary {summary_path}: {exc}"
+        ) from exc
+
+
 def log_output_size_best_effort(output_path: Path) -> None:
     """Log the published output size; never fail after successful publication.
 
@@ -662,11 +708,16 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("Data root: %s", data_root)
     logger.info("Output: %s", output_path)
 
+    summary_path = Path(args.summary_path) if args.summary_path else None
+
     try:
-        expected_dates = discover_adjusted_dates(data_root, start_year, end_year)
+        inventory = resolve_inventory_or_fail(data_root, start_year, end_year)
     except SpotExtractionError as exc:
         logger.error("date inventory failure: %s", exc)
         return 1
+
+    expected_dates = list(inventory.resolved_trading_dates)
+    weekend_excluded_dates = inventory.weekend_excluded_dates
 
     logger.info("Found %d expected trading dates", len(expected_dates))
     logger.info(
@@ -722,6 +773,24 @@ def main(argv: list[str] | None = None) -> int:
     except SpotExtractionError as exc:
         logger.error("output validation/write failure: %s", exc)
         return 1
+
+    # The success summary is written only after the spot output is published,
+    # so a failed run never leaves a success summary and a prior successful
+    # summary is preserved when a rerun fails before publication.
+    if summary_path is not None:
+        summary = build_spot_summary(
+            results,
+            expected_dates,
+            weekend_excluded_dates,
+            output_row_count=len(validated),
+            warnings=[],
+        )
+        try:
+            write_summary_atomically(summary, summary_path)
+        except SpotExtractionError as exc:
+            logger.error("summary write failure: %s", exc)
+            return 1
+        logger.info("  Summary: %s", summary_path)
 
     dropped_entries = sum(len(result.dropped_tickers) for result in results)
     dropped_unique = sorted(
