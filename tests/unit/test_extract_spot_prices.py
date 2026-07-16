@@ -303,6 +303,37 @@ def test_empty_weekend_file_is_excluded_from_inventory(
     assert sunday not in out_dates
 
 
+def test_empty_weekend_file_in_wrong_year_directory_fails(
+    cli_module, data_root, output_path
+):
+    """Year membership is checked before weekend exclusion."""
+    _seed_two_good_days(data_root)
+    sunday_2024 = date(2024, 1, 7)
+    empty = pd.DataFrame(columns=["ticker", "stkPx", "adj_stkPx"])
+    # Place a 2024 Sunday file under the 2023 year directory.
+    wrong_year = data_root / "2023" / f"ORATS_SMV_Strikes_{sunday_2024.strftime('%Y%m%d')}.parquet"
+    wrong_year.parent.mkdir(parents=True, exist_ok=True)
+    empty.to_parquet(wrong_year, index=False)
+
+    with pytest.raises(cli_module.SpotExtractionError, match="does not belong"):
+        cli_module.discover_adjusted_dates(data_root, 2023, 2024)
+
+    code = cli_module.main(
+        [
+            "--data-root",
+            str(data_root),
+            "--output",
+            str(output_path),
+            "--start-year",
+            "2023",
+            "--end-year",
+            "2024",
+        ]
+    )
+    assert code == 1
+    assert not output_path.exists()
+
+
 def test_nonempty_weekend_file_fails(cli_module, data_root, output_path):
     _seed_two_good_days(data_root)
     saturday = date(2024, 1, 6)

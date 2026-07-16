@@ -203,7 +203,9 @@ def discover_adjusted_dates(
     Weekend-dated files (Saturday/Sunday) are not trading days: they are
     excluded from the expected inventory after verifying they contain no
     rows. A weekend file with data fails the run so real rows can never be
-    silently skipped.
+    silently skipped. Year-directory membership is validated before weekend
+    exclusion, so an empty weekend file in the wrong year directory still
+    fails.
 
     Fails closed on a missing data root, a missing requested year directory,
     a malformed filename, a duplicate date, a file date outside its containing
@@ -232,6 +234,13 @@ def discover_adjusted_dates(
                 raise SpotExtractionError(
                     f"invalid date in adjusted filename: {file_path}"
                 ) from exc
+            # Year membership must be checked before weekend exclusion so an
+            # empty weekend file in the wrong year directory still fails.
+            if trade_date.year != year:
+                raise SpotExtractionError(
+                    f"adjusted file date {trade_date.isoformat()} does not belong "
+                    f"to its containing year directory {year}"
+                )
             if trade_date.weekday() >= 5:  # Saturday/Sunday: not a trading day
                 try:
                     weekend_frame = pd.read_parquet(file_path)
@@ -268,13 +277,6 @@ def discover_adjusted_dates(
                 f"duplicate adjusted date discovered: {trade_date.isoformat()}"
             )
         seen.add(trade_date)
-
-    for trade_date, year in discovered:
-        if trade_date.year != year:
-            raise SpotExtractionError(
-                f"adjusted file date {trade_date.isoformat()} does not belong "
-                f"to its containing year directory {year}"
-            )
 
     return sorted(d for d, _ in discovered)
 
