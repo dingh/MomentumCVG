@@ -878,8 +878,15 @@ def write_markdown_report(
     overall: str,
     all_failures: list[str],
     all_warnings: list[str],
+    audit_years: list[int],
+    expected_dates_path: Path | None = None,
+    expected_date_count: int | None = None,
 ) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    frozen = expected_dates_path is not None
+    audit_mode = (
+        "frozen expected-date inventory" if frozen else "legacy year-wide"
+    )
     lines: list[str] = [
         "# Adjusted Liquid Data Layer Audit Report",
         "",
@@ -894,18 +901,31 @@ def write_markdown_report(
         "",
         "## Years audited",
         "",
-        ", ".join(str(y) for y in args.years),
+        # Effective audited years. Under --expected-dates these are derived from
+        # the frozen expected inventory, not the (possibly wider) requested years.
+        ", ".join(str(y) for y in audit_years),
         "",
-        "## Audit configuration",
+        "## Audit mode",
         "",
-        f"- sample-files: {args.sample_files}",
-        f"- sample-rows: {args.sample_rows}",
-        f"- seed: {args.seed}",
-        f"- universe ticker count: {universe_count}",
-        "",
-        f"## Overall verdict: **{overall}**",
-        "",
+        f"- mode: {audit_mode}",
     ]
+    if frozen:
+        lines.append(f"- expected-dates path: `{expected_dates_path}`")
+        lines.append(f"- expected-date count: {expected_date_count}")
+    lines.extend(
+        [
+            "",
+            "## Audit configuration",
+            "",
+            f"- sample-files: {args.sample_files}",
+            f"- sample-rows: {args.sample_rows}",
+            f"- seed: {args.seed}",
+            f"- universe ticker count: {universe_count}",
+            "",
+            f"## Overall verdict: **{overall}**",
+            "",
+        ]
+    )
 
     for cat in categories:
         lines.extend([f"## {cat.name}", "", f"**Status:** {cat.status}", ""])
@@ -1046,6 +1066,11 @@ def main(argv: list[str] | None = None) -> None:
         overall=overall,
         all_failures=all_failures,
         all_warnings=all_warnings,
+        audit_years=audit_years,
+        expected_dates_path=args.expected_dates,
+        expected_date_count=(
+            len(expected_date_strs) if expected_date_strs is not None else None
+        ),
     )
 
     logger.info("─" * 60)

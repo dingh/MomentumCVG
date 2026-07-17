@@ -182,6 +182,47 @@ def ensure_output_outside_data_root(
     )
 
 
+def validate_summary_path(
+    data_root: Path,
+    output_path: Path,
+    summary_path: Path,
+) -> None:
+    """Reject an unsafe ``--summary-path`` before any producer work begins.
+
+    The compact JSON summary must never overwrite the spot parquet output, an
+    adjusted input parquet, or any other file inside the adjusted input root.
+    All comparisons use resolved-path ancestry, not string prefixes, so a
+    similarly prefixed sibling directory outside ``data_root`` stays valid.
+
+    Raises:
+        UsageError: if the summary path is not a ``.json`` file, equals the
+            resolved output path, resolves inside ``data_root``, or is an
+            existing directory.
+    """
+    if summary_path.suffix.lower() != ".json":
+        raise UsageError(f"summary path must be a .json path: {summary_path}")
+
+    resolved_summary = summary_path.resolve(strict=False)
+    resolved_output = output_path.resolve(strict=False)
+    if resolved_summary == resolved_output:
+        raise UsageError(
+            f"summary path must not equal output path: {resolved_summary}"
+        )
+
+    resolved_data_root = data_root.resolve()
+    try:
+        resolved_summary.relative_to(resolved_data_root)
+    except ValueError:
+        pass
+    else:
+        raise UsageError(
+            f"summary path must be outside data root: {resolved_summary}"
+        )
+
+    if summary_path.is_dir():
+        raise UsageError(f"summary path must not be a directory: {summary_path}")
+
+
 def resolve_year_range(args: argparse.Namespace) -> tuple[int, int]:
     """Resolve and validate the requested year range.
 
@@ -598,7 +639,6 @@ def build_spot_summary(
     resolved_dates: list[date],
     weekend_excluded_dates: tuple[date, ...],
     output_row_count: int,
-    warnings: list[str],
 ) -> dict[str, object]:
     """Build the compact producer summary for C8.3B Gate SP reconciliation.
 
@@ -607,6 +647,11 @@ def build_spot_summary(
     set. Source keys are the valid source ticker-date keys before ambiguous
     exclusions; output keys are the final written spot keys. Counts and
     digests plus the explicit exclusions make reconciliation possible.
+
+    The summary reports its own producer status truthfully: ``WARN`` with a
+    stable warning string whenever ambiguous ticker-date keys were dropped from
+    the output, ``PASS`` otherwise. Accepted ambiguous drops are not a producer
+    failure.
     """
     source_keys: set[tuple[date, str]] = set()
     output_keys: set[tuple[date, str]] = set()
@@ -622,6 +667,16 @@ def build_spot_summary(
             ambiguous_exclusions.append([result.trade_date.isoformat(), ticker])
 
     ambiguous_exclusions.sort()
+    ambiguous_count = len(ambiguous_exclusions)
+
+    warnings: list[str] = []
+    producer_status = "PASS"
+    if ambiguous_count:
+        producer_status = "WARN"
+        warnings.append(
+            f"dropped {ambiguous_count} ticker-date keys with inconsistent "
+            "repeated spot values"
+        )
 
     return {
         "resolved_date_count": len(resolved_dates),
@@ -632,19 +687,21 @@ def build_spot_summary(
         "source_ticker_date_key_digest": ticker_date_keys_digest(source_keys),
         "output_ticker_date_key_count": len(output_keys),
         "output_ticker_date_key_digest": ticker_date_keys_digest(output_keys),
-        "ambiguous_exclusion_count": len(ambiguous_exclusions),
+        "ambiguous_exclusion_count": ambiguous_count,
         "ambiguous_exclusions": ambiguous_exclusions,
         "output_row_count": output_row_count,
-        "producer_status": "PASS",
-        "warnings": list(warnings),
+        "producer_status": producer_status,
+        "warnings": warnings,
     }
 
 
-def write_summary_atomically(summary: dict[str, object], summary_path: Path) -> None:
-    """Write the JSON summary via same-directory temp file + ``os.replace``.
+def stage_summary(summary: dict[str, object], summary_path: Path) -> Path:
+    """Write the JSON summary to a validated same-directory temp file.
 
-    On any failure the temporary file (if created) is removed and an existing
-    summary is left untouched.
+    The temp file is fully written and re-read (JSON round-trip) before it is
+    returned, so a corrupt summary is never staged for publication. An existing
+    summary at ``summary_path`` is not touched. On any failure the temp file is
+    removed and ``SpotExtractionError`` is raised.
     """
     temp_path: Path | None = None
     try:
@@ -655,13 +712,35 @@ def write_summary_atomically(summary: dict[str, object], summary_path: Path) -> 
         with temp_path.open("w", encoding="utf-8") as handle:
             json.dump(summary, handle, indent=2, sort_keys=True)
             handle.write("\n")
-        os.replace(temp_path, summary_path)
+        with temp_path.open(encoding="utf-8") as handle:
+            json.load(handle)
+        return temp_path
     except Exception as exc:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
         raise SpotExtractionError(
-            f"failed to write spot summary {summary_path}: {exc}"
+            f"failed to stage spot summary {summary_path}: {exc}"
         ) from exc
+
+
+def publish_summary(temp_path: Path, summary_path: Path) -> None:
+    """Atomically move a staged summary temp file into place via ``os.replace``.
+
+    On failure the staged temp file is removed and any existing summary is left
+    untouched.
+    """
+    try:
+        os.replace(temp_path, summary_path)
+    except Exception as exc:
+        temp_path.unlink(missing_ok=True)
+        raise SpotExtractionError(
+            f"failed to publish spot summary {summary_path}: {exc}"
+        ) from exc
+
+
+def write_summary_atomically(summary: dict[str, object], summary_path: Path) -> None:
+    """Stage and publish the JSON summary atomically (stage then replace)."""
+    publish_summary(stage_summary(summary, summary_path), summary_path)
 
 
 def log_output_size_best_effort(output_path: Path) -> None:
@@ -700,6 +779,10 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         ensure_output_outside_data_root(data_root, output_path)
+
+        summary_path = Path(args.summary_path) if args.summary_path else None
+        if summary_path is not None:
+            validate_summary_path(data_root, output_path, summary_path)
     except UsageError as exc:
         logger.error("usage error: %s", exc)
         return 2
@@ -707,8 +790,6 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("Extracting spot prices from %d to %d", start_year, end_year)
     logger.info("Data root: %s", data_root)
     logger.info("Output: %s", output_path)
-
-    summary_path = Path(args.summary_path) if args.summary_path else None
 
     try:
         inventory = resolve_inventory_or_fail(data_root, start_year, end_year)
@@ -769,26 +850,46 @@ def main(argv: list[str] | None = None) -> int:
         validated = validate_complete_spot_frame(
             combined, expected_dates, expected_tickers_by_date
         )
-        write_parquet_atomically(validated, output_path)
     except SpotExtractionError as exc:
         logger.error("output validation/write failure: %s", exc)
         return 1
 
-    # The success summary is written only after the spot output is published,
-    # so a failed run never leaves a success summary and a prior successful
-    # summary is preserved when a rerun fails before publication.
+    # Stage and validate the summary temp file BEFORE publishing the parquet so
+    # a bad summary is caught while nothing has been published. The parquet is
+    # then published, and the already-validated summary is published immediately
+    # after via a same-directory rename. This keeps the two publications close
+    # together and never overwrites a prior summary until the new JSON is fully
+    # written and validated. True two-file atomicity is deferred to C8.3B root
+    # publication; the only residual window is a failing final rename leaving a
+    # new parquet paired with a prior/absent summary, which the command reports
+    # as failure (exit 1).
+    staged_summary: Path | None = None
     if summary_path is not None:
         summary = build_spot_summary(
             results,
             expected_dates,
             weekend_excluded_dates,
             output_row_count=len(validated),
-            warnings=[],
         )
         try:
-            write_summary_atomically(summary, summary_path)
+            staged_summary = stage_summary(summary, summary_path)
         except SpotExtractionError as exc:
-            logger.error("summary write failure: %s", exc)
+            logger.error("summary staging failure: %s", exc)
+            return 1
+
+    try:
+        write_parquet_atomically(validated, output_path)
+    except SpotExtractionError as exc:
+        if staged_summary is not None:
+            staged_summary.unlink(missing_ok=True)
+        logger.error("output validation/write failure: %s", exc)
+        return 1
+
+    if staged_summary is not None and summary_path is not None:
+        try:
+            publish_summary(staged_summary, summary_path)
+        except SpotExtractionError as exc:
+            logger.error("summary publication failure: %s", exc)
             return 1
         logger.info("  Summary: %s", summary_path)
 

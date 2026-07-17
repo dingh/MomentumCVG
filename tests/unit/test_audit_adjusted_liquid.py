@@ -673,6 +673,89 @@ def test_expected_dates_happy_path_via_main(cli_module, tmp_path):
     assert report.is_file()
 
 
+# ── C8.3A: report metadata reflects effective audited years, not requested ─────
+
+
+def _years_audited_line(text: str) -> str:
+    lines = text.splitlines()
+    idx = lines.index("## Years audited")
+    for line in lines[idx + 1 :]:
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def test_report_shows_effective_years_from_expected_dates(cli_module, tmp_path):
+    fx = _passing_fixture(tmp_path)  # raw+adj for 20200102
+    exp = _write_expected_dates(tmp_path / "exp.txt", ["2020-01-02"])
+    report = tmp_path / "report.md"
+    cli_module.main(
+        [
+            "--raw-root", str(fx["raw_root"]),
+            "--adj-root", str(fx["adj_root"]),
+            "--splits", str(fx["splits"]),
+            "--ticker-universe", str(fx["universe"]),
+            "--years", "2020",
+            "--sample-files", "1",
+            "--sample-rows", "100",
+            "--report-path", str(report),
+            "--expected-dates", str(exp),
+        ]
+    )
+    text = report.read_text(encoding="utf-8")
+    assert _years_audited_line(text) == "2020"
+    assert "frozen expected-date inventory" in text
+    assert "expected-date count: 1" in text
+    assert f"expected-dates path: `{exp}`" in text
+
+
+def test_report_records_legacy_mode_without_expected_dates(cli_module, tmp_path):
+    fx = _passing_fixture(tmp_path)
+    report = tmp_path / "report.md"
+    cli_module.main(
+        [
+            "--raw-root", str(fx["raw_root"]),
+            "--adj-root", str(fx["adj_root"]),
+            "--splits", str(fx["splits"]),
+            "--ticker-universe", str(fx["universe"]),
+            "--years", "2020",
+            "--sample-files", "1",
+            "--sample-rows", "100",
+            "--report-path", str(report),
+        ]
+    )
+    text = report.read_text(encoding="utf-8")
+    assert "legacy year-wide" in text
+    assert "frozen expected-date inventory" not in text
+    assert _years_audited_line(text) == "2020"
+    assert "expected-date count" not in text
+
+
+def test_report_superset_years_not_shown_as_audited(cli_module, tmp_path):
+    """--years may be a superset; only the frozen expected years are audited."""
+    fx = _passing_fixture(tmp_path)  # only 2020 data exists
+    exp = _write_expected_dates(tmp_path / "exp.txt", ["2020-01-02"])
+    report = tmp_path / "report.md"
+    cli_module.main(
+        [
+            "--raw-root", str(fx["raw_root"]),
+            "--adj-root", str(fx["adj_root"]),
+            "--splits", str(fx["splits"]),
+            "--ticker-universe", str(fx["universe"]),
+            "--years", "2019", "2020",
+            "--sample-files", "1",
+            "--sample-rows", "100",
+            "--report-path", str(report),
+            "--expected-dates", str(exp),
+        ]
+    )
+    text = report.read_text(encoding="utf-8")
+    years_line = _years_audited_line(text)
+    assert years_line == "2020"
+    assert "2019" not in years_line
+    assert "frozen expected-date inventory" in text
+
+
 def test_raw_math_fails_on_fallback_duplicate_keys_without_opra(cli_module, tmp_path):
     """Fallback 3-key join must fail clearly when OPRA columns are absent."""
     universe = _write_universe_csv(tmp_path / "liquid_tickers.csv", ["SPX"])

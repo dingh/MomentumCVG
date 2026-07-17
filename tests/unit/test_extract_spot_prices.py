@@ -19,6 +19,7 @@ import pytest
 
 from src.data.snapshot_foundation import (
     GATE_PASS,
+    GATE_WARN,
     gate_spot_summary_reconciliation,
 )
 from src.data.spot_price_db import SpotPriceDB
@@ -98,6 +99,31 @@ def _argv(data_root: Path, output: Path, extra: list[str] | None = None) -> list
 def _seed_two_good_days(data_root: Path) -> None:
     _write_day(data_root, DAY_1, _good_frame())
     _write_day(data_root, DAY_2, _good_frame())
+
+
+def _reconcile_published_summary(cli_module, data_root, output_path, summary):
+    """Drive Gate SP the way C8.3B will: derive keys independently from files.
+
+    Output keys are read from the published spot parquet; the resolved trading
+    dates come from the shared inventory resolver; source keys are the output
+    keys plus the summary's explicit ambiguous exclusions.
+    """
+    df = pd.read_parquet(output_path)
+    output_keys = {
+        (pd.Timestamp(d).date(), str(t)) for d, t in zip(df["date"], df["ticker"])
+    }
+    resolved = list(
+        cli_module.resolve_inventory_or_fail(data_root, 2024, 2024).resolved_trading_dates
+    )
+    source_keys = set(output_keys) | {
+        (date.fromisoformat(iso), tk) for iso, tk in summary["ambiguous_exclusions"]
+    }
+    return gate_spot_summary_reconciliation(
+        summary,
+        source_keys=source_keys,
+        output_keys=output_keys,
+        resolved_trading_dates=resolved,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1201,8 +1227,11 @@ def test_summary_counts_and_digests_are_deterministic(
     summary = json.loads(first.read_text())
     assert len(summary["source_ticker_date_key_digest"]) == 64
     assert len(summary["output_ticker_date_key_digest"]) == 64
-    # Reconciles through the shared gate.
-    assert gate_spot_summary_reconciliation(summary).status == GATE_PASS
+    # Reconciles through the shared gate against independently derived keys.
+    assert (
+        _reconcile_published_summary(cli_module, data_root, output_path, summary).status
+        == GATE_PASS
+    )
 
 
 def test_ambiguous_exclusions_reconcile_in_summary(
@@ -1234,7 +1263,16 @@ def test_ambiguous_exclusions_reconcile_in_summary(
         - summary["ambiguous_exclusion_count"]
         == summary["output_ticker_date_key_count"]
     )
-    assert gate_spot_summary_reconciliation(summary).status == GATE_PASS
+    # The summary must be truthful about the drop, and the gate must WARN
+    # (never silently PASS) when ambiguous exclusions occurred.
+    assert summary["producer_status"] == "WARN"
+    assert summary["warnings"] == [
+        "dropped 1 ticker-date keys with inconsistent repeated spot values"
+    ]
+    assert (
+        _reconcile_published_summary(cli_module, data_root, output_path, summary).status
+        == GATE_WARN
+    )
 
 
 def test_summary_write_is_atomic_no_temp_leftover(
@@ -1272,3 +1310,94 @@ def test_failed_rerun_preserves_existing_output_and_summary(
     assert code == 1
     assert output_path.read_bytes() == existing_output
     assert summary_path.read_bytes() == existing_summary
+
+
+# ---------------------------------------------------------------------------
+# --summary-path validation (unsafe path protection)
+# ---------------------------------------------------------------------------
+
+
+def test_summary_path_equal_to_output_rejected(cli_module, data_root, output_path):
+    _seed_two_good_days(data_root)
+    adjusted_before = _day_path(data_root, DAY_1).read_bytes()
+
+    code = cli_module.main(
+        _argv(data_root, output_path, extra=["--summary-path", str(output_path)])
+    )
+    assert code == 2
+    # Validation runs before any producer work: nothing published or mutated.
+    assert not output_path.exists()
+    assert _day_path(data_root, DAY_1).read_bytes() == adjusted_before
+
+
+def test_summary_path_inside_data_root_rejected(cli_module, data_root, output_path):
+    _seed_two_good_days(data_root)
+    summary_path = data_root / "spot_summary.json"
+
+    code = cli_module.main(
+        _argv(data_root, output_path, extra=["--summary-path", str(summary_path)])
+    )
+    assert code == 2
+    assert not summary_path.exists()
+    assert not output_path.exists()
+
+
+def test_summary_path_equal_to_adjusted_parquet_rejected(
+    cli_module, data_root, output_path
+):
+    _seed_two_good_days(data_root)
+    adjusted = _day_path(data_root, DAY_1)
+    adjusted_before = adjusted.read_bytes()
+
+    code = cli_module.main(
+        _argv(data_root, output_path, extra=["--summary-path", str(adjusted)])
+    )
+    assert code == 2
+    # The adjusted source parquet must be byte-for-byte untouched.
+    assert adjusted.read_bytes() == adjusted_before
+    assert not output_path.exists()
+
+
+def test_summary_path_without_json_suffix_rejected(
+    cli_module, data_root, output_path, tmp_path
+):
+    _seed_two_good_days(data_root)
+    summary_path = tmp_path / "reports" / "spot_summary.txt"
+
+    code = cli_module.main(
+        _argv(data_root, output_path, extra=["--summary-path", str(summary_path)])
+    )
+    assert code == 2
+    assert not summary_path.exists()
+    assert not output_path.exists()
+
+
+def test_summary_path_valid_reports_sibling_succeeds(
+    cli_module, data_root, output_path, tmp_path
+):
+    _seed_two_good_days(data_root)
+    summary_path = tmp_path / "reports" / "spot_summary.json"
+
+    code = cli_module.main(
+        _argv(data_root, output_path, extra=["--summary-path", str(summary_path)])
+    )
+    assert code == 0
+    assert summary_path.exists()
+    assert output_path.exists()
+
+
+def test_summary_path_similarly_prefixed_sibling_allowed(
+    cli_module, data_root, output_path, tmp_path
+):
+    _seed_two_good_days(data_root)
+    # Shares the "adjusted_liquid" name prefix but is a sibling, not inside the
+    # data root. Resolved-ancestry checks (not string prefixes) must allow it.
+    sibling = tmp_path / f"{data_root.name}_reports"
+    summary_path = sibling / "spot_summary.json"
+
+    code = cli_module.main(
+        _argv(data_root, output_path, extra=["--summary-path", str(summary_path)])
+    )
+    assert code == 0
+    assert summary_path.exists()
+    assert output_path.exists()

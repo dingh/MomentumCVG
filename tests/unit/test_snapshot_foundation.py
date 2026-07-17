@@ -17,6 +17,7 @@ from src.data.snapshot_foundation import (
     AdjustedInventoryError,
     GATE_FAIL,
     GATE_PASS,
+    GATE_WARN,
     GateResult,
     SnapshotLifecycleError,
     SnapshotPathError,
@@ -308,22 +309,149 @@ def test_gate_result_json_compatible_structure():
         GateResult(name="g", status="MAYBE")
 
 
-def test_spot_summary_reconciliation_pass_and_fail():
-    good = {
-        "source_ticker_date_key_count": 10,
-        "source_ticker_date_key_digest": "a" * 64,
-        "output_ticker_date_key_count": 8,
-        "output_ticker_date_key_digest": "b" * 64,
-        "ambiguous_exclusion_count": 2,
-        "ambiguous_exclusions": [["2024-01-02", "SPX"], ["2024-01-03", "DJX"]],
-        "output_row_count": 8,
+_D1 = date(2024, 1, 2)
+_D2 = date(2024, 1, 3)
+
+
+def _make_spot_summary(
+    source_keys,
+    output_keys,
+    resolved_dates,
+    exclusions,
+    *,
+    producer_status=None,
+    warnings=None,
+):
+    """Build a fully-populated compact spot summary consistent with the keys."""
+    resolved = sorted(set(resolved_dates))
+    excl = sorted([d.isoformat(), t] for d, t in exclusions)
+    status = producer_status
+    if status is None:
+        status = "WARN" if excl else "PASS"
+    warn = warnings
+    if warn is None:
+        warn = (
+            [f"dropped {len(excl)} ticker-date keys with inconsistent repeated spot values"]
+            if excl
+            else []
+        )
+    return {
+        "resolved_date_count": len(resolved),
+        "resolved_date_min": resolved[0].isoformat() if resolved else None,
+        "resolved_date_max": resolved[-1].isoformat() if resolved else None,
+        "weekend_excluded_dates": [],
+        "source_ticker_date_key_count": len(set(source_keys)),
+        "source_ticker_date_key_digest": ticker_date_keys_digest(source_keys),
+        "output_ticker_date_key_count": len(set(output_keys)),
+        "output_ticker_date_key_digest": ticker_date_keys_digest(output_keys),
+        "ambiguous_exclusion_count": len(excl),
+        "ambiguous_exclusions": excl,
+        "output_row_count": len(set(output_keys)),
+        "producer_status": status,
+        "warnings": warn,
     }
-    assert gate_spot_summary_reconciliation(good).status == GATE_PASS
 
-    bad = dict(good, output_row_count=7)
-    result = gate_spot_summary_reconciliation(bad)
+
+def _clean_source_output():
+    source = {(_D1, "AAPL"), (_D1, "MSFT"), (_D2, "AAPL"), (_D2, "MSFT")}
+    return source, set(source), [_D1, _D2]
+
+
+def _reconcile(summary, source_keys, output_keys, resolved_dates):
+    return gate_spot_summary_reconciliation(
+        summary,
+        source_keys=source_keys,
+        output_keys=output_keys,
+        resolved_trading_dates=resolved_dates,
+    )
+
+
+def test_spot_summary_reconciliation_pass_clean():
+    source, output, resolved = _clean_source_output()
+    summary = _make_spot_summary(source, output, resolved, [])
+    assert _reconcile(summary, source, output, resolved).status == GATE_PASS
+
+
+def test_spot_summary_reconciliation_warns_on_exclusions():
+    source = {(_D1, "AAPL"), (_D1, "MSFT"), (_D2, "AAPL"), (_D2, "DJX")}
+    output = source - {(_D2, "DJX")}
+    resolved = [_D1, _D2]
+    summary = _make_spot_summary(source, output, resolved, [(_D2, "DJX")])
+    result = _reconcile(summary, source, output, resolved)
+    assert result.status == GATE_WARN
+    assert any("ambiguous" in w for w in result.warnings)
+
+
+def test_spot_summary_reconciliation_rejects_arbitrary_digest():
+    """A digest that is not derived from the keys must FAIL, not pass."""
+    source, output, resolved = _clean_source_output()
+    summary = _make_spot_summary(source, output, resolved, [])
+    summary["output_ticker_date_key_digest"] = "b" * 64
+    result = _reconcile(summary, source, output, resolved)
     assert result.status == GATE_FAIL
-    assert any("output_row_count" in f for f in result.failures)
+    assert any("output_ticker_date_key_digest" in f for f in result.failures)
 
-    missing = {k: v for k, v in good.items() if k != "ambiguous_exclusions"}
-    assert gate_spot_summary_reconciliation(missing).status == GATE_FAIL
+
+def test_spot_summary_reconciliation_output_must_equal_source_minus_exclusions():
+    source = {(_D1, "AAPL"), (_D1, "MSFT"), (_D2, "AAPL"), (_D2, "DJX")}
+    # Output drops DJX but summary claims no exclusion -> reconciliation fails.
+    output = source - {(_D2, "DJX")}
+    resolved = [_D1, _D2]
+    summary = _make_spot_summary(source, output, resolved, [])
+    result = _reconcile(summary, source, output, resolved)
+    assert result.status == GATE_FAIL
+    assert any("source_keys - ambiguous_exclusions" in f for f in result.failures)
+
+
+def test_spot_summary_reconciliation_exclusion_must_be_in_source_absent_from_output():
+    source, output, resolved = _clean_source_output()
+    # Claim an exclusion that is not in the source at all.
+    summary = _make_spot_summary(source, output, resolved, [(_D2, "NOPE")])
+    result = _reconcile(summary, source, output, resolved)
+    assert result.status == GATE_FAIL
+    assert any("absent from source keys" in f for f in result.failures)
+
+
+def test_spot_summary_reconciliation_resolved_dates_must_match():
+    source, output, resolved = _clean_source_output()
+    summary = _make_spot_summary(source, output, resolved, [])
+    # Independently derived resolved dates disagree with the summary.
+    result = _reconcile(summary, source, output, [_D1])
+    assert result.status == GATE_FAIL
+    assert any("resolved_date_count" in f for f in result.failures)
+
+
+def test_spot_summary_reconciliation_missing_field_fails():
+    source, output, resolved = _clean_source_output()
+    summary = _make_spot_summary(source, output, resolved, [])
+    del summary["ambiguous_exclusions"]
+    assert _reconcile(summary, source, output, resolved).status == GATE_FAIL
+
+
+def test_spot_summary_reconciliation_schema_bad_types_fail_clearly():
+    source, output, resolved = _clean_source_output()
+
+    bad_count = _make_spot_summary(source, output, resolved, [])
+    bad_count["output_row_count"] = "4"
+    res = _reconcile(bad_count, source, output, resolved)
+    assert res.status == GATE_FAIL
+    assert any("nonnegative integer" in f for f in res.failures)
+
+    bad_digest = _make_spot_summary(source, output, resolved, [])
+    bad_digest["source_ticker_date_key_digest"] = "NOTHEX"
+    res = _reconcile(bad_digest, source, output, resolved)
+    assert res.status == GATE_FAIL
+    assert any("64-char lowercase hex" in f for f in res.failures)
+
+    bad_excl = _make_spot_summary(source, output, resolved, [])
+    bad_excl["ambiguous_exclusions"] = [["2024-01-02"]]
+    bad_excl["ambiguous_exclusion_count"] = 1
+    res = _reconcile(bad_excl, source, output, resolved)
+    assert res.status == GATE_FAIL
+    assert any("YYYY-MM-DD" in f for f in res.failures)
+
+    bad_status = _make_spot_summary(source, output, resolved, [])
+    bad_status["producer_status"] = "MAYBE"
+    res = _reconcile(bad_status, source, output, resolved)
+    assert res.status == GATE_FAIL
+    assert any("producer_status" in f for f in res.failures)

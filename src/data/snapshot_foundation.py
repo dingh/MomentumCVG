@@ -417,6 +417,20 @@ def upstream_bundle_id(
     return digest_json(payload)[:16]
 
 
+def _canonical_iso_date(raw_date: Any) -> str:
+    """Return the documented canonical ISO string for a date-like value."""
+    if isinstance(raw_date, date) and not isinstance(raw_date, datetime):
+        return raw_date.isoformat()
+    if isinstance(raw_date, datetime):
+        return raw_date.date().isoformat()
+    return str(raw_date)
+
+
+def _canonical_ticker_date_key(raw_date: Any, ticker: Any) -> tuple[str, str]:
+    """Return the canonical ``(iso_date, ticker)`` representation of one key."""
+    return (_canonical_iso_date(raw_date), str(ticker))
+
+
 def ticker_date_keys_digest(keys: Iterable[tuple[Any, Any]]) -> str:
     """Digest a set of ticker-date keys using a documented canonical form.
 
@@ -424,15 +438,7 @@ def ticker_date_keys_digest(keys: Iterable[tuple[Any, Any]]) -> str:
     de-duplicated, sorted list of ``[iso_date, ticker]`` pairs. Order and
     duplicates in the input do not affect the digest.
     """
-    normalized: set[tuple[str, str]] = set()
-    for raw_date, ticker in keys:
-        if isinstance(raw_date, date) and not isinstance(raw_date, datetime):
-            iso = raw_date.isoformat()
-        elif isinstance(raw_date, datetime):
-            iso = raw_date.date().isoformat()
-        else:
-            iso = str(raw_date)
-        normalized.add((iso, str(ticker)))
+    normalized = {_canonical_ticker_date_key(raw_date, ticker) for raw_date, ticker in keys}
     return digest_json([[iso, ticker] for iso, ticker in sorted(normalized)])
 
 
@@ -567,6 +573,9 @@ def gate_manifest_path_containment(
 
 
 _SPOT_SUMMARY_REQUIRED_FIELDS = (
+    "resolved_date_count",
+    "resolved_date_min",
+    "resolved_date_max",
     "source_ticker_date_key_count",
     "source_ticker_date_key_digest",
     "output_ticker_date_key_count",
@@ -574,19 +583,135 @@ _SPOT_SUMMARY_REQUIRED_FIELDS = (
     "ambiguous_exclusion_count",
     "ambiguous_exclusions",
     "output_row_count",
+    "producer_status",
 )
+
+_HEX64_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_nonneg_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_hex64(value: Any) -> bool:
+    return isinstance(value, str) and _HEX64_RE.fullmatch(value) is not None
+
+
+def _is_iso_date(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _validate_spot_summary_schema(
+    summary: Mapping[str, Any],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Validate summary field types before reconciliation.
+
+    Returns ``(failures, parsed_exclusions)``. Reconciliation must not proceed
+    while failures are present; the parsed exclusion list is only trustworthy
+    when no failures are returned.
+    """
+    failures: list[str] = []
+
+    for field in (
+        "resolved_date_count",
+        "source_ticker_date_key_count",
+        "output_ticker_date_key_count",
+        "ambiguous_exclusion_count",
+        "output_row_count",
+    ):
+        if not _is_nonneg_int(summary[field]):
+            failures.append(f"{field} must be a nonnegative integer; got {summary[field]!r}")
+
+    for field in ("source_ticker_date_key_digest", "output_ticker_date_key_digest"):
+        if not _is_hex64(summary[field]):
+            failures.append(
+                f"{field} must be a 64-char lowercase hex string; got {summary[field]!r}"
+            )
+
+    if summary["producer_status"] not in (GATE_PASS, GATE_WARN):
+        failures.append(
+            f"producer_status must be {GATE_PASS!r} or {GATE_WARN!r}; "
+            f"got {summary['producer_status']!r}"
+        )
+
+    parsed_exclusions: list[tuple[str, str]] = []
+    exclusions_raw = summary["ambiguous_exclusions"]
+    if not isinstance(exclusions_raw, list):
+        failures.append("ambiguous_exclusions must be a list")
+    else:
+        for entry in exclusions_raw:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                failures.append(
+                    f"ambiguous_exclusions entry must be [YYYY-MM-DD, ticker]; got {entry!r}"
+                )
+                continue
+            iso_value, ticker_value = entry[0], entry[1]
+            if not _is_iso_date(iso_value):
+                failures.append(
+                    f"ambiguous_exclusions date must be ISO YYYY-MM-DD; got {iso_value!r}"
+                )
+                continue
+            if (
+                not isinstance(ticker_value, str)
+                or not ticker_value
+                or ticker_value != ticker_value.strip().upper()
+            ):
+                failures.append(
+                    "ambiguous_exclusions ticker must be a normalized nonempty string; "
+                    f"got {ticker_value!r}"
+                )
+                continue
+            parsed_exclusions.append((iso_value, ticker_value))
+
+    if _is_nonneg_int(summary["resolved_date_count"]):
+        count = summary["resolved_date_count"]
+        min_value = summary["resolved_date_min"]
+        max_value = summary["resolved_date_max"]
+        if count == 0:
+            if min_value is not None or max_value is not None:
+                failures.append(
+                    "resolved_date_min/max must be null when resolved_date_count is zero"
+                )
+        else:
+            for field, value in (
+                ("resolved_date_min", min_value),
+                ("resolved_date_max", max_value),
+            ):
+                if not _is_iso_date(value):
+                    failures.append(f"{field} must be a valid ISO date; got {value!r}")
+
+    return failures, parsed_exclusions
 
 
 def gate_spot_summary_reconciliation(
     summary: Mapping[str, Any],
     *,
+    source_keys: Iterable[tuple[Any, Any]],
+    output_keys: Iterable[tuple[Any, Any]],
+    resolved_trading_dates: Iterable[Any],
     name: str = "spot_summary_reconciliation",
 ) -> GateResult:
-    """Reconcile the compact spot summary's counts and digests.
+    """Reconcile the compact spot summary against independently derived keys.
 
-    Requires: output keys == source keys minus ambiguous exclusions; the
-    ambiguous count equals the listed exclusions; the output row count equals
-    the output key count; and both key digests are non-empty strings.
+    The gate is pure: it never reads files. C8.3B derives the three key inputs
+    from the copied adjusted source (``source_keys``, before ambiguous
+    exclusions), the published spot parquet (``output_keys``), and the resolved
+    ``AdjustedInventory`` (``resolved_trading_dates``), then passes them here.
+
+    Keys are normalized to a single canonical ``(iso_date, ticker)`` form. The
+    gate verifies every count/digest, that the explicit ambiguous exclusions are
+    unique members of the source that are absent from the output, and that the
+    output equals ``source_keys - ambiguous_exclusions``.
+
+    FAIL on any schema or reconciliation problem. WARN when reconciliation
+    succeeds but ambiguous exclusions or documented producer warnings exist.
+    PASS only when reconciliation succeeds with no exclusions or warnings.
     """
     missing = [f for f in _SPOT_SUMMARY_REQUIRED_FIELDS if f not in summary]
     if missing:
@@ -597,47 +722,110 @@ def gate_spot_summary_reconciliation(
             failures=[f"spot summary missing field {f!r}" for f in missing],
         )
 
+    schema_failures, parsed_exclusions = _validate_spot_summary_schema(summary)
+    if schema_failures:
+        return GateResult(name=name, status=GATE_FAIL, metrics={}, failures=schema_failures)
+
+    source_norm = {_canonical_ticker_date_key(d, t) for d, t in source_keys}
+    output_norm = {_canonical_ticker_date_key(d, t) for d, t in output_keys}
+    resolved_norm = sorted({_canonical_iso_date(d) for d in resolved_trading_dates})
+    exclusion_set = set(parsed_exclusions)
+
     failures: list[str] = []
-    source_count = summary["source_ticker_date_key_count"]
-    output_count = summary["output_ticker_date_key_count"]
-    ambiguous_count = summary["ambiguous_exclusion_count"]
-    output_rows = summary["output_row_count"]
 
-    if source_count - ambiguous_count != output_count:
+    if summary["resolved_date_count"] != len(resolved_norm):
         failures.append(
-            "reconciliation mismatch: source_keys "
-            f"({source_count}) - ambiguous ({ambiguous_count}) "
-            f"!= output_keys ({output_count})"
+            f"resolved_date_count ({summary['resolved_date_count']}) != independently "
+            f"derived resolved dates ({len(resolved_norm)})"
+        )
+    if resolved_norm:
+        if summary["resolved_date_min"] != resolved_norm[0]:
+            failures.append(
+                f"resolved_date_min ({summary['resolved_date_min']!r}) != {resolved_norm[0]!r}"
+            )
+        if summary["resolved_date_max"] != resolved_norm[-1]:
+            failures.append(
+                f"resolved_date_max ({summary['resolved_date_max']!r}) != {resolved_norm[-1]!r}"
+            )
+
+    if summary["source_ticker_date_key_count"] != len(source_norm):
+        failures.append(
+            f"source_ticker_date_key_count ({summary['source_ticker_date_key_count']}) "
+            f"!= independently derived source keys ({len(source_norm)})"
+        )
+    if summary["source_ticker_date_key_digest"] != ticker_date_keys_digest(source_norm):
+        failures.append("source_ticker_date_key_digest does not match derived source keys")
+
+    if summary["output_ticker_date_key_count"] != len(output_norm):
+        failures.append(
+            f"output_ticker_date_key_count ({summary['output_ticker_date_key_count']}) "
+            f"!= independently derived output keys ({len(output_norm)})"
+        )
+    if summary["output_ticker_date_key_digest"] != ticker_date_keys_digest(output_norm):
+        failures.append("output_ticker_date_key_digest does not match derived output keys")
+
+    if summary["ambiguous_exclusion_count"] != len(parsed_exclusions):
+        failures.append(
+            f"ambiguous_exclusion_count ({summary['ambiguous_exclusion_count']}) != listed "
+            f"ambiguous_exclusions ({len(parsed_exclusions)})"
+        )
+    if len(exclusion_set) != len(parsed_exclusions):
+        failures.append("ambiguous_exclusions contain duplicate keys")
+
+    not_in_source = sorted(k for k in exclusion_set if k not in source_norm)
+    if not_in_source:
+        failures.append(f"ambiguous exclusions absent from source keys: {not_in_source[:5]}")
+    in_output = sorted(k for k in exclusion_set if k in output_norm)
+    if in_output:
+        failures.append(f"ambiguous exclusions present in output keys: {in_output[:5]}")
+
+    expected_output = source_norm - exclusion_set
+    if output_norm != expected_output:
+        missing_out = sorted(expected_output - output_norm)
+        extra_out = sorted(output_norm - expected_output)
+        failures.append(
+            "output keys != source_keys - ambiguous_exclusions "
+            f"(missing {missing_out[:5]}, extra {extra_out[:5]})"
         )
 
-    listed = len(summary["ambiguous_exclusions"])
-    if listed != ambiguous_count:
+    if summary["output_row_count"] != len(output_norm):
         failures.append(
-            f"ambiguous_exclusion_count ({ambiguous_count}) != listed "
-            f"ambiguous_exclusions ({listed})"
+            f"output_row_count ({summary['output_row_count']}) != output keys "
+            f"({len(output_norm)})"
         )
 
-    if output_rows != output_count:
+    output_dates = {iso for iso, _ in output_norm}
+    if output_dates != set(resolved_norm):
+        only_output = sorted(output_dates - set(resolved_norm))
+        only_resolved = sorted(set(resolved_norm) - output_dates)
         failures.append(
-            f"output_row_count ({output_rows}) != output_ticker_date_key_count "
-            f"({output_count})"
+            "dates in output keys != resolved trading dates "
+            f"(output-only {only_output[:5]}, resolved-only {only_resolved[:5]})"
         )
 
-    for digest_field in (
-        "source_ticker_date_key_digest",
-        "output_ticker_date_key_digest",
-    ):
-        value = summary[digest_field]
-        if not isinstance(value, str) or not value:
-            failures.append(f"{digest_field} must be a non-empty string")
+    producer_warnings = summary.get("warnings", [])
+    if not isinstance(producer_warnings, list):
+        producer_warnings = []
 
-    return GateResult(
-        name=name,
-        status=_status_for(failures),
-        metrics={
-            "source_ticker_date_key_count": source_count,
-            "output_ticker_date_key_count": output_count,
-            "ambiguous_exclusion_count": ambiguous_count,
-        },
-        failures=failures,
-    )
+    warnings_out: list[str] = []
+    metrics = {
+        "resolved_date_count": len(resolved_norm),
+        "source_ticker_date_key_count": len(source_norm),
+        "output_ticker_date_key_count": len(output_norm),
+        "ambiguous_exclusion_count": len(parsed_exclusions),
+    }
+
+    if failures:
+        return GateResult(name=name, status=GATE_FAIL, metrics=metrics, failures=failures)
+
+    if parsed_exclusions or producer_warnings or summary["producer_status"] == GATE_WARN:
+        if parsed_exclusions:
+            warnings_out.append(
+                f"{len(parsed_exclusions)} ambiguous ticker-date exclusion(s) present"
+            )
+        warnings_out.extend(str(w) for w in producer_warnings)
+        return GateResult(
+            name=name, status=GATE_WARN, metrics=metrics, failures=failures, warnings=warnings_out
+        )
+
+    return GateResult(name=name, status=GATE_PASS, metrics=metrics, failures=failures)
