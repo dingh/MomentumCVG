@@ -12,6 +12,10 @@ RAW_ORATS_ROOT = Path("C:/ORATS/data/ORATS_Data")
 DEFAULT_CACHE_ROOT = Path("C:/MomentumCVG_env/cache")
 DEFAULT_SPOT_PRICES_PATH = DEFAULT_CACHE_ROOT / "spot_prices_adjusted.parquet"
 DEFAULT_LIQUID_TICKERS_PATH = Path("C:/MomentumCVG_env/input/liquidity/liquid_tickers.csv")
+
+# Durable reference data (persistent across snapshot builds)
+DEFAULT_REFERENCE_ROOT = Path("C:/MomentumCVG_env/reference")
+DEFAULT_SECURITY_TYPES_PATH = DEFAULT_REFERENCE_ROOT / "orats_security_types.parquet"
 DEFAULT_PRECOMPUTE_OPTION_SURFACE_LOG = Path(
     "C:/MomentumCVG_env/log/precompute_option_surface.log"
 )

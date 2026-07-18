@@ -1,8 +1,16 @@
 """
 Build weekly point-in-time ticker liquidity panel for step1_get_universe().
 
-Three-stage pipeline (Sprint 004 C4):
-  daily raw observations → weekly liquidity observations → rolling N-week panel
+Pipeline (Sprint 004 C4, plus security-type stage):
+  daily raw observations → candidate ticker discovery → security dictionary
+  update (ORATS Core assetType) → company-equity daily filter → weekly
+  liquidity observations → rolling N-week panel → liquid_tickers.csv
+
+Non-company securities (ETF / index / VIX-style, ORATS Core assetType 4-9)
+are removed from daily data before any weekly / panel / rank construction.
+The persistent dictionary (see src/data/security_types.py) means Core history
+is fetched at most once per ticker across backfills; each build also writes a
+snapshot-local security_classification.parquet next to the other artifacts.
 
 Reads ORATS **raw** daily ZIPs from ORATS_Data (no split-adjusted cache required).
 Liquidity uses raw bid/ask/volume columns only; downstream surface/backtest still
@@ -38,6 +46,15 @@ _PROJECT_ROOT = _SCRIPT_DIR.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.data.input_snapshot import generate_build_id  # noqa: E402
+from src.data.orats_core_client import OratsCoreClient, OratsCoreError  # noqa: E402
+from src.data.paths import DEFAULT_SECURITY_TYPES_PATH  # noqa: E402
+from src.data.security_types import (  # noqa: E402
+    SecurityTypesError,
+    classification_digest,
+    company_equity_tickers,
+    ensure_security_types,
+    snapshot_classification,
+)
 
 DEFAULT_DATA_ROOT = Path("C:/ORATS/data/ORATS_Data")
 DEFAULT_CACHE_DIR = Path("C:/MomentumCVG_env/cache")
@@ -54,6 +71,7 @@ DAILY_FILENAME = "ticker_liquidity_daily_observations.parquet"
 WEEKLY_FILENAME = "ticker_liquidity_weekly_observations.parquet"
 PANEL_FILENAME = "ticker_liquidity_panel.parquet"
 LIQUID_TICKERS_FILENAME = "liquid_tickers.csv"
+SECURITY_CLASSIFICATION_FILENAME = "security_classification.parquet"
 STAGING_DIRNAME = ".liquidity_panel_staging"
 LIQUIDITY_SOURCE = "raw_option_bid_x_volume_sum_dte_5_60"
 
@@ -125,6 +143,7 @@ class BuildResult:
     files_read: int
     warnings: list[str] = field(default_factory=list)
     mode: str = "backfill"
+    classification: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 @dataclass
@@ -421,6 +440,44 @@ def extract_daily_observations(
     return pd.concat(frames, ignore_index=True), len(dates)
 
 
+# ── Stage 1b: security classification (company-equity filter) ────────────────
+
+
+def candidate_tickers_from_daily(daily: pd.DataFrame) -> list[str]:
+    """Discover the normalized candidate ticker set from daily observations."""
+    return sorted(
+        {str(t).strip().upper() for t in daily["ticker"].dropna() if str(t).strip()}
+    )
+
+
+def filter_daily_to_tickers(df: pd.DataFrame, tickers: set[str]) -> pd.DataFrame:
+    """Keep only rows whose normalized ticker is in ``tickers``."""
+    mask = df["ticker"].astype(str).str.strip().str.upper().isin(tickers)
+    return df[mask].reset_index(drop=True)
+
+
+def make_core_classifier(
+    security_types_path: Path,
+    fetch_history_fn: Callable[[str], pd.DataFrame] | None = None,
+) -> Callable[[Sequence[str]], pd.DataFrame]:
+    """Return a classify_fn backed by the persistent security-type dictionary.
+
+    Updates the shared dictionary at ``security_types_path`` (fetching ORATS
+    Core history only for candidate tickers absent from it) and returns the
+    snapshot-local classification subset for exactly the candidate set.
+    """
+    if fetch_history_fn is None:
+        fetch_history_fn = OratsCoreClient().fetch_asset_type_history
+
+    def _classify(candidates: Sequence[str]) -> pd.DataFrame:
+        dictionary = ensure_security_types(
+            candidates, security_types_path, fetch_history_fn=fetch_history_fn
+        )
+        return snapshot_classification(dictionary, candidates)
+
+    return _classify
+
+
 # ── Stage 2: weekly ───────────────────────────────────────────────────────────
 
 
@@ -693,6 +750,7 @@ def run_incremental(
     dte_min: int = DEFAULT_DTE_MIN,
     dte_max: int = DEFAULT_DTE_MAX,
     show_progress: bool = True,
+    classify_fn: Callable[[Sequence[str]], pd.DataFrame] | None = None,
 ) -> BuildResult:
     calendar = build_week_calendar(all_trading_dates)
     new_weeks = [(we, days) for we, days in calendar if we > state.panel_watermark]
@@ -740,11 +798,32 @@ def run_incremental(
 
     merged_daily = pd.concat([state.daily, new_daily], ignore_index=True)
 
+    # Security-type stage: the candidate set is every ticker in the merged
+    # daily data (prior + new). Prior artifacts are filtered too so
+    # non-company tickers never survive into weekly / panel / rank outputs,
+    # even when the prior artifacts predate the security-type filter.
+    classification = pd.DataFrame()
+    state_weekly = state.weekly
+    state_panel = state.panel
+    if classify_fn is not None:
+        candidates = candidate_tickers_from_daily(merged_daily)
+        classification = classify_fn(candidates)
+        equity = company_equity_tickers(classification)
+        merged_daily = filter_daily_to_tickers(merged_daily, equity)
+        new_daily = filter_daily_to_tickers(new_daily, equity)
+        state_weekly = filter_daily_to_tickers(state.weekly, equity)
+        state_panel = filter_daily_to_tickers(state.panel, equity)
+        if new_daily.empty:
+            raise LiquidityPanelError(
+                "No company-equity daily rows remain in the incremental week "
+                "after security-type filter."
+            )
+
     new_weekly = aggregate_weekly_liquidity_observations(new_daily, [(week_end, week_days)])
     if new_weekly.empty:
         raise LiquidityPanelError("No weekly observations for incremental week.")
 
-    merged_weekly = pd.concat([state.weekly, new_weekly], ignore_index=True)
+    merged_weekly = pd.concat([state_weekly, new_weekly], ignore_index=True)
     all_week_ends = sorted(
         set(pd.to_datetime(merged_weekly["week_end_date"]).dt.date)
     )
@@ -758,7 +837,7 @@ def run_incremental(
         dte_min=state.dte_min,
         dte_max=state.dte_max,
     )
-    merged_panel = pd.concat([state.panel, new_panel], ignore_index=True)
+    merged_panel = pd.concat([state_panel, new_panel], ignore_index=True)
 
     warnings: list[str] = []
     if int(new_panel["window_shortfall"].max()) > 0:
@@ -771,6 +850,7 @@ def run_incremental(
         files_read=files_read,
         warnings=warnings,
         mode="incremental",
+        classification=classification,
     )
 
 
@@ -789,6 +869,7 @@ def run_backfill(
     dte_min: int = DEFAULT_DTE_MIN,
     dte_max: int = DEFAULT_DTE_MAX,
     show_progress: bool = True,
+    classify_fn: Callable[[Sequence[str]], pd.DataFrame] | None = None,
 ) -> BuildResult:
     if not all_trading_dates:
         raise LiquidityPanelError(
@@ -816,6 +897,20 @@ def run_backfill(
     if daily.empty:
         raise LiquidityPanelError("Daily observation stage produced no rows.")
 
+    # Security-type stage: discover candidates from raw daily metrics, update
+    # the persistent dictionary, and filter daily rows to company equities
+    # BEFORE any weekly / panel / rank construction.
+    classification = pd.DataFrame()
+    if classify_fn is not None:
+        candidates = candidate_tickers_from_daily(daily)
+        classification = classify_fn(candidates)
+        equity = company_equity_tickers(classification)
+        daily = filter_daily_to_tickers(daily, equity)
+        if daily.empty:
+            raise LiquidityPanelError(
+                "No company-equity daily rows remain after security-type filter."
+            )
+
     week_calendar = build_week_calendar(dates_needed)
     weekly = aggregate_weekly_liquidity_observations(daily, week_calendar)
     all_week_ends = sorted({we for we, _ in week_calendar})
@@ -841,6 +936,7 @@ def run_backfill(
         files_read=files_read,
         warnings=warnings,
         mode="backfill",
+        classification=classification,
     )
 
 
@@ -966,6 +1062,23 @@ def write_liquidity_panel_report(
             f"- snapshots: {panel['month_date'].nunique() if not panel.empty else 0}",
             f"- tickers: {panel['ticker'].nunique() if not panel.empty else 0}",
             f"- has_valid_atm_pair rate: {valid_pct:.1%}",
+        ]
+    )
+    if not result.classification.empty:
+        cls = result.classification
+        n_company = int((cls["classification"] == "company_equity").sum())
+        lines.extend(
+            [
+                "",
+                "## Security classification",
+                f"- candidate tickers: {len(cls)}",
+                f"- company_equity: {n_company}",
+                f"- non_company_equity: {len(cls) - n_company}",
+                f"- classification_digest: `{classification_digest(cls)}`",
+            ]
+        )
+    lines.extend(
+        [
             "",
             "## Debug",
             f"- no_expiry_in_band daily rows: {len(no_expiry)}",
@@ -995,13 +1108,19 @@ def write_artifacts(
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
+    names = [DAILY_FILENAME, WEEKLY_FILENAME, PANEL_FILENAME, LIQUID_TICKERS_FILENAME]
     try:
         result.daily.to_parquet(staging / DAILY_FILENAME, index=False)
         result.weekly.to_parquet(staging / WEEKLY_FILENAME, index=False)
         result.panel.to_parquet(staging / PANEL_FILENAME, index=False)
         liquid_tickers.to_csv(staging / LIQUID_TICKERS_FILENAME, index=False)
+        if not result.classification.empty:
+            result.classification.to_parquet(
+                staging / SECURITY_CLASSIFICATION_FILENAME, index=False
+            )
+            names.append(SECURITY_CLASSIFICATION_FILENAME)
 
-        for name in (DAILY_FILENAME, WEEKLY_FILENAME, PANEL_FILENAME, LIQUID_TICKERS_FILENAME):
+        for name in names:
             os.replace(staging / name, cache_dir / name)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -1035,9 +1154,14 @@ def build_panel(
     spread_bot_pct: float = DEFAULT_SPREAD_BOT_PCT,
     load_day_fn: Callable[[date], pd.DataFrame] | None = None,
     show_progress: bool = True,
+    security_types_path: Path = DEFAULT_SECURITY_TYPES_PATH,
+    fetch_history_fn: Callable[[str], pd.DataFrame] | None = None,
 ) -> BuildResult:
     if load_day_fn is None:
         load_day_fn = make_raw_zip_loader(data_root)
+    classify_fn = make_core_classifier(
+        Path(security_types_path), fetch_history_fn=fetch_history_fn
+    )
 
     hist_start = start_date - timedelta(weeks=lookback_weeks + 2)
     all_trading = discover_orats_trading_dates(data_root, hist_start, end_date)
@@ -1054,6 +1178,7 @@ def build_panel(
             dte_min=dte_min,
             dte_max=dte_max,
             show_progress=show_progress,
+            classify_fn=classify_fn,
         )
 
     state = validate_incremental_artifacts(
@@ -1074,6 +1199,7 @@ def build_panel(
         dte_min=dte_min,
         dte_max=dte_max,
         show_progress=show_progress,
+        classify_fn=classify_fn,
     )
 
 
@@ -1103,6 +1229,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--dte-max", type=int, default=DEFAULT_DTE_MAX)
     p.add_argument("--dvol-top-pct", type=float, default=DEFAULT_DVOL_TOP_PCT)
     p.add_argument("--spread-bot-pct", type=float, default=DEFAULT_SPREAD_BOT_PCT)
+    p.add_argument(
+        "--security-types-path",
+        type=Path,
+        default=DEFAULT_SECURITY_TYPES_PATH,
+        help=(
+            "Persistent ORATS security-type dictionary parquet. ORATS Core "
+            "history is fetched (ORATS_API_TOKEN env var) only for candidate "
+            "tickers absent from this dictionary."
+        ),
+    )
     p.add_argument("--build-id", type=str, default=None)
     p.add_argument(
         "--no-progress",
@@ -1139,8 +1275,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             dvol_top_pct=args.dvol_top_pct,
             spread_bot_pct=args.spread_bot_pct,
             show_progress=not args.no_progress,
+            security_types_path=args.security_types_path,
         )
-    except LiquidityPanelError as exc:
+    except (LiquidityPanelError, SecurityTypesError, OratsCoreError) as exc:
         logger.error("%s", exc)
         return 1
 
