@@ -1,9 +1,12 @@
 """Minimal ORATS Core historical client (security-type classification input).
 
-Fetches historical Core ``assetType`` records for one ticker at a time from
-the ORATS datav2 historical Core endpoint. Consumed by
+Fetches Core ``assetType`` records for one ``(ticker, tradeDate)`` pair at a
+time from the ORATS datav2 historical Core endpoint. Consumed by
 ``src/data/security_types.py`` to classify tickers as company equities vs
 non-company securities (ETF / index / VIX-style).
+
+Every request is date-specific: ``tradeDate`` is always sent. There is no
+production path that requests unrestricted full history for a ticker.
 
 Credentials
 -----------
@@ -32,6 +35,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
@@ -57,7 +61,7 @@ def _redact(text: Any, token: str) -> str:
 
 
 class OratsCoreClient:
-    """One-ticker-at-a-time historical Core ``assetType`` fetcher.
+    """Date-specific historical Core ``assetType`` fetcher.
 
     Parameters
     ----------
@@ -135,20 +139,34 @@ class OratsCoreClient:
             return pd.DataFrame(columns=list(ASSET_TYPE_HISTORY_COLUMNS))
         return pd.DataFrame(rows, columns=list(ASSET_TYPE_HISTORY_COLUMNS))
 
-    def fetch_asset_type_history(self, ticker: str) -> pd.DataFrame:
-        """Fetch all available historical Core ``assetType`` rows for one ticker.
+    def fetch_asset_type_at_date(self, ticker: str, trade_date: date) -> pd.DataFrame:
+        """Fetch Core ``assetType`` rows for one ticker on one trade date.
 
-        Returns a DataFrame with columns ``ticker``, ``tradeDate``,
-        ``assetType``. An empty DataFrame is a *successful* empty response;
+        ``tradeDate`` is always included in the request; unrestricted
+        full-history requests are not supported. Returns a DataFrame with
+        columns ``ticker``, ``tradeDate``, ``assetType``. An empty DataFrame
+        is a *successful* empty response (no Core record on that date);
         failures raise :class:`OratsCoreError`.
         """
+        if isinstance(trade_date, datetime):
+            trade_date = trade_date.date()
+        if not isinstance(trade_date, date):
+            raise OratsCoreError(
+                f"trade_date must be a datetime.date; got {trade_date!r}"
+            )
         token = self._resolve_token()
-        params = {"token": token, "ticker": ticker, "fields": CORE_FIELDS}
+        params = {
+            "token": token,
+            "ticker": ticker,
+            "tradeDate": trade_date.isoformat(),
+            "fields": CORE_FIELDS,
+        }
 
         if self._request_made and self.rate_limit > 0:
             time.sleep(self.rate_limit)
         self._request_made = True
 
+        request_label = f"ticker {ticker} tradeDate {trade_date.isoformat()}"
         last_error = "no attempt made"
         for attempt in range(self.max_retries):
             try:
@@ -159,9 +177,9 @@ class OratsCoreClient:
                 last_error = f"transport error: {_redact(exc, token)}"
                 backoff = min(60.0, (2**attempt) * 1.0)
                 logger.warning(
-                    "ORATS Core request error for ticker %s — backing off %.1fs "
+                    "ORATS Core request error for %s — backing off %.1fs "
                     "(attempt %d/%d): %s",
-                    ticker, backoff, attempt + 1, self.max_retries,
+                    request_label, backoff, attempt + 1, self.max_retries,
                     _redact(exc, token),
                 )
                 time.sleep(backoff)
@@ -180,9 +198,9 @@ class OratsCoreClient:
                         pass
                 last_error = f"HTTP {response.status_code}"
                 logger.warning(
-                    "ORATS Core HTTP %s for ticker %s — backing off %.1fs "
+                    "ORATS Core HTTP %s for %s — backing off %.1fs "
                     "(attempt %d/%d)",
-                    response.status_code, ticker, backoff,
+                    response.status_code, request_label, backoff,
                     attempt + 1, self.max_retries,
                 )
                 time.sleep(backoff)
@@ -191,11 +209,11 @@ class OratsCoreClient:
             # Non-retryable HTTP error: fail immediately. Never log the URL,
             # params, or raw body (redacted excerpt only in the exception).
             raise OratsCoreError(
-                f"ORATS Core HTTP {response.status_code} for ticker {ticker}: "
+                f"ORATS Core HTTP {response.status_code} for {request_label}: "
                 f"{_redact(getattr(response, 'text', '')[:200], token)}"
             )
 
         raise OratsCoreError(
             f"ORATS Core request failed after {self.max_retries} attempts "
-            f"for ticker {ticker}: {last_error}"
+            f"for {request_label}: {last_error}"
         )

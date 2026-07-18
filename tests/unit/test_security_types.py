@@ -1,9 +1,10 @@
 """Unit tests for src/data/security_types.py (persistent ORATS security-type
-dictionary: classification policy, cache behaviour, atomic update)."""
+dictionary: date-specific classification policy, bounded valid-empty
+fallback, cache behaviour, atomic update, version enforcement)."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -13,7 +14,7 @@ from src.data import security_types as st
 from src.data.security_types import (
     SecurityTypesError,
     classification_digest,
-    classify_asset_type_history,
+    classify_ticker_with_fallback,
     company_equity_tickers,
     ensure_security_types,
     load_security_types,
@@ -24,26 +25,37 @@ from src.data.security_types import (
 NOW = datetime(2026, 7, 18, 12, 0, 0, tzinfo=timezone.utc)
 CLASSIFIED_AT = "2026-07-18T12:00:00Z"
 
+D1 = date(2024, 1, 3)
+D2 = date(2024, 1, 4)
+D3 = date(2024, 1, 5)  # newest
 
-def _history(ticker: str, rows: list[tuple[str, object]]) -> pd.DataFrame:
+EMPTY_OBS = pd.DataFrame(columns=["ticker", "tradeDate", "assetType"])
+
+
+def _obs(ticker: str, trade_date: date, asset_type: object, n: int = 1) -> pd.DataFrame:
     return pd.DataFrame(
         [
-            {"ticker": ticker, "tradeDate": trade_date, "assetType": asset_type}
-            for trade_date, asset_type in rows
+            {
+                "ticker": ticker,
+                "tradeDate": trade_date.isoformat(),
+                "assetType": asset_type,
+            }
         ]
+        * n
     )
 
 
 class FetchSpy:
-    """Scripted per-ticker Core history; records every fetch call."""
+    """Scripted date-specific responses keyed by (ticker, iso_date)."""
 
-    def __init__(self, histories: dict[str, object]):
-        self.histories = histories
-        self.calls: list[str] = []
+    def __init__(self, responses: dict[tuple[str, str], object]):
+        self.responses = responses
+        self.calls: list[tuple[str, str]] = []
 
-    def __call__(self, ticker: str) -> pd.DataFrame:
-        self.calls.append(ticker)
-        result = self.histories[ticker]
+    def __call__(self, ticker: str, trade_date: date) -> pd.DataFrame:
+        key = (ticker, trade_date.isoformat())
+        self.calls.append(key)
+        result = self.responses[key]
         if isinstance(result, BaseException):
             raise result
         return result
@@ -53,121 +65,151 @@ def _now_fn():
     return NOW
 
 
-# ── classification policy ─────────────────────────────────────────────────────
+def _classify(ticker, dates, spy):
+    return classify_ticker_with_fallback(
+        ticker, dates, spy, classified_at_utc=CLASSIFIED_AT
+    )
+
+
+# ── classification policy (date-specific observation) ─────────────────────────
 
 
 class TestClassificationPolicy:
     @pytest.mark.parametrize("asset_type", [0, 1, 2, 3])
     def test_types_0_to_3_are_company_equity(self, asset_type):
-        row = classify_asset_type_history(
-            "AAA",
-            _history("AAA", [("2024-01-02", asset_type)]),
-            classified_at_utc=CLASSIFIED_AT,
-        )
+        spy = FetchSpy({("AAA", D3.isoformat()): _obs("AAA", D3, asset_type)})
+        row = _classify("AAA", [D3], spy)
         assert row["classification"] == "company_equity"
         assert row["observed_asset_types"] == str(asset_type)
 
     @pytest.mark.parametrize("asset_type", [4, 5, 6, 7, 8, 9])
     def test_any_type_4_to_9_is_non_company(self, asset_type):
-        row = classify_asset_type_history(
-            "SPY",
-            _history("SPY", [("2024-01-02", asset_type)]),
-            classified_at_utc=CLASSIFIED_AT,
-        )
+        spy = FetchSpy({("SPY", D3.isoformat()): _obs("SPY", D3, asset_type)})
+        row = _classify("SPY", [D3], spy)
         assert row["classification"] == "non_company_equity"
 
-    def test_mixed_history_resolves_non_company_globally(self):
-        row = classify_asset_type_history(
-            "MIX",
-            _history("MIX", [("2024-01-02", 2), ("2024-01-03", 7), ("2024-01-04", 0)]),
-            classified_at_utc=CLASSIFIED_AT,
+    def test_latest_observed_date_is_attempted_first(self):
+        spy = FetchSpy({("AAA", D3.isoformat()): _obs("AAA", D3, 0)})
+        row = _classify("AAA", [D1, D3, D2], spy)  # unordered input
+        assert spy.calls == [("AAA", D3.isoformat())]
+        assert row["source_date_min"] == D3.isoformat()
+        assert row["source_date_max"] == D3.isoformat()
+
+    def test_valid_empty_falls_back_to_earlier_observed_dates_only(self):
+        spy = FetchSpy(
+            {
+                ("DLST", D3.isoformat()): EMPTY_OBS,
+                ("DLST", D2.isoformat()): EMPTY_OBS,
+                ("DLST", D1.isoformat()): _obs("DLST", D1, 0),
+            }
         )
+        row = _classify("DLST", [D2, D1, D3], spy)
+        # Newest-first attempts; only dates the ticker actually appeared on.
+        assert spy.calls == [
+            ("DLST", D3.isoformat()),
+            ("DLST", D2.isoformat()),
+            ("DLST", D1.isoformat()),
+        ]
+        assert row["classification"] == "company_equity"
+
+    def test_successful_fallback_stores_returned_date(self):
+        spy = FetchSpy(
+            {
+                ("DLST", D3.isoformat()): EMPTY_OBS,
+                ("DLST", D2.isoformat()): _obs("DLST", D2, 7),
+            }
+        )
+        row = _classify("DLST", [D3, D2, D1], spy)
+        assert row["source_date_min"] == D2.isoformat()
+        assert row["source_date_max"] == D2.isoformat()
         assert row["classification"] == "non_company_equity"
-        assert row["observed_asset_types"] == "0,2,7"
 
-    def test_source_date_bounds_and_metadata(self):
-        row = classify_asset_type_history(
-            "AAA",
-            _history("AAA", [("2024-03-01", 0), ("2020-01-02", 1)]),
-            classified_at_utc=CLASSIFIED_AT,
+    def test_exhausting_bounded_attempts_fails(self):
+        days = [date(2024, 1, d) for d in range(2, 10)]  # 8 observed dates
+        spy = FetchSpy({("GONE", d.isoformat()): EMPTY_OBS for d in days})
+        with pytest.raises(SecurityTypesError, match="cannot classify"):
+            _classify("GONE", days, spy)
+        # Bounded: latest observed date + 4 fallbacks, newest first.
+        assert len(spy.calls) == st.MAX_OBSERVED_DATE_ATTEMPTS
+        expected = [
+            ("GONE", d.isoformat()) for d in sorted(days, reverse=True)[:5]
+        ]
+        assert spy.calls == expected
+
+    def test_http_error_fails_without_fallback(self):
+        spy = FetchSpy(
+            {
+                ("AAA", D3.isoformat()): RuntimeError("HTTP 500"),
+                ("AAA", D2.isoformat()): _obs("AAA", D2, 0),
+            }
         )
-        assert row["source"] == "orats_core"
-        assert row["source_date_min"] == "2020-01-02"
-        assert row["source_date_max"] == "2024-03-01"
-        assert row["classified_at_utc"] == CLASSIFIED_AT
-        assert row["classification_version"] == st.CLASSIFICATION_VERSION
+        with pytest.raises(RuntimeError, match="HTTP 500"):
+            _classify("AAA", [D3, D2], spy)
+        assert spy.calls == [("AAA", D3.isoformat())]
 
-    def test_missing_history_fails(self):
-        with pytest.raises(SecurityTypesError, match="No historical"):
-            classify_asset_type_history(
-                "AAA", pd.DataFrame(), classified_at_utc=CLASSIFIED_AT
-            )
+    def test_mismatched_ticker_fails(self):
+        spy = FetchSpy({("AAA", D3.isoformat()): _obs("BBB", D3, 0)})
+        with pytest.raises(SecurityTypesError, match="unexpected"):
+            _classify("AAA", [D3], spy)
+
+    def test_mismatched_trade_date_fails(self):
+        spy = FetchSpy({("AAA", D3.isoformat()): _obs("AAA", D1, 0)})
+        with pytest.raises(SecurityTypesError, match="do not match the"):
+            _classify("AAA", [D3], spy)
 
     @pytest.mark.parametrize("bad_type", [None, float("nan"), "equity"])
     def test_malformed_asset_type_fails(self, bad_type):
+        spy = FetchSpy({("AAA", D3.isoformat()): _obs("AAA", D3, bad_type)})
         with pytest.raises(SecurityTypesError, match="missing/malformed assetType"):
-            classify_asset_type_history(
-                "AAA",
-                _history("AAA", [("2024-01-02", bad_type)]),
-                classified_at_utc=CLASSIFIED_AT,
-            )
+            _classify("AAA", [D3], spy)
 
     @pytest.mark.parametrize("bad_type", [-1, 10, 42])
     def test_out_of_domain_asset_type_fails(self, bad_type):
+        spy = FetchSpy({("AAA", D3.isoformat()): _obs("AAA", D3, bad_type)})
         with pytest.raises(SecurityTypesError, match="outside 0-9"):
-            classify_asset_type_history(
-                "AAA",
-                _history("AAA", [("2024-01-02", bad_type)]),
-                classified_at_utc=CLASSIFIED_AT,
-            )
+            _classify("AAA", [D3], spy)
 
     def test_non_integer_asset_type_fails(self):
+        spy = FetchSpy({("AAA", D3.isoformat()): _obs("AAA", D3, 2.5)})
         with pytest.raises(SecurityTypesError, match="non-integer"):
-            classify_asset_type_history(
-                "AAA",
-                _history("AAA", [("2024-01-02", 2.5)]),
-                classified_at_utc=CLASSIFIED_AT,
-            )
+            _classify("AAA", [D3], spy)
 
-    def test_unexpected_ticker_fails(self):
-        with pytest.raises(SecurityTypesError, match="unexpected"):
-            classify_asset_type_history(
-                "AAA",
-                _history("BBB", [("2024-01-02", 0)]),
-                classified_at_utc=CLASSIFIED_AT,
-            )
-
-    def test_unparseable_trade_date_fails(self):
-        with pytest.raises(SecurityTypesError, match="unparseable tradeDate"):
-            classify_asset_type_history(
-                "AAA",
-                _history("AAA", [("not-a-date", 0)]),
-                classified_at_utc=CLASSIFIED_AT,
-            )
-
-    def test_conflicting_duplicate_trade_date_fails(self):
+    def test_conflicting_rows_on_requested_date_fail(self):
+        conflicting = pd.concat(
+            [_obs("AAA", D3, 0), _obs("AAA", D3, 5)], ignore_index=True
+        )
+        spy = FetchSpy({("AAA", D3.isoformat()): conflicting})
         with pytest.raises(SecurityTypesError, match="conflicting duplicate"):
-            classify_asset_type_history(
-                "AAA",
-                _history("AAA", [("2024-01-02", 0), ("2024-01-02", 5)]),
-                classified_at_utc=CLASSIFIED_AT,
-            )
+            _classify("AAA", [D3], spy)
 
     def test_identical_duplicate_rows_are_deduped(self):
-        row = classify_asset_type_history(
-            "AAA",
-            _history("AAA", [("2024-01-02", 0), ("2024-01-02", 0)]),
-            classified_at_utc=CLASSIFIED_AT,
-        )
+        spy = FetchSpy({("AAA", D3.isoformat()): _obs("AAA", D3, 0, n=2)})
+        row = _classify("AAA", [D3], spy)
         assert row["classification"] == "company_equity"
 
     def test_ticker_normalization(self):
-        row = classify_asset_type_history(
-            " aaa ",
-            _history("aaa", [("2024-01-02", 0)]),
-            classified_at_utc=CLASSIFIED_AT,
-        )
+        spy = FetchSpy({("AAA", D3.isoformat()): _obs("aaa", D3, 0)})
+        row = _classify(" aaa ", [D3], spy)
         assert row["ticker"] == "AAA"
+
+    def test_empty_observed_dates_fail(self):
+        with pytest.raises(SecurityTypesError, match="empty"):
+            _classify("AAA", [], FetchSpy({}))
+
+    def test_none_response_fails(self):
+        class NoneFetcher:
+            def __call__(self, ticker, trade_date):
+                return None
+
+        with pytest.raises(SecurityTypesError, match="returned None"):
+            _classify("AAA", [D3], NoneFetcher())
+
+    def test_version_and_metadata(self):
+        spy = FetchSpy({("AAA", D3.isoformat()): _obs("AAA", D3, 1)})
+        row = _classify("AAA", [D3], spy)
+        assert row["source"] == "orats_core"
+        assert row["classified_at_utc"] == CLASSIFIED_AT
+        assert row["classification_version"] == st.CLASSIFICATION_VERSION == 2
 
 
 # ── cache behaviour ───────────────────────────────────────────────────────────
@@ -177,67 +219,85 @@ class TestEnsureSecurityTypes:
     def _dict_path(self, tmp_path: Path) -> Path:
         return tmp_path / "orats_security_types.parquet"
 
-    def test_absent_dictionary_fetches_all_candidates_and_writes(self, tmp_path):
+    def _seed(self, tmp_path: Path, spec: dict[str, int]) -> Path:
+        """Seed the dictionary with {ticker: asset_type} observed at D3."""
         path = self._dict_path(tmp_path)
-        fetch = FetchSpy(
+        spy = FetchSpy(
+            {(t, D3.isoformat()): _obs(t, D3, at) for t, at in spec.items()}
+        )
+        ensure_security_types(
+            {t: [D3] for t in spec},
+            path,
+            fetch_observation_fn=spy,
+            now_fn=_now_fn,
+        )
+        return path
+
+    def test_absent_dictionary_classifies_all_candidates_and_writes(self, tmp_path):
+        path = self._dict_path(tmp_path)
+        spy = FetchSpy(
             {
-                "AAA": _history("AAA", [("2024-01-02", 0)]),
-                "SPY": _history("SPY", [("2024-01-02", 5)]),
+                ("AAA", D3.isoformat()): _obs("AAA", D3, 0),
+                ("SPY", D3.isoformat()): _obs("SPY", D3, 5),
             }
         )
         result = ensure_security_types(
-            ["AAA", "SPY"], path, fetch_history_fn=fetch, now_fn=_now_fn
+            {"AAA": [D3], "SPY": [D3]},
+            path,
+            fetch_observation_fn=spy,
+            now_fn=_now_fn,
         )
-        assert sorted(fetch.calls) == ["AAA", "SPY"]
+        assert sorted(spy.calls) == [
+            ("AAA", D3.isoformat()),
+            ("SPY", D3.isoformat()),
+        ]
         assert path.is_file()
         on_disk = load_security_types(path)
         pd.testing.assert_frame_equal(result, on_disk)
-        assert set(result["ticker"]) == {"AAA", "SPY"}
         assert company_equity_tickers(result) == {"AAA"}
 
     def test_full_coverage_makes_zero_api_calls_and_no_rewrite(self, tmp_path):
-        path = self._dict_path(tmp_path)
-        seed = FetchSpy({"AAA": _history("AAA", [("2024-01-02", 0)])})
-        ensure_security_types(["AAA"], path, fetch_history_fn=seed, now_fn=_now_fn)
+        path = self._seed(tmp_path, {"AAA": 0})
         before = path.read_bytes()
 
-        fetch = FetchSpy({})  # any fetch would KeyError
+        spy = FetchSpy({})  # any call would KeyError
         result = ensure_security_types(
-            ["AAA"], path, fetch_history_fn=fetch, now_fn=_now_fn
+            {"AAA": [D3, D2]}, path, fetch_observation_fn=spy, now_fn=_now_fn
         )
-        assert fetch.calls == []
+        assert spy.calls == []
         assert path.read_bytes() == before
         assert set(result["ticker"]) == {"AAA"}
 
-    def test_fetches_only_missing_tickers(self, tmp_path):
-        path = self._dict_path(tmp_path)
-        seed = FetchSpy({"AAA": _history("AAA", [("2024-01-02", 0)])})
-        ensure_security_types(["AAA"], path, fetch_history_fn=seed, now_fn=_now_fn)
-
-        fetch = FetchSpy({"BBB": _history("BBB", [("2024-01-02", 1)])})
+    def test_classifies_only_missing_tickers(self, tmp_path):
+        path = self._seed(tmp_path, {"AAA": 0})
+        spy = FetchSpy({("BBB", D3.isoformat()): _obs("BBB", D3, 1)})
         result = ensure_security_types(
-            ["AAA", "BBB"], path, fetch_history_fn=fetch, now_fn=_now_fn
+            {"AAA": [D3], "BBB": [D3]},
+            path,
+            fetch_observation_fn=spy,
+            now_fn=_now_fn,
         )
-        assert fetch.calls == ["BBB"]
+        assert spy.calls == [("BBB", D3.isoformat())]
         assert set(result["ticker"]) == {"AAA", "BBB"}
 
     def test_merge_never_alters_existing_rows(self, tmp_path):
-        path = self._dict_path(tmp_path)
         # Seed AAA as non-company; a hypothetical re-fetch would say company.
-        seed = FetchSpy({"AAA": _history("AAA", [("2024-01-02", 6)])})
-        ensure_security_types(["AAA"], path, fetch_history_fn=seed, now_fn=_now_fn)
+        path = self._seed(tmp_path, {"AAA": 6})
         existing = load_security_types(path)
 
-        fetch = FetchSpy(
+        spy = FetchSpy(
             {
-                "AAA": _history("AAA", [("2024-01-02", 0)]),  # must never be used
-                "BBB": _history("BBB", [("2024-01-02", 1)]),
+                ("AAA", D3.isoformat()): _obs("AAA", D3, 0),  # must never be used
+                ("BBB", D3.isoformat()): _obs("BBB", D3, 1),
             }
         )
         merged = ensure_security_types(
-            ["AAA", "BBB"], path, fetch_history_fn=fetch, now_fn=_now_fn
+            {"AAA": [D3], "BBB": [D3]},
+            path,
+            fetch_observation_fn=spy,
+            now_fn=_now_fn,
         )
-        assert fetch.calls == ["BBB"]
+        assert spy.calls == [("BBB", D3.isoformat())]
         merged_aaa = merged[merged["ticker"] == "AAA"].reset_index(drop=True)
         pd.testing.assert_frame_equal(
             merged_aaa, existing[existing["ticker"] == "AAA"].reset_index(drop=True)
@@ -245,59 +305,110 @@ class TestEnsureSecurityTypes:
         assert merged_aaa.iloc[0]["classification"] == "non_company_equity"
 
     def test_fetch_failure_leaves_dictionary_byte_for_byte_unchanged(self, tmp_path):
-        path = self._dict_path(tmp_path)
-        seed = FetchSpy({"AAA": _history("AAA", [("2024-01-02", 0)])})
-        ensure_security_types(["AAA"], path, fetch_history_fn=seed, now_fn=_now_fn)
+        path = self._seed(tmp_path, {"AAA": 0})
         before = path.read_bytes()
 
-        fetch = FetchSpy({"BBB": RuntimeError("API down")})
+        spy = FetchSpy({("BBB", D3.isoformat()): RuntimeError("API down")})
         with pytest.raises(RuntimeError, match="API down"):
             ensure_security_types(
-                ["AAA", "BBB"], path, fetch_history_fn=fetch, now_fn=_now_fn
+                {"AAA": [D3], "BBB": [D3]},
+                path,
+                fetch_observation_fn=spy,
+                now_fn=_now_fn,
             )
         assert path.read_bytes() == before
         assert not list(tmp_path.glob("*.tmp-*"))
 
-    def test_validation_failure_leaves_dictionary_unchanged(self, tmp_path):
-        path = self._dict_path(tmp_path)
-        seed = FetchSpy({"AAA": _history("AAA", [("2024-01-02", 0)])})
-        ensure_security_types(["AAA"], path, fetch_history_fn=seed, now_fn=_now_fn)
+    def test_exhausted_fallback_leaves_dictionary_unchanged(self, tmp_path):
+        path = self._seed(tmp_path, {"AAA": 0})
         before = path.read_bytes()
 
-        fetch = FetchSpy({"BBB": _history("BBB", [("2024-01-02", 12)])})
-        with pytest.raises(SecurityTypesError, match="outside 0-9"):
+        spy = FetchSpy(
+            {
+                ("GONE", D3.isoformat()): EMPTY_OBS,
+                ("GONE", D2.isoformat()): EMPTY_OBS,
+            }
+        )
+        with pytest.raises(SecurityTypesError, match="cannot classify"):
             ensure_security_types(
-                ["AAA", "BBB"], path, fetch_history_fn=fetch, now_fn=_now_fn
+                {"AAA": [D3], "GONE": [D3, D2]},
+                path,
+                fetch_observation_fn=spy,
+                now_fn=_now_fn,
             )
         assert path.read_bytes() == before
 
     def test_partial_batch_failure_publishes_nothing_when_absent(self, tmp_path):
         path = self._dict_path(tmp_path)
-        fetch = FetchSpy(
+        spy = FetchSpy(
             {
-                "AAA": _history("AAA", [("2024-01-02", 0)]),
-                "BBB": pd.DataFrame(),  # missing history fails the update
+                ("AAA", D3.isoformat()): _obs("AAA", D3, 0),
+                ("BBB", D3.isoformat()): _obs("CCC", D3, 0),  # mismatched ticker
             }
         )
-        with pytest.raises(SecurityTypesError, match="No historical"):
+        with pytest.raises(SecurityTypesError, match="unexpected"):
             ensure_security_types(
-                ["AAA", "BBB"], path, fetch_history_fn=fetch, now_fn=_now_fn
+                {"AAA": [D3], "BBB": [D3]},
+                path,
+                fetch_observation_fn=spy,
+                now_fn=_now_fn,
             )
         assert not path.exists()
 
-    def test_empty_candidate_set_fails(self, tmp_path):
+    def test_empty_candidate_mapping_fails(self, tmp_path):
         with pytest.raises(SecurityTypesError, match="empty"):
             ensure_security_types(
-                [], self._dict_path(tmp_path), fetch_history_fn=FetchSpy({}),
+                {},
+                self._dict_path(tmp_path),
+                fetch_observation_fn=FetchSpy({}),
                 now_fn=_now_fn,
             )
+
+    def test_candidate_with_no_observed_dates_fails(self, tmp_path):
+        with pytest.raises(SecurityTypesError, match="empty"):
+            ensure_security_types(
+                {"AAA": []},
+                self._dict_path(tmp_path),
+                fetch_observation_fn=FetchSpy({}),
+                now_fn=_now_fn,
+            )
+
+    def test_version_1_dictionary_is_rejected(self, tmp_path):
+        path = self._dict_path(tmp_path)
+        v1 = pd.DataFrame(
+            [
+                {
+                    "ticker": "AAA",
+                    "classification": "company_equity",
+                    "observed_asset_types": "2,3",
+                    "source": "orats_core",
+                    "source_date_min": "2007-01-03",
+                    "source_date_max": "2026-07-17",
+                    "classified_at_utc": CLASSIFIED_AT,
+                    "classification_version": 1,
+                }
+            ]
+        )
+        v1.to_parquet(path, index=False)
+        before = path.read_bytes()
+        with pytest.raises(SecurityTypesError, match="rebuild"):
+            ensure_security_types(
+                {"AAA": [D3]},
+                path,
+                fetch_observation_fn=FetchSpy({}),
+                now_fn=_now_fn,
+            )
+        assert path.read_bytes() == before  # never deleted or rewritten
 
     def test_corrupt_existing_dictionary_fails_closed(self, tmp_path):
         path = self._dict_path(tmp_path)
         pd.DataFrame({"ticker": ["AAA"], "wrong": [1]}).to_parquet(path, index=False)
         with pytest.raises(SecurityTypesError, match="missing columns"):
             ensure_security_types(
-                ["AAA"], path, fetch_history_fn=FetchSpy({}), now_fn=_now_fn
+                {"AAA": [D3]},
+                path,
+                fetch_observation_fn=FetchSpy({}),
+                now_fn=_now_fn,
             )
 
 
@@ -311,16 +422,31 @@ class TestValidateSecurityTypes:
             "classification": "company_equity",
             "observed_asset_types": "0",
             "source": "orats_core",
-            "source_date_min": "2024-01-02",
-            "source_date_max": "2024-01-03",
+            "source_date_min": "2024-01-05",
+            "source_date_max": "2024-01-05",
             "classified_at_utc": CLASSIFIED_AT,
-            "classification_version": 1,
+            "classification_version": 2,
         }
         row.update(overrides)
         return row
 
     def test_valid_frame_passes(self):
         validate_security_types(pd.DataFrame([self._row()]))
+
+    def test_version_1_row_fails_with_rebuild_instruction(self):
+        df = pd.DataFrame([self._row(classification_version=1)])
+        with pytest.raises(SecurityTypesError, match="rebuild"):
+            validate_security_types(df)
+
+    def test_multi_type_observed_asset_types_fails(self):
+        df = pd.DataFrame([self._row(observed_asset_types="0,3")])
+        with pytest.raises(SecurityTypesError, match="exactly one"):
+            validate_security_types(df)
+
+    def test_source_date_min_max_must_match(self):
+        df = pd.DataFrame([self._row(source_date_min="2024-01-04")])
+        with pytest.raises(SecurityTypesError, match="must equal"):
+            validate_security_types(df)
 
     def test_duplicate_ticker_fails(self):
         df = pd.DataFrame([self._row(), self._row()])
@@ -332,9 +458,9 @@ class TestValidateSecurityTypes:
         with pytest.raises(SecurityTypesError, match="invalid classification"):
             validate_security_types(df)
 
-    def test_classification_inconsistent_with_observed_types_fails(self):
+    def test_classification_inconsistent_with_observed_type_fails(self):
         df = pd.DataFrame(
-            [self._row(classification="company_equity", observed_asset_types="0,5")]
+            [self._row(classification="company_equity", observed_asset_types="5")]
         )
         with pytest.raises(SecurityTypesError, match="inconsistent"):
             validate_security_types(df)
@@ -345,7 +471,7 @@ class TestValidateSecurityTypes:
             validate_security_types(df)
 
     def test_malformed_observed_types_fails(self):
-        df = pd.DataFrame([self._row(observed_asset_types="0,x")])
+        df = pd.DataFrame([self._row(observed_asset_types="x")])
         with pytest.raises(SecurityTypesError, match="malformed"):
             validate_security_types(df)
 
@@ -366,10 +492,10 @@ class TestSnapshotClassification:
                 "classification": cls,
                 "observed_asset_types": types,
                 "source": "orats_core",
-                "source_date_min": "2024-01-02",
-                "source_date_max": "2024-01-03",
+                "source_date_min": "2024-01-05",
+                "source_date_max": "2024-01-05",
                 "classified_at_utc": CLASSIFIED_AT,
-                "classification_version": 1,
+                "classification_version": 2,
             }
             for t, cls, types in [
                 ("AAA", "company_equity", "0"),

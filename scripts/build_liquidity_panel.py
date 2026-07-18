@@ -2,14 +2,17 @@
 Build weekly point-in-time ticker liquidity panel for step1_get_universe().
 
 Pipeline (Sprint 004 C4, plus security-type stage):
-  daily raw observations → candidate ticker discovery → security dictionary
-  update (ORATS Core assetType) → company-equity daily filter → weekly
-  liquidity observations → rolling N-week panel → liquid_tickers.csv
+  daily raw observations → candidate ticker/date discovery → security
+  dictionary update (date-specific ORATS Core assetType observation) →
+  company-equity daily filter → weekly liquidity observations → rolling
+  N-week panel → liquid_tickers.csv
 
 Non-company securities (ETF / index / VIX-style, ORATS Core assetType 4-9)
 are removed from daily data before any weekly / panel / rank construction.
-The persistent dictionary (see src/data/security_types.py) means Core history
-is fetched at most once per ticker across backfills; each build also writes a
+Each missing ticker is classified from one Core observation at its latest
+observed trade date (bounded valid-empty fallback to earlier observed dates);
+the persistent dictionary (see src/data/security_types.py) means Core is
+queried at most once per ticker across backfills. Each build also writes a
 snapshot-local security_classification.parquet next to the other artifacts.
 
 Reads ORATS **raw** daily ZIPs from ORATS_Data (no split-adjusted cache required).
@@ -443,11 +446,22 @@ def extract_daily_observations(
 # ── Stage 1b: security classification (company-equity filter) ────────────────
 
 
-def candidate_tickers_from_daily(daily: pd.DataFrame) -> list[str]:
-    """Discover the normalized candidate ticker set from daily observations."""
-    return sorted(
-        {str(t).strip().upper() for t in daily["ticker"].dropna() if str(t).strip()}
-    )
+def candidate_ticker_dates_from_daily(daily: pd.DataFrame) -> dict[str, list[date]]:
+    """Map each normalized candidate ticker to its distinct observed trade
+    dates, sorted newest first.
+
+    Deterministic regardless of daily row order: tickers are sorted
+    alphabetically and dates are de-duplicated and sorted descending.
+    """
+    frame = daily[["ticker", "trade_date"]].copy()
+    frame["ticker"] = frame["ticker"].astype(str).str.strip().str.upper()
+    frame = frame[frame["ticker"] != ""]
+    frame["trade_date"] = pd.to_datetime(frame["trade_date"]).dt.date
+
+    out: dict[str, list[date]] = {}
+    for ticker, grp in frame.groupby("ticker", sort=True):
+        out[str(ticker)] = sorted(set(grp["trade_date"]), reverse=True)
+    return out
 
 
 def filter_daily_to_tickers(df: pd.DataFrame, tickers: set[str]) -> pd.DataFrame:
@@ -458,22 +472,27 @@ def filter_daily_to_tickers(df: pd.DataFrame, tickers: set[str]) -> pd.DataFrame
 
 def make_core_classifier(
     security_types_path: Path,
-    fetch_history_fn: Callable[[str], pd.DataFrame] | None = None,
-) -> Callable[[Sequence[str]], pd.DataFrame]:
+    fetch_observation_fn: Callable[[str, date], pd.DataFrame] | None = None,
+) -> Callable[[dict[str, list[date]]], pd.DataFrame]:
     """Return a classify_fn backed by the persistent security-type dictionary.
 
-    Updates the shared dictionary at ``security_types_path`` (fetching ORATS
-    Core history only for candidate tickers absent from it) and returns the
-    snapshot-local classification subset for exactly the candidate set.
+    ``candidates`` maps each ticker to its observed trade dates (newest
+    first). The shared dictionary at ``security_types_path`` is updated with
+    one date-specific Core observation per missing ticker (latest observed
+    date first, bounded valid-empty fallback); existing tickers make no API
+    request. Returns the snapshot-local classification subset for exactly the
+    candidate set.
     """
-    if fetch_history_fn is None:
-        fetch_history_fn = OratsCoreClient().fetch_asset_type_history
+    if fetch_observation_fn is None:
+        fetch_observation_fn = OratsCoreClient().fetch_asset_type_at_date
 
-    def _classify(candidates: Sequence[str]) -> pd.DataFrame:
+    def _classify(candidates: dict[str, list[date]]) -> pd.DataFrame:
         dictionary = ensure_security_types(
-            candidates, security_types_path, fetch_history_fn=fetch_history_fn
+            candidates,
+            security_types_path,
+            fetch_observation_fn=fetch_observation_fn,
         )
-        return snapshot_classification(dictionary, candidates)
+        return snapshot_classification(dictionary, candidates.keys())
 
     return _classify
 
@@ -750,7 +769,7 @@ def run_incremental(
     dte_min: int = DEFAULT_DTE_MIN,
     dte_max: int = DEFAULT_DTE_MAX,
     show_progress: bool = True,
-    classify_fn: Callable[[Sequence[str]], pd.DataFrame] | None = None,
+    classify_fn: Callable[[dict[str, list[date]]], pd.DataFrame] | None = None,
 ) -> BuildResult:
     calendar = build_week_calendar(all_trading_dates)
     new_weeks = [(we, days) for we, days in calendar if we > state.panel_watermark]
@@ -806,7 +825,7 @@ def run_incremental(
     state_weekly = state.weekly
     state_panel = state.panel
     if classify_fn is not None:
-        candidates = candidate_tickers_from_daily(merged_daily)
+        candidates = candidate_ticker_dates_from_daily(merged_daily)
         classification = classify_fn(candidates)
         equity = company_equity_tickers(classification)
         merged_daily = filter_daily_to_tickers(merged_daily, equity)
@@ -869,7 +888,7 @@ def run_backfill(
     dte_min: int = DEFAULT_DTE_MIN,
     dte_max: int = DEFAULT_DTE_MAX,
     show_progress: bool = True,
-    classify_fn: Callable[[Sequence[str]], pd.DataFrame] | None = None,
+    classify_fn: Callable[[dict[str, list[date]]], pd.DataFrame] | None = None,
 ) -> BuildResult:
     if not all_trading_dates:
         raise LiquidityPanelError(
@@ -902,7 +921,7 @@ def run_backfill(
     # BEFORE any weekly / panel / rank construction.
     classification = pd.DataFrame()
     if classify_fn is not None:
-        candidates = candidate_tickers_from_daily(daily)
+        candidates = candidate_ticker_dates_from_daily(daily)
         classification = classify_fn(candidates)
         equity = company_equity_tickers(classification)
         daily = filter_daily_to_tickers(daily, equity)
@@ -1155,12 +1174,12 @@ def build_panel(
     load_day_fn: Callable[[date], pd.DataFrame] | None = None,
     show_progress: bool = True,
     security_types_path: Path = DEFAULT_SECURITY_TYPES_PATH,
-    fetch_history_fn: Callable[[str], pd.DataFrame] | None = None,
+    fetch_observation_fn: Callable[[str, date], pd.DataFrame] | None = None,
 ) -> BuildResult:
     if load_day_fn is None:
         load_day_fn = make_raw_zip_loader(data_root)
     classify_fn = make_core_classifier(
-        Path(security_types_path), fetch_history_fn=fetch_history_fn
+        Path(security_types_path), fetch_observation_fn=fetch_observation_fn
     )
 
     hist_start = start_date - timedelta(weeks=lookback_weeks + 2)
@@ -1234,9 +1253,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=DEFAULT_SECURITY_TYPES_PATH,
         help=(
-            "Persistent ORATS security-type dictionary parquet. ORATS Core "
-            "history is fetched (ORATS_API_TOKEN env var) only for candidate "
-            "tickers absent from this dictionary."
+            "Persistent ORATS security-type dictionary parquet. One "
+            "date-specific ORATS Core observation (ORATS_API_TOKEN env var) "
+            "is fetched per candidate ticker absent from this dictionary."
         ),
     )
     p.add_argument("--build-id", type=str, default=None)
