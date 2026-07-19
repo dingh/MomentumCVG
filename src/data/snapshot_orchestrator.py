@@ -823,6 +823,14 @@ def open_resume_run(
         )
 
     config = load_run_config(roots.building)
+    normalized_snapshots_root = _normalize_root(snapshots_root)
+    if normalized_snapshots_root != config["snapshots_root"]:
+        raise RunConfigError(
+            f"snapshot root mismatch for build {build_id}: supplied "
+            f"{normalized_snapshots_root!r}, frozen {config['snapshots_root']!r}; "
+            "relocating or copying a .building run to another snapshot root is "
+            "not permitted"
+        )
     if config["build_id"] != build_id:
         raise RunConfigError(
             f"run configuration build_id {config['build_id']!r} does not match "

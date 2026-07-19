@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 import zipfile
 from datetime import date, timedelta
@@ -406,6 +407,29 @@ def test_resume_validates_and_does_not_rewrite_frozen_files(snapshots_root, raw_
     # Frozen intent is validated, never rewritten or "repaired".
     assert config_path.read_bytes() == config_bytes
     assert inventory_path.read_bytes() == inventory_bytes
+
+
+def test_resume_rejects_building_run_copied_to_another_snapshot_root(
+    tmp_path, raw_root
+):
+    snapshots_a = tmp_path / "snapshots-a"
+    snapshots_b = tmp_path / "snapshots-b"
+    snapshots_a.mkdir()
+    snapshots_b.mkdir()
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_a, raw_root)
+
+    copied_building = snapshots_b / prepared.roots.building.name
+    shutil.copytree(prepared.roots.building, copied_building)
+
+    with pytest.raises(
+        RunConfigError,
+        match=r"relocating or copying a \.building run.*not permitted",
+    ):
+        open_resume_run(snapshots_b, BUILD_ID_A)
+
+    resumed = open_resume_run(snapshots_a, BUILD_ID_A)
+    assert resumed.roots.building == prepared.roots.building
 
 
 def test_raw_drift_on_resume_fails(snapshots_root, raw_root):
