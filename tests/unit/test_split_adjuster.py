@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from src.data.split_adjuster import PRICE_COLS, SplitAdjuster
+from src.data.split_adjuster import (
+    PRICE_COLS,
+    SplitAdjuster,
+    SplitAdjustmentError,
+)
 
 
 def _write_splits(tmp_path: Path, rows: list[dict]) -> Path:
@@ -274,3 +279,85 @@ class TestMinSplitDate:
 
         assert out["split_factor"].iloc[0] == pytest.approx(1.0)
         assert out["adj_stkPx"].iloc[0] == pytest.approx(100.0)
+
+
+# ── C8.3B exact-ZIP-list entry point ──────────────────────────────────────────
+
+
+def _write_raw_zip(
+    tmp_path: Path,
+    date_str: str,
+    csv_text: str = "ticker,stkPx\nAAA,100.0\n",
+) -> Path:
+    year_dir = tmp_path / "raw" / date_str[:4]
+    year_dir.mkdir(parents=True, exist_ok=True)
+    path = year_dir / f"ORATS_SMV_Strikes_{date_str}.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("strikes.csv", csv_text)
+    return path
+
+
+class TestProcessZipPaths:
+    def test_processes_exactly_supplied_paths_and_returns_outputs(
+        self, tmp_path: Path
+    ):
+        adjuster = _make_adjuster(tmp_path, split_rows=[])
+        zips = [
+            _write_raw_zip(tmp_path, "20240405"),
+            _write_raw_zip(tmp_path, "20240412"),
+        ]
+        # An extra ZIP in the raw tree must NOT be picked up.
+        _write_raw_zip(tmp_path, "20240419")
+
+        produced = adjuster.process_zip_paths(zips)
+
+        assert produced == sorted(
+            tmp_path / "adj" / "2024" / f"ORATS_SMV_Strikes_{d}.parquet"
+            for d in ("20240405", "20240412")
+        )
+        assert all(p.is_file() for p in produced)
+        assert not (
+            tmp_path / "adj" / "2024" / "ORATS_SMV_Strikes_20240419.parquet"
+        ).exists()
+
+    def test_one_failing_zip_raises_and_reports_the_file(self, tmp_path: Path):
+        adjuster = _make_adjuster(tmp_path, split_rows=[])
+        good = _write_raw_zip(tmp_path, "20240405")
+        bad = _write_raw_zip(tmp_path, "20240412", csv_text="foo,bar\n1.0,2.0\n")
+
+        with pytest.raises(SplitAdjustmentError, match="20240412"):
+            adjuster.process_zip_paths([good, bad])
+
+    def test_missing_zip_path_raises(self, tmp_path: Path):
+        adjuster = _make_adjuster(tmp_path, split_rows=[])
+        good = _write_raw_zip(tmp_path, "20240405")
+        missing = tmp_path / "raw" / "2024" / "ORATS_SMV_Strikes_20240412.zip"
+        missing.unlink(missing_ok=True)
+
+        with pytest.raises(SplitAdjustmentError, match="do not exist"):
+            adjuster.process_zip_paths([good, missing])
+
+    def test_duplicate_zip_paths_raise(self, tmp_path: Path):
+        adjuster = _make_adjuster(tmp_path, split_rows=[])
+        good = _write_raw_zip(tmp_path, "20240405")
+
+        with pytest.raises(SplitAdjustmentError, match="duplicate"):
+            adjuster.process_zip_paths([good, good])
+
+    def test_empty_list_raises(self, tmp_path: Path):
+        adjuster = _make_adjuster(tmp_path, split_rows=[])
+
+        with pytest.raises(SplitAdjustmentError, match="at least one"):
+            adjuster.process_zip_paths([])
+
+    def test_unexpected_existing_output_raises_without_overwrite(
+        self, tmp_path: Path
+    ):
+        adjuster = _make_adjuster(tmp_path, split_rows=[])
+        zip_path = _write_raw_zip(tmp_path, "20240405")
+        out_dir = tmp_path / "adj" / "2024"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "ORATS_SMV_Strikes_20240405.parquet").write_bytes(b"stale")
+
+        with pytest.raises(SplitAdjustmentError, match="unexpected skip"):
+            adjuster.process_zip_paths([zip_path])

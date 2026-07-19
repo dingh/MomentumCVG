@@ -42,9 +42,10 @@ from __future__ import annotations
 
 import logging
 import zipfile
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 import multiprocessing
 
 import pandas as pd
@@ -54,6 +55,10 @@ logger = logging.getLogger(__name__)
 
 # ── columns to split-adjust ───────────────────────────────────────────────────
 PRICE_COLS = ["stkPx", "strike", "cBidPx", "cAskPx", "pBidPx", "pAskPx"]
+
+
+class SplitAdjustmentError(RuntimeError):
+    """Raised by the exact-list API when any supplied ZIP fails to adjust."""
 
 
 # ── module-level worker (avoids pickling bound methods) ───────────────────────
@@ -296,6 +301,102 @@ class SplitAdjuster:
         Useful for one-off testing without writing to disk.
         """
         return _apply_adjustments(df, trade_date, self._cum_factors)
+
+    def _adjusted_output_path(self, zip_path: Path) -> Path:
+        """Output parquet path for one raw ZIP (same layout as process_zip)."""
+        date_str = zip_path.stem.split("_")[-1]
+        return self.adj_root / date_str[:4] / f"ORATS_SMV_Strikes_{date_str}.parquet"
+
+    def process_zip_paths(
+        self,
+        zip_paths: Sequence[str | Path],
+        *,
+        max_workers: int | None = None,
+    ) -> list[Path]:
+        """Adjust exactly the supplied raw ZIP files; raise on any failure.
+
+        Fail-closed exact-list API for the C8.3B adjusted stage: no directory
+        scanning, no silent skips, no error counting. Raises
+        ``SplitAdjustmentError`` when the list is empty, contains duplicates or
+        missing files, when any file fails to parse/read/adjust, when an
+        unexpected already-existing output causes a skip, or when a worker
+        process raises. Split mathematics and output layout are unchanged.
+
+        Returns the sorted list of produced output parquet paths (one per
+        supplied ZIP on success).
+        """
+        paths = [Path(p) for p in zip_paths]
+        if not paths:
+            raise SplitAdjustmentError(
+                "process_zip_paths requires at least one ZIP path"
+            )
+        duplicates = sorted(str(p) for p, n in Counter(paths).items() if n > 1)
+        if duplicates:
+            raise SplitAdjustmentError(
+                f"duplicate ZIP paths supplied: {duplicates[:5]}"
+            )
+        missing = sorted(str(p) for p in paths if not p.is_file())
+        if missing:
+            raise SplitAdjustmentError(f"ZIP paths do not exist: {missing[:5]}")
+
+        failures: list[str] = []
+        produced: list[Path] = []
+
+        def _record(zip_path: Path, result: Optional[bool]) -> None:
+            if result is True:
+                produced.append(self._adjusted_output_path(zip_path))
+            elif result is False:
+                failures.append(
+                    f"{zip_path.name}: unexpected skip (output already exists)"
+                )
+            else:
+                failures.append(f"{zip_path.name}: processing failed")
+
+        workers = max_workers if max_workers is not None else 1
+        if workers <= 1:
+            for zip_path in paths:
+                try:
+                    result = _process_single_zip(
+                        zip_path,
+                        self.adj_root,
+                        self._cum_factors,
+                        self.overwrite,
+                        self._ticker_universe,
+                    )
+                except KeyboardInterrupt:
+                    raise
+                except Exception as exc:
+                    failures.append(f"{zip_path.name}: processing raised {exc}")
+                else:
+                    _record(zip_path, result)
+        else:
+            with ProcessPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(
+                        _process_single_zip,
+                        zip_path,
+                        self.adj_root,
+                        self._cum_factors,
+                        self.overwrite,
+                        self._ticker_universe,
+                    ): zip_path
+                    for zip_path in paths
+                }
+                for future in as_completed(futures):
+                    zip_path = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        failures.append(f"{zip_path.name}: worker raised {exc}")
+                    else:
+                        _record(zip_path, result)
+
+        if failures:
+            raise SplitAdjustmentError(
+                f"{len(failures)} of {len(paths)} supplied ZIP file(s) failed "
+                f"exact-list adjustment: {'; '.join(sorted(failures)[:5])}"
+            )
+        return sorted(produced)
 
     def readjust_tickers(
         self,

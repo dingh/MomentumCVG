@@ -440,6 +440,86 @@ def check_meta_grain(meta_df: pd.DataFrame) -> ContractCheckResult:
     return result
 
 
+def check_expected_meta_keys(
+    meta_df: pd.DataFrame,
+    expected_keys: Iterable[tuple[Any, Any]],
+) -> ContractCheckResult:
+    """Require exact A1 coverage: one meta row per expected ``(ticker, entry_date)``.
+
+    Pure C8.3B surface acceptance check. ``expected_keys`` is the equity
+    superset crossed with the authoritative supported weekly schedule. FAIL on
+    any missing expected key, any unexpected produced key, or any duplicate
+    produced key. ``surface_valid=False`` rows count as processed keys.
+    """
+    name = "expected_meta_keys"
+    missing_cols = [col for col in META_GRAIN_COLUMNS if col not in meta_df.columns]
+    if missing_cols:
+        return ContractCheckResult(
+            name=name,
+            status="FAIL",
+            failures=[f"meta missing grain columns: {missing_cols}"],
+        )
+
+    expected: set[tuple[str, date]] = set()
+    for raw_ticker, raw_entry in expected_keys:
+        ticker = str(raw_ticker).strip().upper()
+        entry = _to_date(raw_entry)
+        if not ticker or entry is None:
+            return ContractCheckResult(
+                name=name,
+                status="FAIL",
+                failures=[
+                    f"invalid expected key: ticker={raw_ticker!r} "
+                    f"entry_date={raw_entry!r}"
+                ],
+            )
+        expected.add((ticker, entry))
+    if not expected:
+        return ContractCheckResult(
+            name=name,
+            status="FAIL",
+            failures=["expected key set is empty"],
+        )
+
+    meta = _normalize_key_columns(meta_df, META_GRAIN_COLUMNS)
+    actual_counts: dict[tuple[str, date], int] = {}
+    for _, row in meta[list(META_GRAIN_COLUMNS)].iterrows():
+        key = (str(row["ticker"]).strip().upper(), row["entry_date"])
+        actual_counts[key] = actual_counts.get(key, 0) + 1
+
+    actual = set(actual_counts)
+    missing_keys = sorted(expected - actual)
+    unexpected_keys = sorted(actual - expected)
+    duplicate_keys = sorted(k for k, n in actual_counts.items() if n > 1)
+
+    result = ContractCheckResult(
+        name=name,
+        status="PASS",
+        metrics={
+            "expected_key_count": len(expected),
+            "actual_key_count": len(actual),
+            "actual_row_count": len(meta_df),
+            "missing_key_count": len(missing_keys),
+            "unexpected_key_count": len(unexpected_keys),
+            "duplicate_key_count": len(duplicate_keys),
+            "grain": list(META_GRAIN_COLUMNS),
+        },
+    )
+    for label, keys in (
+        ("missing expected", missing_keys),
+        ("unexpected", unexpected_keys),
+        ("duplicate", duplicate_keys),
+    ):
+        if keys:
+            result.status = "FAIL"
+            result.failures.append(f"{len(keys)} {label} A1 key(s)")
+            for ticker, entry in keys[:5]:
+                result.examples.append(
+                    f"{label}: ticker={ticker} entry_date={entry.isoformat()}"
+                )
+    return result
+
+
 def check_quote_grain(quotes_df: pd.DataFrame) -> ContractCheckResult:
     """Detect duplicate quote rows at the stable A2 grain."""
     missing = [col for col in QUOTE_GRAIN_COLUMNS if col not in quotes_df.columns]
