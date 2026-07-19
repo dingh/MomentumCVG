@@ -1,47 +1,33 @@
-"""Unit tests for refresh_weekly_inputs CLI skeleton (Sprint 004 C2).
+"""Unit tests for the refresh_weekly_inputs CLI (Sprint 004 C8.3B contract).
 
 Strategy
 --------
 * Load ``scripts/refresh_weekly_inputs.py`` via importlib (not a package).
-* Seed minimal ORATS parquet paths under ``tmp_path`` so ``--as-of`` resolves.
 * Call ``main(argv)`` directly and assert exit codes + stdout/stderr content.
-* No subprocess, no real cache, no manifest writes — matches C2 scope.
+* No subprocess, no real data, no network — C8.3B blocks real execution, so
+  every test also asserts the blocked paths perform no filesystem mutation.
 
-Plan output assertions (Sprint 004 closeout)
---------------------------------------------
-``test_plan_output_includes_required_sections`` locks *current* plan text. Some
-strings are **C2–C7 scaffolding** (e.g. ``deferred to C3–C8``, ``Provisional``)
-and must be **removed from the CLI** at closeout (blocker #13 in
-``docs/agenda/current_sprint.md``). When ``render_plan()`` is cleaned up in C9,
-update this test in the **same commit**: drop TEMP assertions; keep stable
-contract checks (as-of fields, step names, artifact keys).
+Exit-code contract: 0 plan/dry-run · 1 future runtime/gate failure ·
+2 usage/config/corruption/unsupported · 130 interrupt.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import sys
-from datetime import date
 from pathlib import Path
 
 import pytest
 
-from src.data.input_snapshot import (
-    ARTIFACT_LIQUIDITY_PANEL,
-    ARTIFACT_OPTION_SURFACE_META,
-    ARTIFACT_OPTION_SURFACE_QUOTES,
-    ARTIFACT_SPLITS,
-    ARTIFACT_SPOT_PRICES,
-)
-from src.data.trading_day import orats_daily_parquet_path
-
 ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = ROOT / "scripts" / "refresh_weekly_inputs.py"
+
+BUILD_ID = "20260717T220000123456Z_abcdef01"
 
 
 @pytest.fixture
 def cli_module():
-    """Import CLI script as a module so tests can call ``main()`` without a shell."""
+    """Import the CLI script as a module so tests can call ``main()`` directly."""
     spec = importlib.util.spec_from_file_location("refresh_weekly_inputs", CLI_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -51,240 +37,359 @@ def cli_module():
 
 
 @pytest.fixture
-def orats_root(tmp_path: Path) -> Path:
-    """Isolated fake ORATS adjusted root per test."""
-    return tmp_path / "ORATS_Adjusted"
+def snapshots_root(tmp_path: Path) -> Path:
+    root = tmp_path / "snapshots"
+    root.mkdir()
+    return root
 
 
 @pytest.fixture
-def mock_orats_day(orats_root: Path):
-    """Create an empty parquet file for ``day`` so resolver ``Path.is_file`` succeeds."""
-
-    def _seed(day: date) -> None:
-        path = orats_daily_parquet_path(orats_root, day)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"parquet")
-
-    return _seed
-
-
-def _argv(
-    command: str,
-    *,
-    as_of: str = "2026-06-26",
-    orats_root: Path,
-    cache_dir: Path | None = None,
-    extra: list[str] | None = None,
-) -> list[str]:
-    """Build argv list with required global flags and optional extras."""
-    cache = cache_dir or (orats_root.parent / "cache")
-    base = [
-        command,
-        "--as-of",
-        as_of,
-        "--orats-adj-root",
-        str(orats_root),
-        "--cache-dir",
-        str(cache),
-    ]
-    if extra:
-        base.extend(extra)
-    return base
+def raw_root(tmp_path: Path) -> Path:
+    root = tmp_path / "raw"
+    root.mkdir()
+    return root
 
 
 def _run_main(cli_module, argv: list[str], *, capsys) -> tuple[int, str, str]:
-    """Invoke ``main(argv)`` and return (exit_code, stdout, stderr)."""
     exit_code = cli_module.main(argv)
     captured = capsys.readouterr()
     return exit_code, captured.out, captured.err
 
 
-class TestPlanCommand:
-    """``plan`` is the primary C2 success path — provisional output only."""
+def _new_run_argv(
+    snapshots_root: Path, raw_root: Path, *, extra: list[str] | None = None
+) -> list[str]:
+    argv = [
+        "refresh",
+        "--mode",
+        "backfill",
+        "--snapshots-root",
+        str(snapshots_root),
+        "--raw-root",
+        str(raw_root),
+        "--start-date",
+        "2024-01-05",
+        "--as-of",
+        "2024-01-07",
+        "--workers",
+        "4",
+    ]
+    if extra:
+        argv.extend(extra)
+    return argv
 
-    def test_plan_returns_zero(
-        self, cli_module, orats_root, mock_orats_day, capsys
+
+def _assert_no_snapshot_state(snapshots_root: Path, raw_root: Path) -> None:
+    """The blocked/dry paths must create no .building, config, inventory, or lock."""
+    assert list(snapshots_root.iterdir()) == []
+    assert list(raw_root.iterdir()) == []
+
+
+# ── plan ───────────────────────────────────────────────────────────────────────
+
+
+class TestPlan:
+    def test_plan_returns_zero_and_describes_four_stage_cold_plan(
+        self, cli_module, capsys
     ):
-        mock_orats_day(date(2026, 6, 26))
-        code, _out, _err = _run_main(
-            cli_module,
-            _argv("plan", orats_root=orats_root),
-            capsys=capsys,
-        )
+        code, out, _err = _run_main(cli_module, ["plan"], capsys=capsys)
         assert code == 0
+        # Stage order: liquidity → adjusted → spot → surface → atomic publish.
+        for token in (
+            "1. liquidity",
+            "2. adjusted",
+            "3. spot",
+            "4. surface",
+            "atomic publish",
+        ):
+            assert token in out
+        assert out.index("1. liquidity") < out.index("2. adjusted")
+        assert out.index("2. adjusted") < out.index("3. spot")
+        assert out.index("3. spot") < out.index("4. surface")
+        assert out.index("4. surface") < out.index("atomic publish")
 
-    def test_plan_output_includes_required_sections(
-        self, cli_module, orats_root, mock_orats_day, capsys
+    def test_plan_labels_incremental_and_repair_unsupported(self, cli_module, capsys):
+        code, out, _err = _run_main(cli_module, ["plan"], capsys=capsys)
+        assert code == 0
+        assert "'incremental' and 'repair' are execute-unsupported" in out
+        assert "ORATS_API_TOKEN" in out
+
+    def test_plan_echoes_supplied_run_arguments(
+        self, cli_module, snapshots_root, raw_root, capsys
     ):
-        # Permanent contract (keep at closeout): resolved as-of, step names, artifact keys.
-        # TEMP scaffolding (remove assertions when render_plan() is cleaned up — C9):
-        #   "Provisional ...", "deferred to C3–C8", Sprint 005 feature-branch deferral.
-        mock_orats_day(date(2026, 6, 26))
         code, out, _err = _run_main(
             cli_module,
-            _argv("plan", orats_root=orats_root),
+            [
+                "plan",
+                "--mode",
+                "backfill",
+                "--snapshots-root",
+                str(snapshots_root),
+                "--raw-root",
+                str(raw_root),
+                "--start-date",
+                "2024-01-05",
+                "--as-of",
+                "2024-01-07",
+                "--workers",
+                "4",
+            ],
             capsys=capsys,
         )
         assert code == 0
+        assert "2024-01-05" in out
+        assert "2024-01-07" in out
+        assert str(snapshots_root) in out
+        _assert_no_snapshot_state(snapshots_root, raw_root)
 
-        # --- stable operator contract ---
-        assert "as_of_requested:" in out
-        assert "as_of_resolved_trading_day:" in out
-        assert "resolve_candidate_universe_scope" in out
-        assert "build_liquidity_panel" in out
-        for key in (
-            ARTIFACT_SPLITS,
-            ARTIFACT_SPOT_PRICES,
-            ARTIFACT_LIQUIDITY_PANEL,
-            ARTIFACT_OPTION_SURFACE_META,
-            ARTIFACT_OPTION_SURFACE_QUOTES,
-        ):
-            assert f"{key}:" in out
 
-        # --- C2–C7 temporary plan copy (delete this block at Sprint 004 closeout) ---
-        assert "Provisional high-level Stage A plan:" in out
-        assert "deferred to C3–C8" in out
-        assert "Feature branch (straddle history, build_features, A4): deferred to Sprint 005" in out
+# ── refresh --dry-run ──────────────────────────────────────────────────────────
 
 
 class TestRefreshDryRun:
-    """``refresh --dry-run`` must mirror ``plan`` and never execute subprocesses."""
-
-    def test_refresh_dry_run_returns_zero_and_includes_banner(
-        self, cli_module, orats_root, mock_orats_day, capsys
+    def test_dry_run_returns_zero_with_banner_and_no_mutation(
+        self, cli_module, snapshots_root, raw_root, capsys
     ):
-        mock_orats_day(date(2026, 6, 26))
         code, out, _err = _run_main(
             cli_module,
-            _argv("refresh", orats_root=orats_root, extra=["--dry-run"]),
+            _new_run_argv(snapshots_root, raw_root, extra=["--dry-run"]),
             capsys=capsys,
         )
         assert code == 0
-        assert "=== Weekly input refresh plan (no execution) ===" in out
-        assert "DRY-RUN: no subprocesses executed" in out
+        assert cli_module.DRY_RUN_BANNER in out
+        assert "atomic publish" in out
+        _assert_no_snapshot_state(snapshots_root, raw_root)
 
-    def test_refresh_dry_run_does_not_import_subprocess(self, cli_module):
-        # C2 contract: no subprocess module — real wiring is C8.
+    def test_bare_dry_run_prints_plan_without_required_flags(self, cli_module, capsys):
+        code, out, _err = _run_main(
+            cli_module, ["refresh", "--dry-run"], capsys=capsys
+        )
+        assert code == 0
+        assert "1. liquidity" in out
+
+    def test_dry_run_does_not_import_producers_or_orchestrator(self, cli_module):
+        # The CLI must not be able to scan, lock, or execute in this commit.
         assert "subprocess" not in cli_module.__dict__
+        assert "snapshot_orchestrator" not in cli_module.__dict__
+        assert not hasattr(cli_module, "prepare_new_backfill_run")
 
 
-class TestStubCommands:
-    """Not-implemented commands return exit 2 (HD-C2-3) with commit hint in stderr."""
+# ── refresh new-run contract ───────────────────────────────────────────────────
 
-    def test_validate_returns_two_and_mentions_c3(
-        self, cli_module, orats_root, mock_orats_day, capsys
+
+class TestRefreshNewRunContract:
+    def test_valid_backfill_is_blocked_with_exit_two_and_no_state(
+        self, cli_module, snapshots_root, raw_root, capsys
     ):
-        mock_orats_day(date(2026, 6, 26))
+        code, _out, err = _run_main(
+            cli_module, _new_run_argv(snapshots_root, raw_root), capsys=capsys
+        )
+        assert code == 2
+        assert "deferred to the next C8.3B commit" in err
+        _assert_no_snapshot_state(snapshots_root, raw_root)
+
+    def test_backfill_requires_all_identity_flags(
+        self, cli_module, snapshots_root, capsys
+    ):
         code, _out, err = _run_main(
             cli_module,
-            _argv("validate", orats_root=orats_root),
+            [
+                "refresh",
+                "--mode",
+                "backfill",
+                "--snapshots-root",
+                str(snapshots_root),
+            ],
             capsys=capsys,
         )
         assert code == 2
-        assert "C3" in err
+        for flag in ("--raw-root", "--start-date", "--as-of"):
+            assert flag in err
 
-    def test_split_audit_returns_two_and_points_to_standalone_audit(
-        self, cli_module, orats_root, mock_orats_day, capsys
+    def test_refresh_without_mode_or_resume_is_usage_error(self, cli_module, capsys):
+        code, _out, err = _run_main(cli_module, ["refresh"], capsys=capsys)
+        assert code == 2
+        assert "--mode backfill" in err
+
+    @pytest.mark.parametrize("mode", ["incremental", "repair"])
+    def test_incremental_and_repair_remain_unsupported(
+        self, cli_module, snapshots_root, raw_root, mode, capsys
     ):
-        mock_orats_day(date(2026, 6, 26))
+        argv = _new_run_argv(snapshots_root, raw_root)
+        argv[argv.index("backfill")] = mode
+        code, _out, err = _run_main(cli_module, argv, capsys=capsys)
+        assert code == 2
+        assert "deferred" in err
+        assert "backfill" in err
+        _assert_no_snapshot_state(snapshots_root, raw_root)
+
+    @pytest.mark.parametrize("workers", ["0", "-3"])
+    def test_workers_must_be_positive(
+        self, cli_module, snapshots_root, raw_root, workers, capsys
+    ):
+        argv = _new_run_argv(snapshots_root, raw_root)
+        argv[argv.index("--workers") + 1] = workers
+        code, _out, err = _run_main(cli_module, argv, capsys=capsys)
+        assert code == 2
+        assert "--workers must be a positive integer" in err
+
+    def test_invalid_iso_date_is_usage_error(
+        self, cli_module, snapshots_root, raw_root, capsys
+    ):
+        argv = _new_run_argv(snapshots_root, raw_root)
+        argv[argv.index("--as-of") + 1] = "not-a-date"
+        code, _out, _err = _run_main(cli_module, argv, capsys=capsys)
+        assert code == 2
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            "--copy-source",
+            "--evidence-id",
+            "--scope",
+            "--skip-stage",
+            "--skip-surface",
+            "--skip-splits",
+            "--sample-tickers",
+            "--security-master",
+            "--token",
+            "--orats-token",
+        ],
+    )
+    def test_forbidden_flags_are_not_exposed(
+        self, cli_module, snapshots_root, raw_root, flag, capsys
+    ):
+        argv = _new_run_argv(snapshots_root, raw_root, extra=[flag, "x"])
+        code, _out, _err = _run_main(cli_module, argv, capsys=capsys)
+        assert code == 2  # argparse rejects unknown flags
+        _assert_no_snapshot_state(snapshots_root, raw_root)
+
+
+# ── refresh resume contract ────────────────────────────────────────────────────
+
+
+class TestRefreshResumeContract:
+    def test_resume_shape_is_validated_then_blocked_without_state(
+        self, cli_module, snapshots_root, raw_root, capsys
+    ):
         code, _out, err = _run_main(
             cli_module,
-            _argv("split-audit", orats_root=orats_root),
+            [
+                "refresh",
+                "--resume",
+                BUILD_ID,
+                "--snapshots-root",
+                str(snapshots_root),
+                "--workers",
+                "8",
+            ],
             capsys=capsys,
         )
         assert code == 2
-        assert "C8" in err
+        assert "deferred to the next C8.3B commit" in err
+        _assert_no_snapshot_state(snapshots_root, raw_root)
+
+    @pytest.mark.parametrize(
+        "identity_args",
+        [
+            ["--mode", "backfill"],
+            ["--raw-root", "X:/raw"],
+            ["--start-date", "2024-01-05"],
+            ["--as-of", "2024-01-07"],
+        ],
+    )
+    def test_resume_rejects_identity_defining_flags(
+        self, cli_module, snapshots_root, identity_args, capsys
+    ):
+        code, _out, err = _run_main(
+            cli_module,
+            [
+                "refresh",
+                "--resume",
+                BUILD_ID,
+                "--snapshots-root",
+                str(snapshots_root),
+                *identity_args,
+            ],
+            capsys=capsys,
+        )
+        assert code == 2
+        assert "identity-defining flags" in err
+        assert identity_args[0] in err
+
+    def test_resume_allows_different_workers(self, cli_module, snapshots_root, capsys):
+        # --workers is not identity-defining; the failure is the blocked
+        # execution, not a flag rejection.
+        code, _out, err = _run_main(
+            cli_module,
+            [
+                "refresh",
+                "--resume",
+                BUILD_ID,
+                "--snapshots-root",
+                str(snapshots_root),
+                "--workers",
+                "16",
+            ],
+            capsys=capsys,
+        )
+        assert code == 2
+        assert "identity-defining" not in err
+        assert "deferred" in err
+
+    def test_resume_requires_snapshots_root(self, cli_module, capsys):
+        code, _out, err = _run_main(
+            cli_module, ["refresh", "--resume", BUILD_ID], capsys=capsys
+        )
+        assert code == 2
+        assert "--snapshots-root" in err
+
+
+# ── blocked subcommands ────────────────────────────────────────────────────────
+
+
+class TestBlockedSubcommands:
+    def test_validate_is_blocked_and_points_to_standalone_audits(
+        self, cli_module, capsys
+    ):
+        code, _out, err = _run_main(cli_module, ["validate"], capsys=capsys)
+        assert code == 2
         assert "audit_adjusted_liquid" in err
 
-    def test_surface_audit_returns_two_and_mentions_c6(
-        self, cli_module, orats_root, mock_orats_day, capsys
+    def test_split_audit_is_blocked_and_points_to_standalone_audit(
+        self, cli_module, capsys
     ):
-        mock_orats_day(date(2026, 6, 26))
-        code, _out, err = _run_main(
-            cli_module,
-            _argv("surface-audit", orats_root=orats_root),
-            capsys=capsys,
-        )
+        code, _out, err = _run_main(cli_module, ["split-audit"], capsys=capsys)
         assert code == 2
-        assert "C6" in err
+        assert "audit_adjusted_liquid" in err
 
-    def test_refresh_without_dry_run_returns_two_and_mentions_c8(
-        self, cli_module, orats_root, mock_orats_day, capsys
+    def test_surface_audit_is_blocked_and_points_to_standalone_audit(
+        self, cli_module, capsys
     ):
-        mock_orats_day(date(2026, 6, 26))
-        code, _out, err = _run_main(
-            cli_module,
-            _argv("refresh", orats_root=orats_root),
-            capsys=capsys,
-        )
+        code, _out, err = _run_main(cli_module, ["surface-audit"], capsys=capsys)
         assert code == 2
-        assert "C8" in err
+        assert "audit_option_surface_artifacts" in err
 
 
-class TestAsOfErrors:
-    """Bad or unresolvable ``--as-of`` must surface as exit 2, not success."""
+# ── exit-code mapping ──────────────────────────────────────────────────────────
 
-    def test_invalid_as_of_returns_two(self, cli_module, orats_root, capsys):
-        code, _out, _err = _run_main(
-            cli_module,
-            _argv("plan", as_of="not-a-date", orats_root=orats_root),
-            capsys=capsys,
-        )
+
+class TestExitCodes:
+    def test_missing_subcommand_is_usage_error(self, cli_module, capsys):
+        code, _out, _err = _run_main(cli_module, [], capsys=capsys)
         assert code == 2
 
-    def test_missing_as_of_returns_two(self, cli_module, capsys):
-        # argparse required-flag error → SystemExit(2) caught in main().
-        code, _out, _err = _run_main(
-            cli_module,
-            ["plan", "--orats-adj-root", "C:/tmp/orats", "--cache-dir", "C:/tmp/cache"],
-            capsys=capsys,
-        )
-        assert code == 2
+    def test_keyboard_interrupt_maps_to_130(self, cli_module, monkeypatch, capsys):
+        def _interrupt(_args):
+            raise KeyboardInterrupt
 
-    def test_unresolvable_orats_day_returns_two(
-        self, cli_module, orats_root, capsys
-    ):
-        # Empty orats_root: no seeded parquet → resolver ValueError → stderr + exit 2.
-        code, _out, err = _run_main(
-            cli_module,
-            _argv("plan", orats_root=orats_root),
-            capsys=capsys,
-        )
-        assert code == 2
-        assert "No ORATS adjusted daily parquet found" in err
+        monkeypatch.setattr(cli_module, "cmd_plan", _interrupt)
+        code, _out, err = _run_main(cli_module, ["plan"], capsys=capsys)
+        assert code == 130
+        assert "interrupted" in err
 
-
-class TestModeWarnings:
-    """C2 displays mode gaps as WARN in plan stdout but still exits 0."""
-
-    def test_backfill_without_dates_returns_zero_and_warns(
-        self, cli_module, orats_root, mock_orats_day, capsys
-    ):
-        mock_orats_day(date(2026, 6, 26))
-        code, out, _err = _run_main(
-            cli_module,
-            _argv(
-                "plan",
-                orats_root=orats_root,
-                extra=["--mode", "backfill"],
-            ),
-            capsys=capsys,
-        )
-        assert code == 0
-        assert "WARN: backfill date-window enforcement deferred until refresh execution (C8)" in out
-
-    def test_repair_without_sample_tickers_returns_zero_and_warns(
-        self, cli_module, orats_root, mock_orats_day, capsys
-    ):
-        mock_orats_day(date(2026, 6, 26))
-        code, out, _err = _run_main(
-            cli_module,
-            _argv(
-                "plan",
-                orats_root=orats_root,
-                extra=["--mode", "repair"],
-            ),
-            capsys=capsys,
-        )
-        assert code == 0
-        assert "WARN: repair ticker-scope enforcement deferred until refresh execution (C8)" in out
+    def test_exit_code_constants(self, cli_module):
+        assert cli_module.EXIT_OK == 0
+        assert cli_module.EXIT_RUNTIME == 1
+        assert cli_module.EXIT_USAGE == 2
+        assert cli_module.EXIT_INTERRUPT == 130

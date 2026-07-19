@@ -19,9 +19,12 @@ from src.data.snapshot_foundation import (
     GATE_PASS,
     GATE_WARN,
     GateResult,
+    SiblingBuildLock,
     SnapshotLifecycleError,
+    SnapshotLockError,
     SnapshotPathError,
     SNAPSHOT_BUILD_ID_RE,
+    sibling_lock_path,
     adjusted_inventory_digest,
     canonical_json_bytes,
     create_fresh_staging_root,
@@ -455,3 +458,58 @@ def test_spot_summary_reconciliation_schema_bad_types_fail_clearly():
     res = _reconcile(bad_status, source, output, resolved)
     assert res.status == GATE_FAIL
     assert any("producer_status" in f for f in res.failures)
+
+
+# ── 1.3b sibling snapshot build lock (C8.3B) ───────────────────────────────────
+
+_LOCK_BUILD_ID = "20260717T220000123456Z_abcdef01"
+
+
+def test_sibling_lock_path_is_sibling_of_building(tmp_path):
+    path = sibling_lock_path(tmp_path, _LOCK_BUILD_ID)
+    assert path == tmp_path / f"{_LOCK_BUILD_ID}.lock"
+    building = derive_snapshot_roots(tmp_path, _LOCK_BUILD_ID).building
+    # The lock never lives inside the candidate snapshot root.
+    assert building not in path.parents
+
+
+def test_exclusive_sibling_lock_blocks_second_holder(tmp_path):
+    first = SiblingBuildLock(tmp_path, _LOCK_BUILD_ID)
+    second = SiblingBuildLock(tmp_path, _LOCK_BUILD_ID)
+    with first:
+        # Held for the whole context: a second holder must fail clearly.
+        assert first.held
+        with pytest.raises(SnapshotLockError, match="another process holds"):
+            second.acquire()
+        assert first.held  # still held after the contention attempt
+    assert not first.held
+
+
+def test_lock_release_allows_new_holder_and_leaves_sibling_file(tmp_path):
+    lock_file = sibling_lock_path(tmp_path, _LOCK_BUILD_ID)
+    with SiblingBuildLock(tmp_path, _LOCK_BUILD_ID):
+        assert lock_file.exists()
+    # Normal release closes the handle but never moves or deletes the file.
+    assert lock_file.exists()
+    with SiblingBuildLock(tmp_path, _LOCK_BUILD_ID) as again:
+        assert again.held
+    assert lock_file.exists()
+
+
+def test_lock_release_leaves_no_lock_inside_snapshot_roots(tmp_path):
+    roots = create_fresh_staging_root(tmp_path, _LOCK_BUILD_ID)
+    with SiblingBuildLock(tmp_path, _LOCK_BUILD_ID):
+        pass
+    assert list(roots.building.rglob("*.lock")) == []
+    assert sibling_lock_path(tmp_path, _LOCK_BUILD_ID).exists()
+
+
+def test_lock_double_acquire_on_same_object_fails(tmp_path):
+    lock = SiblingBuildLock(tmp_path, _LOCK_BUILD_ID)
+    lock.acquire()
+    try:
+        with pytest.raises(SnapshotLockError, match="already held"):
+            lock.acquire()
+    finally:
+        lock.release()
+    lock.release()  # idempotent release is safe

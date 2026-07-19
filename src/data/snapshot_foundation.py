@@ -26,6 +26,11 @@ import json
 import os
 import re
 import uuid
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -51,6 +56,10 @@ class SnapshotPathError(SnapshotFoundationError):
 
 class AdjustedInventoryError(SnapshotFoundationError):
     """Raised for adjusted-inventory resolution failures."""
+
+
+class SnapshotLockError(SnapshotFoundationError):
+    """Raised when the sibling snapshot build lock cannot be acquired/used."""
 
 
 # ── 1.1 Canonical serialization and digests ───────────────────────────────────
@@ -203,6 +212,87 @@ def validate_same_volume_publication(
             "staging and final roots must be on the same volume for "
             f"publication: {building} vs {final}"
         )
+
+
+# ── 1.3b Sibling snapshot build lock (C8.3B) ──────────────────────────────────
+
+
+def sibling_lock_path(snapshots_root: Path | str, build_id: str) -> Path:
+    """Path of the sibling build lock: ``<snapshots-root>/<BUILD_ID>.lock``.
+
+    The lock file is a *sibling* of ``<BUILD_ID>.building`` — never inside it —
+    so it survives (and never travels with) atomic publication.
+    """
+    return Path(snapshots_root) / f"{build_id}.lock"
+
+
+class SiblingBuildLock:
+    """OS-level exclusive lock on the sibling ``<BUILD_ID>.lock`` file.
+
+    Semantics:
+
+    * a real OS-level exclusive lock (``msvcrt.locking`` on Windows,
+      ``fcntl.flock`` elsewhere) held on an open file handle for the entire
+      lock lifetime;
+    * acquisition fails immediately and clearly when another holder exists;
+    * process exit or crash releases the OS lock automatically;
+    * normal release unlocks and closes the handle but never moves or deletes
+      the sibling lock file;
+    * no stale-lock cleanup, and ownership is never inferred from mere file
+      existence — only from holding the OS lock.
+
+    Usable as a context manager or via explicit ``acquire()`` / ``release()``
+    so later orchestration can hold it through atomic publication.
+    """
+
+    def __init__(self, snapshots_root: Path | str, build_id: str) -> None:
+        self.path = sibling_lock_path(snapshots_root, build_id)
+        self._handle = None
+
+    @property
+    def held(self) -> bool:
+        return self._handle is not None
+
+    def acquire(self) -> "SiblingBuildLock":
+        if self._handle is not None:
+            raise SnapshotLockError(f"lock already held by this object: {self.path}")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        # "a+b" creates the file when missing without truncating an existing
+        # file that another process may currently hold locked.
+        handle = open(self.path, "a+b")
+        try:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            handle.close()
+            raise SnapshotLockError(
+                f"another process holds the snapshot build lock: {self.path}"
+            ) from exc
+        self._handle = handle
+        return self
+
+    def release(self) -> None:
+        if self._handle is None:
+            return
+        handle, self._handle = self._handle, None
+        try:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+    def __enter__(self) -> "SiblingBuildLock":
+        return self.acquire()
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        self.release()
+        return False
 
 
 # ── 1.4 Root-relative path safety ─────────────────────────────────────────────
