@@ -512,7 +512,13 @@ def test_resume_rejects_tampered_inventory(snapshots_root, raw_root):
 # ── completion markers and stage-boundary resume ───────────────────────────────
 
 
-def _write_liquidity_artifacts(building: Path, tickers: list[str] = ("AAA", "BBB")):
+def _write_liquidity_artifacts(
+    building: Path,
+    tickers: list[str] = ("AAA", "BBB"),
+    *,
+    panel_month: date = date(2023, 12, 29),
+    panel_eligible: bool = True,
+):
     liquid_dir = building / "input" / "liquidity"
     liquid_dir.mkdir(parents=True, exist_ok=True)
     reports = building / "reports" / "liquidity"
@@ -525,10 +531,20 @@ def _write_liquidity_artifacts(building: Path, tickers: list[str] = ("AAA", "BBB
         "ticker_liquidity_panel.parquet",
     ):
         if name == "ticker_liquidity_panel.parquet":
+            n = len(tickers)
             pd.DataFrame(
                 {
                     "ticker": list(tickers),
-                    "month_date": [date(2023, 12, 29)] * len(tickers),
+                    "month_date": [panel_month] * n,
+                    "atm_straddle_dollar_vol": (
+                        [100.0 - i for i in range(n)] if panel_eligible else [None] * n
+                    ),
+                    "atm_spread_pct": (
+                        [0.01 + 0.001 * i for i in range(n)]
+                        if panel_eligible
+                        else [None] * n
+                    ),
+                    "has_valid_atm_pair": [panel_eligible] * n,
                 }
             ).to_parquet(liquid_dir / name, index=False)
         else:
@@ -1157,13 +1173,21 @@ def _install_finalizable(
     empty_checks: bool = False,
     adjusted_days: list[date] | None = None,
     spot_days: list[date] | None = None,
+    panel_month: date = date(2023, 12, 29),
+    panel_eligible: bool = True,
 ):
     building = prepared.roots.building
     physical = [date.fromisoformat(d) for d in prepared.run_config["physical_raw_dates"]]
     resolved = [date.fromisoformat(d) for d in prepared.run_config["resolved_trading_dates"]]
     if surface_entries is None:
         surface_entries = [resolved[-1]]
-    _install_marker(prepared, "liquidity", _write_liquidity_artifacts(building))
+    _install_marker(
+        prepared,
+        "liquidity",
+        _write_liquidity_artifacts(
+            building, panel_month=panel_month, panel_eligible=panel_eligible
+        ),
+    )
     _install_marker(
         prepared,
         "adjusted",
@@ -1338,3 +1362,29 @@ def test_finalize_rerun_only_touches_final_and_manifests(snapshots_root, raw_roo
     assert stable_before == stable_after
     assert any(rel.startswith("manifests/") for rel in after)
     assert any(rel.startswith("reports/final/") for rel in after)
+
+
+def _assert_no_final_outputs(building: Path) -> None:
+    assert list((building / "manifests").glob("input_snapshot_*.json")) == []
+    assert not (building / "reports/final/final_validation.json").is_file()
+
+
+def test_finalize_rejects_ineligible_prior_pit_snapshot(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    _install_finalizable(prepared, panel_eligible=False)
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        with pytest.raises(RunConfigError, match="no feature-ready interval"):
+            finalize_candidate_snapshot(prepared, lock)
+    _assert_no_final_outputs(prepared.roots.building)
+
+
+def test_finalize_rejects_missing_strict_prior_pit_snapshot(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    # Same-day panel date is not a strict prior for the supported entry.
+    _install_finalizable(prepared, panel_month=FRI)
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        with pytest.raises(RunConfigError, match="no feature-ready interval"):
+            finalize_candidate_snapshot(prepared, lock)
+    _assert_no_final_outputs(prepared.roots.building)

@@ -53,6 +53,7 @@ from src.data.input_snapshot import (
     read_manifest,
     write_manifest,
 )
+from src.data.pit_universe_audit import compute_reference_universe
 from src.data.security_types import classification_digest
 from src.data.snapshot_foundation import (
     SNAPSHOT_BUILD_ID_RE,
@@ -1615,6 +1616,7 @@ def _select_feature_ready(
     building: Path,
     markers: Mapping[str, Mapping[str, Any]],
     universe: list[str],
+    config: Mapping[str, Any],
 ) -> tuple[date | None, date | None, int]:
     schedule = [
         date.fromisoformat(d)
@@ -1623,11 +1625,9 @@ def _select_feature_ready(
     panel = pd.read_parquet(
         building / "input" / "liquidity" / "ticker_liquidity_panel.parquet"
     )
-    if "month_date" not in panel.columns:
-        raise RunConfigError(
-            "liquidity panel missing month_date for strict-prior readiness"
-        )
-    prior_months = {pd.Timestamp(m).date() for m in panel["month_date"] if pd.notna(m)}
+    c4 = config["c4_params"]
+    dvol_top_pct = float(c4["dvol_top_pct"])
+    spread_bot_pct = float(c4["spread_bot_pct"])
     adjusted_set, spot_set = set(_adjusted_dates(building)), set(_spot_dates(building))
     meta = pd.read_parquet(
         building / markers["surface"]["evidence"]["meta_path"],
@@ -1640,10 +1640,19 @@ def _select_feature_ready(
     universe_set = set(universe)
     ready: set[date] = set()
     for entry in schedule:
+        pit = compute_reference_universe(
+            entry, panel, dvol_top_pct, spread_bot_pct
+        )
+        resolved = pit.resolved_snapshot_date
+        pit_ok = (
+            resolved is not None
+            and pd.Timestamp(resolved).date() < entry
+            and pit.selected_count > 0
+        )
         expiries = {x for _t, e, x in rows if e == entry}
         present = {t for t, e, _x in rows if e == entry}
         if (
-            any(m < entry for m in prior_months)
+            pit_ok
             and expiries
             and entry in adjusted_set
             and entry in spot_set
@@ -1728,8 +1737,13 @@ def finalize_candidate_snapshot(
         )
     universe, universe_digest = _cross_check_identity(building, config, markers)
     ready_start, ready_end, ready_count = _select_feature_ready(
-        building, markers, universe
+        building, markers, universe, config
     )
+    if ready_count == 0 or ready_start is None or ready_end is None:
+        raise RunConfigError(
+            "no feature-ready interval: no contiguous Surface-supported "
+            "entry dates satisfy strict-prior PIT membership and input coverage"
+        )
 
     for rel in ("reports/final", "manifests"):
         path = building / rel
