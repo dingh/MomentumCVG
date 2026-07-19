@@ -37,6 +37,10 @@ DEFAULT_EARNINGS_PATH = DEFAULT_CACHE_DIR / "earnings_hist.parquet"
 _BASE_URL = "https://api.orats.io/datav2/hist"
 
 
+class CorporateActionsFetchError(RuntimeError):
+    """Raised when an ORATS corporate-actions request cannot be trusted."""
+
+
 class OratsCorporateActionsFetcher:
     """
     Fetch earnings + split history from the ORATS datav2 historical endpoints.
@@ -78,14 +82,30 @@ class OratsCorporateActionsFetcher:
 
     # ── HTTP layer ─────────────────────────────────────────────────────────────
 
-    def _get(self, url: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _get(self, url: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """GET with retries + exponential backoff (handles 429 / 5xx)."""
+        ticker = params.get("ticker", "<unknown>")
         for attempt in range(self.max_retries):
             try:
                 r = self.session.get(url, params=params, timeout=self.timeout)
 
                 if r.status_code == 200:
-                    return r.json()
+                    try:
+                        payload = r.json()
+                    except ValueError as exc:
+                        logger.error(
+                            "Malformed JSON response for ticker=%s endpoint=%s "
+                            "attempt=%d/%d status=%s",
+                            ticker, url, attempt + 1, self.max_retries, r.status_code,
+                        )
+                        raise CorporateActionsFetchError(
+                            f"Malformed JSON response for ticker={ticker}"
+                        ) from exc
+                    if not isinstance(payload, dict):
+                        raise CorporateActionsFetchError(
+                            f"Malformed response object for ticker={ticker}"
+                        )
+                    return payload
 
                 if r.status_code in (429, 500, 502, 503, 504):
                     backoff = min(60.0, (2 ** attempt) * 1.0)
@@ -96,29 +116,41 @@ class OratsCorporateActionsFetcher:
                         except ValueError:
                             pass
                     logger.warning(
-                        "HTTP %s — backing off %.1fs (attempt %d/%d)",
-                        r.status_code, backoff, attempt + 1, self.max_retries,
+                        "HTTP %s for ticker=%s endpoint=%s — backing off %.1fs "
+                        "(attempt %d/%d)",
+                        r.status_code, ticker, url, backoff,
+                        attempt + 1, self.max_retries,
                     )
                     time.sleep(backoff)
                     continue
 
                 # Non-retryable error
                 logger.error(
-                    "HTTP %s for %s params=%s body=%s",
-                    r.status_code, url, params, r.text[:200],
+                    "HTTP %s for ticker=%s endpoint=%s attempt=%d/%d",
+                    r.status_code, ticker, url, attempt + 1, self.max_retries,
                 )
-                return None
+                raise CorporateActionsFetchError(
+                    f"HTTP {r.status_code} fetching corporate actions for "
+                    f"ticker={ticker}"
+                )
 
             except requests.RequestException as exc:
                 backoff = min(60.0, (2 ** attempt) * 1.0)
                 logger.warning(
-                    "Request error: %s — backing off %.1fs (attempt %d/%d)",
-                    exc, backoff, attempt + 1, self.max_retries,
+                    "Request error %s for ticker=%s endpoint=%s — backing off "
+                    "%.1fs (attempt %d/%d)",
+                    type(exc).__name__, ticker, url, backoff,
+                    attempt + 1, self.max_retries,
                 )
                 time.sleep(backoff)
 
-        logger.error("Failed after %d retries: %s params=%s", self.max_retries, url, params)
-        return None
+        logger.error(
+            "Failed after %d attempts for ticker=%s endpoint=%s",
+            self.max_retries, ticker, url,
+        )
+        raise CorporateActionsFetchError(
+            f"Request failed after {self.max_retries} attempts for ticker={ticker}"
+        )
 
     # ── per-ticker fetchers ────────────────────────────────────────────────────
 
@@ -130,7 +162,12 @@ class OratsCorporateActionsFetcher:
         url = f"{_BASE_URL}/splits"
         payload = self._get(url, {"token": self.token, "ticker": ticker})
 
-        if not payload or "data" not in payload or not payload["data"]:
+        if "data" not in payload or not isinstance(payload["data"], list):
+            raise CorporateActionsFetchError(
+                f"Malformed splits response for ticker={ticker}: "
+                "expected list field 'data'"
+            )
+        if not payload["data"]:
             return pd.DataFrame()
 
         rows = [
@@ -235,6 +272,7 @@ class OratsCorporateActionsFetcher:
 
         except KeyboardInterrupt:
             logger.warning("Interrupted — saving checkpoint before exit.")
+            raise
 
         finally:
             combined = (

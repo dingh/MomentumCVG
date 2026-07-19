@@ -45,6 +45,7 @@ import argparse
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -155,6 +156,25 @@ def _checkpoint_path_for(output_path: Path, scoped: bool) -> Path:
     if not scoped:
         return output_path
     return output_path.with_name(f"{output_path.stem}.checkpoint{output_path.suffix}")
+
+
+def _write_parquet_atomically(df: pd.DataFrame, output_path: Path) -> None:
+    """Write a parquet beside its destination, then atomically replace it."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=output_path.parent,
+        prefix=f".{output_path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as tmp:
+        temp_path = Path(tmp.name)
+
+    try:
+        df.to_parquet(temp_path, index=False)
+        os.replace(temp_path, output_path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
 
 
 def _normalize_split_tickers(df: pd.DataFrame) -> pd.DataFrame:
@@ -389,8 +409,7 @@ def main(argv: list[str] | None = None) -> None:
     cleaned = _report_and_validate(splits_df, fetch_universe, scoped, output_path)
 
     # ── write validated output ────────────────────────────────────────────────
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    cleaned.to_parquet(output_path, index=False)
+    _write_parquet_atomically(cleaned, output_path)
     logger.info("Done. Saved %d rows to %s", len(cleaned), output_path)
 
 

@@ -435,3 +435,37 @@ def test_missing_token_fails_fast(cli_module, fetcher_spy):
     assert "--token" in message
     assert "ORATS_API_TOKEN" in message
     assert fetcher_spy.instances == []
+
+
+def test_failed_final_write_does_not_replace_existing_output(
+    cli_module, fetcher_spy, monkeypatch, tmp_path
+):
+    universe = _write_universe_csv(tmp_path / "liquid_tickers.csv", ["AAA"])
+    out_path = tmp_path / "splits_hist_liquid.parquet"
+    original = _split_df(
+        [{"ticker": "OLD", "split_date": date(2019, 1, 1), "divisor": 2.0}]
+    )
+    original.to_parquet(out_path, index=False)
+    original_bytes = out_path.read_bytes()
+    fetcher_spy.set_result(
+        _split_df(
+            [{"ticker": "AAA", "split_date": date(2020, 1, 1), "divisor": 2.0}]
+        )
+    )
+
+    def fail_write(_self, _path, **_kwargs):
+        raise OSError("mocked parquet write failure")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", fail_write)
+
+    with pytest.raises(OSError, match="mocked parquet write failure"):
+        cli_module.main(
+            [
+                "--ticker-universe", str(universe),
+                "--out", str(out_path),
+                "--token", "FAKE",
+            ]
+        )
+
+    assert out_path.read_bytes() == original_bytes
+    assert list(tmp_path.glob(f".{out_path.name}.*.tmp")) == []
