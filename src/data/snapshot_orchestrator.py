@@ -1,7 +1,6 @@
-"""Resumable cold-backfill snapshot orchestration foundation (Sprint 004 C8.3B).
+"""Resumable cold-backfill snapshot orchestration (Sprint 004 C8.3B).
 
-This module holds the *foundation* half of the C8.3B orchestrator as direct
-functions and small dataclasses:
+This module holds direct functions and small dataclasses for:
 
 * frozen raw ORATS ZIP inventory discovery (central-directory evidence, no
   full-byte hashing of large archives);
@@ -9,11 +8,12 @@ functions and small dataclasses:
   validation with a self-verifying ``run_config_id``;
 * new-run preparation (fresh ``<BUILD_ID>.building`` root plus the owned
   directory layout) and resume-open of an explicitly named ``.building`` run;
-* raw-inventory rescan with digest-drift rejection on resume.
+* raw-inventory rescan with digest-drift rejection on resume;
+* four completion markers and stage-boundary resume over the fixed order
+  liquidity → adjusted → spot → surface.
 
-The four producer stages (liquidity, adjusted, spot, surface), completion
-markers, cross-stage validation, manifest construction, and atomic
-publication are deferred to the next C8.3B commit. There is no framework,
+Final cross-stage validation, manifest construction, locking acquisition,
+CLI execution, and atomic publication remain deferred. There is no framework,
 DAG, plugin, receipt, or state-machine abstraction here — and no ``.failed``
 lifecycle.
 
@@ -25,24 +25,36 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import uuid
 import zipfile
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
+import pandas as pd
+
+from src.data.security_types import classification_digest
 from src.data.snapshot_foundation import (
     SNAPSHOT_BUILD_ID_RE,
+    SiblingBuildLock,
     SnapshotFoundationError,
+    SnapshotLockError,
+    SnapshotPathError,
     SnapshotRoots,
+    adjusted_inventory_digest,
     canonical_json_bytes,
     create_fresh_staging_root,
     derive_snapshot_roots,
     digest_json,
     generate_snapshot_build_id,
+    resolve_under_root,
+    sha256_file,
+    ticker_date_keys_digest,
 )
+from src.data.ticker_universe import load_ticker_universe
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -852,3 +864,562 @@ def open_resume_run(
         run_config=config,
         inventory=inventory,
     )
+
+
+# ── Completion markers and stage-boundary resume ───────────────────────────────
+
+
+STAGE_ORDER: tuple[str, ...] = ("liquidity", "adjusted", "spot", "surface")
+STAGE_CONTRACT_VERSION = "1"
+
+STAGE_OWNED_DIRS: dict[str, tuple[str, ...]] = {
+    "liquidity": ("work/liquidity", "input/liquidity", "reports/liquidity"),
+    "adjusted": ("work/adjusted", "input/adjusted_liquid", "reports/adjusted"),
+    "spot": ("work/spot", "cache/spot", "reports/spot"),
+    "surface": ("work/surface", "cache/surface", "reports/surface"),
+}
+
+_LIQUIDITY_ARTIFACTS = (
+    "input/liquidity/ticker_liquidity_daily_observations.parquet",
+    "input/liquidity/ticker_liquidity_weekly_observations.parquet",
+    "input/liquidity/ticker_liquidity_panel.parquet",
+    "input/liquidity/liquid_tickers.csv",
+    "input/liquidity/security_classification.parquet",
+)
+_LIQUIDITY_REPORT = "reports/liquidity/pit_universe_audit.md"
+_ADJUSTED_SPLITS = "input/adjusted_liquid/splits_hist_liquid.parquet"
+_ADJUSTED_REPORT = "reports/adjusted/adjusted_liquid_audit.md"
+_SPOT_OUTPUT = "cache/spot/spot_prices_adjusted.parquet"
+_SPOT_SUMMARY = "cache/spot/spot_summary.json"
+_SPOT_REPORT = "reports/spot/gate_spot_reconciliation.json"
+_SURFACE_REPORT = "reports/surface/surface_contract_checks.json"
+
+_MARKER_REQUIRED_FIELDS = (
+    "stage",
+    "stage_contract_version",
+    "run_config_id",
+    "stage_accepted",
+    "completed_at_utc",
+    "producer_repo_sha",
+    "gate_status",
+    "required_paths",
+    "accepted_warnings",
+    "evidence",
+)
+
+_SPOT_WARN_MARKERS = (
+    "ambiguous ticker-date exclusion(s) present",
+    "inconsistent repeated spot values",
+)
+_SPOT_WARN_REASON = "reconciled_ambiguous_ticker_date_exclusion"
+_SURFACE_WARN_REASON = "informational_invalid_meta_with_quotes"
+_SURFACE_WARN_MARKER = "surface_valid=False metadata row(s) have quote rows"
+
+
+@dataclass(frozen=True)
+class StageResumeState:
+    """Result of inspecting completion markers in fixed stage order."""
+
+    completed_stages: tuple[str, ...]
+    next_stage: str | None
+    validated_markers: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+def stage_marker_path(building_root: Path | str, stage: str) -> Path:
+    """Return ``markers/<stage>.done.json`` under the building root."""
+    if stage not in STAGE_ORDER:
+        raise RunConfigError(f"unknown stage name: {stage!r}")
+    return Path(building_root) / "markers" / f"{stage}.done.json"
+
+
+def _building_rel(building: Path, path: Path | str, *, label: str) -> str:
+    """Return a forward-slashed path relative to ``building``, fail-closed."""
+    absolute = Path(path).resolve(strict=False)
+    root = building.resolve(strict=False)
+    try:
+        rel = absolute.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise RunConfigError(
+            f"{label} is not under .building root {root}: {path}"
+        ) from exc
+    # Round-trip through the shared containment helper.
+    resolve_under_root(building, rel, label=label)
+    return rel
+
+
+def _require_rel_file(building: Path, rel: str, *, label: str) -> Path:
+    try:
+        path = resolve_under_root(building, rel, label=label)
+    except SnapshotPathError as exc:
+        raise RunConfigError(str(exc)) from exc
+    if not path.is_file():
+        raise RunConfigError(f"{label} missing required file: {rel}")
+    return path
+
+
+def _as_building_rel(building: Path, value: Any, *, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise RunConfigError(f"{label} must be a nonempty string")
+    path = Path(value)
+    if path.is_absolute():
+        return _building_rel(building, path, label=label)
+    return value.replace("\\", "/")
+
+
+def _require_marker_fields(marker: Mapping[str, Any], stage: str) -> None:
+    missing = [k for k in _MARKER_REQUIRED_FIELDS if k not in marker]
+    if missing:
+        raise RunConfigError(
+            f"{stage} marker missing required fields: {', '.join(missing)}"
+        )
+    if marker["stage"] != stage:
+        raise RunConfigError(
+            f"{stage} marker stage field is {marker['stage']!r}"
+        )
+    if marker["stage_contract_version"] != STAGE_CONTRACT_VERSION:
+        raise RunConfigError(
+            f"{stage} marker has incompatible stage_contract_version "
+            f"{marker['stage_contract_version']!r}"
+        )
+    if marker["stage_accepted"] is not True:
+        raise RunConfigError(f"{stage} marker stage_accepted is not true")
+    if not isinstance(marker["required_paths"], list) or not marker["required_paths"]:
+        raise RunConfigError(f"{stage} marker required_paths must be a nonempty list")
+    if not isinstance(marker["accepted_warnings"], list):
+        raise RunConfigError(f"{stage} marker accepted_warnings must be a list")
+    if not isinstance(marker["evidence"], Mapping):
+        raise RunConfigError(f"{stage} marker evidence must be an object")
+    if not isinstance(marker["producer_repo_sha"], str) or not marker["producer_repo_sha"]:
+        raise RunConfigError(f"{stage} marker producer_repo_sha must be a nonempty string")
+    if not isinstance(marker["completed_at_utc"], str) or not marker["completed_at_utc"]:
+        raise RunConfigError(f"{stage} marker completed_at_utc must be a nonempty string")
+
+
+def _normalize_accepted_warnings(stage: str, evidence: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Map adapter warnings to the narrow marker acceptance policy."""
+    raw = list(evidence.get("accepted_warnings") or [])
+    if stage in ("liquidity", "adjusted"):
+        return []
+    if stage == "spot":
+        if evidence.get("status") == "PASS" and not raw:
+            return []
+        if not raw or not evidence.get("ambiguous_exclusion_count"):
+            raise RunConfigError(
+                "spot stage accepted_warnings must be empty on PASS or describe "
+                "only the reconciled ambiguous-key case"
+            )
+        if not all(
+            any(marker in str(w) for marker in _SPOT_WARN_MARKERS) for w in raw
+        ):
+            raise RunConfigError(
+                "spot stage accepted_warnings are not the reconciled ambiguous-key case"
+            )
+        return [{"warning": str(w), "reason": _SPOT_WARN_REASON} for w in raw]
+    if stage == "surface":
+        if evidence.get("status") == "PASS" and not raw:
+            return []
+        if not raw or not all(_SURFACE_WARN_MARKER in str(w) for w in raw):
+            raise RunConfigError(
+                "surface stage accepted_warnings must be empty on PASS or only "
+                "the a1_a2_join_integrity informational case"
+            )
+        return [{"warning": str(w), "reason": _SURFACE_WARN_REASON} for w in raw]
+    raise RunConfigError(f"unknown stage for warning normalization: {stage!r}")
+
+
+def _validate_marker_warnings(stage: str, warnings: list[Any]) -> None:
+    if stage in ("liquidity", "adjusted"):
+        if warnings:
+            raise RunConfigError(f"{stage} marker must not record accepted warnings")
+        return
+    for item in warnings:
+        if not isinstance(item, Mapping):
+            raise RunConfigError(f"{stage} marker accepted_warnings entries must be objects")
+        warning = str(item.get("warning", ""))
+        reason = str(item.get("reason", ""))
+        if stage == "spot":
+            if reason != _SPOT_WARN_REASON or not any(m in warning for m in _SPOT_WARN_MARKERS):
+                raise RunConfigError("spot marker has an unaccepted warning")
+        elif stage == "surface":
+            if reason != _SURFACE_WARN_REASON or _SURFACE_WARN_MARKER not in warning:
+                raise RunConfigError("surface marker has an unaccepted warning")
+
+
+def _evidence_required_paths(
+    stage: str, evidence: Mapping[str, Any], building: Path
+) -> list[str]:
+    """Derive the marker required_paths list (building-relative)."""
+    if stage == "liquidity":
+        return list(_LIQUIDITY_ARTIFACTS) + [_LIQUIDITY_REPORT]
+    if stage == "spot":
+        return [_SPOT_OUTPUT, _SPOT_SUMMARY, _SPOT_REPORT]
+    if stage == "surface":
+        meta = evidence.get("meta_path")
+        quotes = evidence.get("quotes_path")
+        if not isinstance(meta, str) or not isinstance(quotes, str):
+            raise RunConfigError("surface evidence missing meta_path or quotes_path")
+        return [meta, quotes, _SURFACE_REPORT]
+    if stage != "adjusted":
+        raise RunConfigError(f"unknown stage: {stage!r}")
+    paths = [_ADJUSTED_SPLITS, _ADJUSTED_REPORT]
+    adj_root = building / "input" / "adjusted_liquid"
+    for parquet in sorted(adj_root.glob("*/ORATS_SMV_Strikes_*.parquet")):
+        paths.append(_building_rel(building, parquet, label="adjusted artifact"))
+    return paths
+
+
+def _relativize_evidence(building: Path, evidence: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(evidence)
+    for key in (
+        "output_dir",
+        "report_path",
+        "output_path",
+        "summary_path",
+        "meta_path",
+        "quotes_path",
+    ):
+        if key in out and out[key]:
+            out[key] = _as_building_rel(building, out[key], label=key)
+    return out
+
+
+def _validate_liquidity_evidence(building: Path, evidence: Mapping[str, Any]) -> None:
+    if evidence.get("status") != "PASS":
+        raise RunConfigError("liquidity evidence gate status must be PASS")
+    for rel in _LIQUIDITY_ARTIFACTS:
+        _require_rel_file(building, rel, label="liquidity")
+    _require_rel_file(building, _LIQUIDITY_REPORT, label="liquidity report")
+    universe = load_ticker_universe(building / "input" / "liquidity" / "liquid_tickers.csv")
+    if evidence.get("equity_universe_digest") != digest_json(sorted(universe)):
+        raise RunConfigError("liquidity equity_universe_digest mismatch")
+    classification = pd.read_parquet(
+        building / "input" / "liquidity" / "security_classification.parquet"
+    )
+    if evidence.get("classification_digest") != classification_digest(classification):
+        raise RunConfigError("liquidity classification_digest mismatch")
+
+
+def _validate_adjusted_evidence(building: Path, evidence: Mapping[str, Any]) -> None:
+    if evidence.get("status") != "PASS" or evidence.get("audit_verdict") != "PASS":
+        raise RunConfigError("adjusted evidence must record strict C5 PASS")
+    splits = _require_rel_file(building, _ADJUSTED_SPLITS, label="adjusted splits")
+    _require_rel_file(building, _ADJUSTED_REPORT, label="adjusted report")
+    if evidence.get("split_metadata_hash") != sha256_file(splits):
+        raise RunConfigError("adjusted split_metadata_hash mismatch")
+    liquid = building / "input" / "liquidity" / "liquid_tickers.csv"
+    if not liquid.is_file():
+        raise RunConfigError("adjusted validation requires certified liquid_tickers.csv")
+    universe = load_ticker_universe(liquid)
+    if evidence.get("universe_digest") != digest_json(sorted(universe)):
+        raise RunConfigError("adjusted universe_digest mismatch")
+    adj_root = building / "input" / "adjusted_liquid"
+    parquets = sorted(adj_root.glob("*/ORATS_SMV_Strikes_*.parquet"))
+    if not parquets:
+        raise RunConfigError("adjusted stable output has no daily parquet files")
+    if evidence.get("adjusted_inventory_digest") != adjusted_inventory_digest(
+        adj_root, parquets
+    ):
+        raise RunConfigError("adjusted_inventory_digest mismatch")
+    total_bytes = sum(p.stat().st_size for p in adj_root.rglob("*") if p.is_file())
+    file_count = sum(1 for p in adj_root.rglob("*") if p.is_file())
+    if evidence.get("output_total_bytes") != total_bytes:
+        raise RunConfigError("adjusted output_total_bytes mismatch")
+    if evidence.get("output_file_count") != file_count:
+        raise RunConfigError("adjusted output_file_count mismatch")
+    if evidence.get("date_count") != len(parquets):
+        raise RunConfigError("adjusted date_count mismatch")
+
+
+def _validate_spot_evidence(building: Path, evidence: Mapping[str, Any]) -> None:
+    status = evidence.get("status")
+    if status not in ("PASS", "WARN"):
+        raise RunConfigError(f"spot evidence status invalid: {status!r}")
+    output = _require_rel_file(building, _SPOT_OUTPUT, label="spot output")
+    summary_path = _require_rel_file(building, _SPOT_SUMMARY, label="spot summary")
+    _require_rel_file(building, _SPOT_REPORT, label="spot report")
+    if evidence.get("output_total_bytes") != output.stat().st_size:
+        raise RunConfigError("spot output_total_bytes mismatch")
+    with summary_path.open(encoding="utf-8") as handle:
+        summary = json.load(handle)
+    for key, summary_key in (
+        ("source_key_count", "source_ticker_date_key_count"),
+        ("source_key_digest", "source_ticker_date_key_digest"),
+        ("output_key_count", "output_ticker_date_key_count"),
+        ("output_key_digest", "output_ticker_date_key_digest"),
+        ("ambiguous_exclusion_count", "ambiguous_exclusion_count"),
+        ("output_row_count", "output_row_count"),
+    ):
+        if evidence.get(key) != summary.get(summary_key):
+            raise RunConfigError(f"spot evidence {key} mismatch versus summary")
+    frame = pd.read_parquet(output, columns=["date", "ticker"])
+    output_keys = {
+        (d, str(t)) for d, t in zip(frame["date"], frame["ticker"])
+    }
+    if evidence.get("output_key_digest") != ticker_date_keys_digest(output_keys):
+        raise RunConfigError("spot output_key_digest mismatch versus parquet")
+    if evidence.get("output_key_count") != len(output_keys):
+        raise RunConfigError("spot output_key_count mismatch versus parquet")
+
+
+def _validate_surface_evidence(building: Path, evidence: Mapping[str, Any]) -> None:
+    status = evidence.get("status")
+    if status not in ("PASS", "WARN"):
+        raise RunConfigError(f"surface evidence status invalid: {status!r}")
+    meta_rel = _as_building_rel(building, evidence.get("meta_path"), label="meta_path")
+    quotes_rel = _as_building_rel(
+        building, evidence.get("quotes_path"), label="quotes_path"
+    )
+    meta_path = _require_rel_file(building, meta_rel, label="surface meta")
+    quotes_path = _require_rel_file(building, quotes_rel, label="surface quotes")
+    _require_rel_file(building, _SURFACE_REPORT, label="surface report")
+    if evidence.get("meta_total_bytes") != meta_path.stat().st_size:
+        raise RunConfigError("surface meta_total_bytes mismatch")
+    if evidence.get("quotes_total_bytes") != quotes_path.stat().st_size:
+        raise RunConfigError("surface quotes_total_bytes mismatch")
+    meta_df = pd.read_parquet(meta_path)
+    quotes_df = pd.read_parquet(quotes_path)
+    actual_keys = {
+        (pd.Timestamp(d).date(), str(t).strip().upper())
+        for t, d in zip(meta_df["ticker"], meta_df["entry_date"])
+    }
+    if evidence.get("actual_a1_key_count") != len(actual_keys):
+        raise RunConfigError("surface actual_a1_key_count mismatch")
+    if evidence.get("actual_a1_key_digest") != ticker_date_keys_digest(actual_keys):
+        raise RunConfigError("surface actual_a1_key_digest mismatch")
+    if evidence.get("expected_a1_key_count") != evidence.get("actual_a1_key_count"):
+        raise RunConfigError("surface expected/actual A1 counts disagree")
+    if evidence.get("expected_a1_key_digest") != evidence.get("actual_a1_key_digest"):
+        raise RunConfigError("surface expected/actual A1 digests disagree")
+    if evidence.get("a2_row_count") != len(quotes_df):
+        raise RunConfigError("surface a2_row_count mismatch")
+    a2_grain = sorted(
+        [
+            str(t),
+            pd.Timestamp(e).date().isoformat(),
+            pd.Timestamp(x).date().isoformat(),
+            float(s),
+            str(side),
+        ]
+        for t, e, x, s, side in zip(
+            quotes_df["ticker"],
+            quotes_df["entry_date"],
+            quotes_df["expiry_date"],
+            quotes_df["strike"],
+            quotes_df["side"],
+        )
+    )
+    if evidence.get("a2_grain_digest") != digest_json(a2_grain):
+        raise RunConfigError("surface a2_grain_digest mismatch")
+
+
+def validate_stage_evidence(
+    building_root: Path | str,
+    stage: str,
+    evidence: Mapping[str, Any],
+) -> None:
+    """Validate compact adapter evidence against stable on-disk artifacts."""
+    if stage not in STAGE_ORDER:
+        raise RunConfigError(f"unknown stage: {stage!r}")
+    building = Path(building_root)
+    if stage == "liquidity":
+        _validate_liquidity_evidence(building, evidence)
+    elif stage == "adjusted":
+        _validate_adjusted_evidence(building, evidence)
+    elif stage == "spot":
+        _validate_spot_evidence(building, evidence)
+    else:
+        _validate_surface_evidence(building, evidence)
+
+
+def build_stage_marker(
+    *,
+    building_root: Path | str,
+    stage: str,
+    run_config: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+    producer_repo_sha: str,
+    completed_at_utc: str | None = None,
+) -> dict[str, Any]:
+    """Build a marker document from accepted adapter evidence (no write)."""
+    if stage not in STAGE_ORDER:
+        raise RunConfigError(f"unknown stage: {stage!r}")
+    building = Path(building_root)
+    if evidence.get("stage") != stage:
+        raise RunConfigError(
+            f"evidence stage {evidence.get('stage')!r} does not match {stage!r}"
+        )
+    relative_evidence = _relativize_evidence(building, evidence)
+    validate_stage_evidence(building, stage, relative_evidence)
+    warnings = _normalize_accepted_warnings(stage, relative_evidence)
+    required = _evidence_required_paths(stage, relative_evidence, building)
+    for rel in required:
+        _require_rel_file(building, rel, label=f"{stage} required_paths")
+    gate_status = evidence.get("status")
+    if stage in ("liquidity", "adjusted") and gate_status != "PASS":
+        raise RunConfigError(f"{stage} marker gate_status must be PASS")
+    if stage in ("spot", "surface") and gate_status not in ("PASS", "WARN"):
+        raise RunConfigError(f"{stage} marker gate_status must be PASS or WARN")
+    if completed_at_utc is None:
+        completed_at_utc = (
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        )
+    return {
+        "stage": stage,
+        "stage_contract_version": STAGE_CONTRACT_VERSION,
+        "run_config_id": run_config["run_config_id"],
+        "stage_accepted": True,
+        "completed_at_utc": completed_at_utc,
+        "producer_repo_sha": producer_repo_sha,
+        "gate_status": gate_status,
+        "required_paths": required,
+        "accepted_warnings": warnings,
+        "evidence": relative_evidence,
+    }
+
+
+def write_stage_marker(
+    building_root: Path | str,
+    marker: Mapping[str, Any],
+) -> Path:
+    """Atomically write a stage marker; refuse to overwrite an existing one."""
+    stage = marker.get("stage")
+    if stage not in STAGE_ORDER:
+        raise RunConfigError(f"marker has unknown stage: {stage!r}")
+    path = stage_marker_path(building_root, stage)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_frozen_json(path, marker)
+    return path
+
+
+def load_and_validate_stage_marker(
+    building_root: Path | str,
+    stage: str,
+    run_config: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Load one marker and validate contract + compact evidence (corruption → 2)."""
+    path = stage_marker_path(building_root, stage)
+    if not path.is_file():
+        raise RunConfigError(f"missing stage marker: {path}")
+    try:
+        with path.open(encoding="utf-8") as handle:
+            marker = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RunConfigError(f"malformed stage marker {path}: {exc}") from exc
+    if not isinstance(marker, dict):
+        raise RunConfigError(f"stage marker must be a JSON object: {path}")
+    _require_marker_fields(marker, stage)
+    if marker["run_config_id"] != run_config["run_config_id"]:
+        raise RunConfigError(
+            f"{stage} marker run_config_id mismatch: marker "
+            f"{marker['run_config_id']!r} vs run {run_config['run_config_id']!r}"
+        )
+    _validate_marker_warnings(stage, marker["accepted_warnings"])
+    for rel in marker["required_paths"]:
+        if not isinstance(rel, str):
+            raise RunConfigError(f"{stage} marker required_paths entries must be strings")
+        _require_rel_file(Path(building_root), rel, label=f"{stage} required_paths")
+    validate_stage_evidence(building_root, stage, marker["evidence"])
+    # producer_repo_sha is diagnostic only — never compared to current HEAD.
+    return marker
+
+
+def inspect_stage_markers(
+    building_root: Path | str,
+    run_config: Mapping[str, Any],
+) -> StageResumeState:
+    """Inspect markers in fixed order and return the accepted resume prefix."""
+    building = Path(building_root)
+    completed: list[str] = []
+    validated: dict[str, dict[str, Any]] = {}
+    next_stage: str | None = None
+    saw_missing = False
+
+    for stage in STAGE_ORDER:
+        path = stage_marker_path(building, stage)
+        if not path.is_file():
+            if next_stage is None:
+                next_stage = stage
+            saw_missing = True
+            continue
+        if saw_missing:
+            raise RunConfigError(
+                f"corrupt marker layout: found {stage} marker after a missing "
+                "predecessor stage"
+            )
+        validated[stage] = load_and_validate_stage_marker(building, stage, run_config)
+        completed.append(stage)
+
+    return StageResumeState(
+        completed_stages=tuple(completed),
+        next_stage=next_stage,
+        validated_markers=validated,
+    )
+
+
+def _reset_stage_owned_dirs(building: Path, stage: str) -> None:
+    for rel in STAGE_OWNED_DIRS[stage]:
+        path = building / rel
+        if path.exists():
+            shutil.rmtree(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def execute_backfill_stages(
+    run: PreparedRun | ResumedRun,
+    lock: SiblingBuildLock,
+    *,
+    producer_repo_sha: str | None = None,
+    max_workers: int | None = None,
+    surface_workers: int | None = None,
+    stage_runner: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Run incomplete producer stages under an already-held sibling lock.
+
+    Inspects and validates markers before any cleanup. Skips the valid accepted
+    prefix. For each remaining stage: resets only that stage's owned directories,
+    invokes the existing adapter, validates evidence, and atomically writes the
+    marker. Does not acquire or release ``lock``.
+    """
+    if not lock.held:
+        raise SnapshotLockError(
+            "execute_backfill_stages requires the sibling lock to already be held"
+        )
+    building = Path(run.roots.building)
+    config = run.run_config
+    state = inspect_stage_markers(building, config)
+    if state.next_stage is None:
+        return dict(state.validated_markers)
+
+    if producer_repo_sha is None:
+        producer_repo_sha = current_repo_sha()
+
+    def _default_runner(stage: str) -> dict[str, Any]:
+        # Lazy import avoids a circular import with snapshot_stage_adapters.
+        from src.data import snapshot_stage_adapters as adapters
+
+        if stage == "liquidity":
+            return adapters.run_liquidity_stage(run)
+        if stage == "adjusted":
+            return adapters.run_adjusted_stage(run, max_workers=max_workers)
+        if stage == "spot":
+            return adapters.run_spot_stage(run)
+        return adapters.run_surface_stage(run, workers=surface_workers)
+
+    runner = stage_runner or _default_runner
+    validated = dict(state.validated_markers)
+    start_index = STAGE_ORDER.index(state.next_stage)
+
+    for stage in STAGE_ORDER[start_index:]:
+        _reset_stage_owned_dirs(building, stage)
+        evidence = runner(stage)
+        marker = build_stage_marker(
+            building_root=building,
+            stage=stage,
+            run_config=config,
+            evidence=evidence,
+            producer_repo_sha=producer_repo_sha,
+        )
+        write_stage_marker(building, marker)
+        validated[stage] = load_and_validate_stage_marker(building, stage, config)
+
+    return validated

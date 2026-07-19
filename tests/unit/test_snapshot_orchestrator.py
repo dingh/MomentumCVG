@@ -16,23 +16,40 @@ from pathlib import Path
 
 import pytest
 
+from src.data.security_types import classification_digest
+from src.data.snapshot_foundation import (
+    SiblingBuildLock,
+    SnapshotLockError,
+    adjusted_inventory_digest,
+    digest_json,
+    sha256_file,
+    ticker_date_keys_digest,
+)
 from src.data.snapshot_orchestrator import (
     DEFAULT_C4_PARAMS,
     DEFAULT_LOOKBACK_WEEKS,
     RAW_DEPENDENCY_PAD_WEEKS,
     RAW_INVENTORY_FILENAME,
     RUN_CONFIG_FILENAME,
+    STAGE_CONTRACT_VERSION,
+    STAGE_ORDER,
     RawInventoryError,
     RunConfigError,
     SNAPSHOT_OWNED_DIRS,
+    build_stage_marker,
     compute_raw_dependency_start,
     compute_run_config_id,
+    execute_backfill_stages,
+    inspect_stage_markers,
+    load_and_validate_stage_marker,
     load_raw_inventory_document,
     load_run_config,
     open_resume_run,
     prepare_new_backfill_run,
     scan_raw_inventory,
+    stage_marker_path,
     validate_run_config,
+    write_stage_marker,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -489,3 +506,491 @@ def test_resume_rejects_tampered_inventory(snapshots_root, raw_root):
     path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
     with pytest.raises(RunConfigError, match="digest mismatch"):
         open_resume_run(snapshots_root, BUILD_ID_A)
+
+
+# ── completion markers and stage-boundary resume ───────────────────────────────
+
+
+def _write_liquidity_artifacts(building: Path, tickers: list[str] = ("AAA", "BBB")):
+    liquid_dir = building / "input" / "liquidity"
+    liquid_dir.mkdir(parents=True, exist_ok=True)
+    reports = building / "reports" / "liquidity"
+    reports.mkdir(parents=True, exist_ok=True)
+    import pandas as pd
+
+    for name in (
+        "ticker_liquidity_daily_observations.parquet",
+        "ticker_liquidity_weekly_observations.parquet",
+        "ticker_liquidity_panel.parquet",
+    ):
+        pd.DataFrame({"ticker": list(tickers)}).to_parquet(liquid_dir / name, index=False)
+    pd.DataFrame(
+        {
+            "Ticker": list(tickers),
+            "snapshots_qualified": [3] * len(tickers),
+            "months_qualified": [3] * len(tickers),
+        }
+    ).to_csv(liquid_dir / "liquid_tickers.csv", index=False)
+    classification = pd.DataFrame(
+        {
+            "ticker": list(tickers),
+            "classification": ["company_equity"] * len(tickers),
+            "observed_asset_types": ["[0]"] * len(tickers),
+        }
+    )
+    classification.to_parquet(liquid_dir / "security_classification.parquet", index=False)
+    (reports / "pit_universe_audit.md").write_text("# C7 PASS\n", encoding="utf-8")
+    return {
+        "stage": "liquidity",
+        "status": "PASS",
+        "output_dir": str(liquid_dir),
+        "report_path": str(reports / "pit_universe_audit.md"),
+        "artifacts": sorted(p.name for p in liquid_dir.iterdir()),
+        "files_read": 2,
+        "daily_row_count": 2,
+        "weekly_row_count": 2,
+        "panel_row_count": 2,
+        "classified_ticker_count": len(tickers),
+        "classification_digest": classification_digest(classification),
+        "liquid_ticker_count": len(tickers),
+        "equity_universe_digest": digest_json(sorted(tickers)),
+        "accepted_warnings": [],
+    }
+
+
+def _write_adjusted_artifacts(building: Path, days: list[date]):
+    import pandas as pd
+
+    liquid = building / "input" / "liquidity" / "liquid_tickers.csv"
+    if not liquid.is_file():
+        _write_liquidity_artifacts(building)
+    adj = building / "input" / "adjusted_liquid"
+    adj.mkdir(parents=True, exist_ok=True)
+    reports = building / "reports" / "adjusted"
+    reports.mkdir(parents=True, exist_ok=True)
+    splits = adj / "splits_hist_liquid.parquet"
+    pd.DataFrame(
+        {"ticker": ["AAA"], "split_date": [date(2024, 2, 1)], "divisor": [2.0]}
+    ).to_parquet(splits, index=False)
+    parquets = []
+    for day in days:
+        path = adj / str(day.year) / f"ORATS_SMV_Strikes_{day.strftime('%Y%m%d')}.parquet"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame({"ticker": ["AAA", "BBB"], "stkPx": [1.0, 2.0]}).to_parquet(
+            path, index=False
+        )
+        parquets.append(path)
+    (reports / "adjusted_liquid_audit.md").write_text(
+        "## Overall verdict: **PASS**\n", encoding="utf-8"
+    )
+    file_count = sum(1 for p in adj.rglob("*") if p.is_file())
+    total_bytes = sum(p.stat().st_size for p in adj.rglob("*") if p.is_file())
+    return {
+        "stage": "adjusted",
+        "status": "PASS",
+        "output_dir": str(adj),
+        "report_path": str(reports / "adjusted_liquid_audit.md"),
+        "artifacts": ["splits_hist_liquid.parquet", "2024"],
+        "expected_zip_count": len(days),
+        "produced_file_count": len(days),
+        "date_min": days[0].isoformat(),
+        "date_max": days[-1].isoformat(),
+        "date_count": len(days),
+        "output_file_count": file_count,
+        "output_total_bytes": total_bytes,
+        "split_metadata_hash": sha256_file(splits),
+        "universe_ticker_count": 2,
+        "universe_digest": digest_json(["AAA", "BBB"]),
+        "adjusted_inventory_digest": adjusted_inventory_digest(adj, parquets),
+        "audit_verdict": "PASS",
+    }
+
+
+def _write_spot_artifacts(building: Path, day: date = FRI):
+    import pandas as pd
+
+    spot_dir = building / "cache" / "spot"
+    spot_dir.mkdir(parents=True, exist_ok=True)
+    reports = building / "reports" / "spot"
+    reports.mkdir(parents=True, exist_ok=True)
+    keys = [(day, "AAA"), (day, "BBB")]
+    frame = pd.DataFrame(
+        {
+            "date": [d for d, _ in keys],
+            "ticker": [t for _, t in keys],
+            "adj_spot_price": [10.0, 11.0],
+            "spot_price": [10.0, 11.0],
+        }
+    )
+    out = spot_dir / "spot_prices_adjusted.parquet"
+    frame.to_parquet(out, index=False)
+    summary = {
+        "resolved_date_count": 1,
+        "resolved_date_min": day.isoformat(),
+        "resolved_date_max": day.isoformat(),
+        "weekend_excluded_dates": [],
+        "source_ticker_date_key_count": 2,
+        "source_ticker_date_key_digest": ticker_date_keys_digest(keys),
+        "output_ticker_date_key_count": 2,
+        "output_ticker_date_key_digest": ticker_date_keys_digest(keys),
+        "ambiguous_exclusion_count": 0,
+        "ambiguous_exclusions": [],
+        "output_row_count": 2,
+        "producer_status": "PASS",
+        "warnings": [],
+    }
+    (spot_dir / "spot_summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n", encoding="utf-8"
+    )
+    (reports / "gate_spot_reconciliation.json").write_text(
+        json.dumps({"status": "PASS"}) + "\n", encoding="utf-8"
+    )
+    return {
+        "stage": "spot",
+        "status": "PASS",
+        "output_dir": str(spot_dir),
+        "output_path": str(out),
+        "summary_path": str(spot_dir / "spot_summary.json"),
+        "report_path": str(reports / "gate_spot_reconciliation.json"),
+        "artifacts": ["spot_prices_adjusted.parquet", "spot_summary.json"],
+        "source_key_count": 2,
+        "source_key_digest": summary["source_ticker_date_key_digest"],
+        "output_key_count": 2,
+        "output_key_digest": summary["output_ticker_date_key_digest"],
+        "ambiguous_exclusion_count": 0,
+        "output_row_count": 2,
+        "output_total_bytes": out.stat().st_size,
+        "accepted_warnings": [],
+    }
+
+
+def _write_surface_artifacts(building: Path, day: date = FRI):
+    import pandas as pd
+
+    surface = building / "cache" / "surface"
+    surface.mkdir(parents=True, exist_ok=True)
+    reports = building / "reports" / "surface"
+    reports.mkdir(parents=True, exist_ok=True)
+    meta = pd.DataFrame(
+        {
+            "ticker": ["AAA", "BBB"],
+            "entry_date": [day, day],
+            "expiry_date": [day + timedelta(days=7), day + timedelta(days=7)],
+            "surface_valid": [True, True],
+        }
+    )
+    quotes = pd.DataFrame(
+        {
+            "ticker": ["AAA", "AAA", "BBB", "BBB"],
+            "entry_date": [day] * 4,
+            "expiry_date": [day + timedelta(days=7)] * 4,
+            "strike": [10.0, 10.0, 11.0, 11.0],
+            "side": ["call", "put", "call", "put"],
+        }
+    )
+    meta_path = surface / "option_surface_meta_weekly_2024_2024.parquet"
+    quotes_path = surface / "option_surface_quotes_weekly_2024_2024.parquet"
+    meta.to_parquet(meta_path, index=False)
+    quotes.to_parquet(quotes_path, index=False)
+    (reports / "surface_contract_checks.json").write_text(
+        json.dumps({"overall_verdict": "PASS"}) + "\n", encoding="utf-8"
+    )
+    keys = [(day, "AAA"), (day, "BBB")]
+    digest = ticker_date_keys_digest(keys)
+    a2_grain = sorted(
+        [
+            str(t),
+            pd.Timestamp(e).date().isoformat(),
+            pd.Timestamp(x).date().isoformat(),
+            float(s),
+            str(side),
+        ]
+        for t, e, x, s, side in zip(
+            quotes["ticker"],
+            quotes["entry_date"],
+            quotes["expiry_date"],
+            quotes["strike"],
+            quotes["side"],
+        )
+    )
+    return {
+        "stage": "surface",
+        "status": "PASS",
+        "output_dir": str(surface),
+        "meta_path": str(meta_path),
+        "quotes_path": str(quotes_path),
+        "report_path": str(reports / "surface_contract_checks.json"),
+        "artifacts": [meta_path.name, quotes_path.name],
+        "supported_entry_dates": [day.isoformat()],
+        "expected_a1_key_count": 2,
+        "expected_a1_key_digest": digest,
+        "actual_a1_key_count": 2,
+        "actual_a1_key_digest": digest,
+        "surface_valid_true_count": 2,
+        "surface_valid_false_count": 0,
+        "a2_row_count": 4,
+        "a2_grain_digest": digest_json(a2_grain),
+        "meta_total_bytes": meta_path.stat().st_size,
+        "quotes_total_bytes": quotes_path.stat().st_size,
+        "accepted_warnings": [],
+    }
+
+
+def _install_marker(prepared, stage: str, evidence: dict, *, repo_sha: str = "a" * 40):
+    marker = build_stage_marker(
+        building_root=prepared.roots.building,
+        stage=stage,
+        run_config=prepared.run_config,
+        evidence=evidence,
+        producer_repo_sha=repo_sha,
+        completed_at_utc="2024-01-05T12:00:00.000000Z",
+    )
+    write_stage_marker(prepared.roots.building, marker)
+    return marker
+
+
+def test_inspect_no_markers_selects_liquidity(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    state = inspect_stage_markers(prepared.roots.building, prepared.run_config)
+    assert state.completed_stages == ()
+    assert state.next_stage == "liquidity"
+    assert state.validated_markers == {}
+
+
+def test_inspect_valid_liquidity_selects_adjusted(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    evidence = _write_liquidity_artifacts(prepared.roots.building)
+    _install_marker(prepared, "liquidity", evidence)
+
+    state = inspect_stage_markers(prepared.roots.building, prepared.run_config)
+    assert state.completed_stages == ("liquidity",)
+    assert state.next_stage == "adjusted"
+    assert "liquidity" in state.validated_markers
+
+
+def test_inspect_liquidity_adjusted_prefix_starts_spot(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    _install_marker(prepared, "liquidity", _write_liquidity_artifacts(prepared.roots.building))
+    _install_marker(
+        prepared,
+        "adjusted",
+        _write_adjusted_artifacts(prepared.roots.building, [MON, TUE, WED, THU, FRI]),
+    )
+
+    state = inspect_stage_markers(prepared.roots.building, prepared.run_config)
+    assert state.completed_stages == ("liquidity", "adjusted")
+    assert state.next_stage == "spot"
+
+
+def test_inspect_four_valid_markers_skips_all(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    building = prepared.roots.building
+    _install_marker(prepared, "liquidity", _write_liquidity_artifacts(building))
+    _install_marker(
+        prepared, "adjusted", _write_adjusted_artifacts(building, [MON, TUE, WED, THU, FRI])
+    )
+    _install_marker(prepared, "spot", _write_spot_artifacts(building))
+    _install_marker(prepared, "surface", _write_surface_artifacts(building))
+
+    state = inspect_stage_markers(building, prepared.run_config)
+    assert state.completed_stages == STAGE_ORDER
+    assert state.next_stage is None
+
+
+def test_malformed_marker_raises_run_config_error(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    path = stage_marker_path(prepared.roots.building, "liquidity")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(RunConfigError, match="malformed stage marker"):
+        inspect_stage_markers(prepared.roots.building, prepared.run_config)
+
+
+def test_evidence_mismatch_raises_run_config_error(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    evidence = _write_liquidity_artifacts(prepared.roots.building)
+    evidence["equity_universe_digest"] = "0" * 64
+    with pytest.raises(RunConfigError, match="equity_universe_digest mismatch"):
+        build_stage_marker(
+            building_root=prepared.roots.building,
+            stage="liquidity",
+            run_config=prepared.run_config,
+            evidence=evidence,
+            producer_repo_sha="a" * 40,
+        )
+
+
+def test_wrong_contract_version_or_run_config_id_raises(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    evidence = _write_liquidity_artifacts(prepared.roots.building)
+    marker = build_stage_marker(
+        building_root=prepared.roots.building,
+        stage="liquidity",
+        run_config=prepared.run_config,
+        evidence=evidence,
+        producer_repo_sha="a" * 40,
+    )
+    marker["stage_contract_version"] = "999"
+    write_stage_marker(prepared.roots.building, marker)
+    with pytest.raises(RunConfigError, match="incompatible stage_contract_version"):
+        load_and_validate_stage_marker(
+            prepared.roots.building, "liquidity", prepared.run_config
+        )
+
+    path = stage_marker_path(prepared.roots.building, "liquidity")
+    path.unlink()
+    marker["stage_contract_version"] = STAGE_CONTRACT_VERSION
+    marker["run_config_id"] = "0" * 64
+    write_stage_marker(prepared.roots.building, marker)
+    with pytest.raises(RunConfigError, match="run_config_id mismatch"):
+        load_and_validate_stage_marker(
+            prepared.roots.building, "liquidity", prepared.run_config
+        )
+
+
+def test_later_marker_without_predecessor_is_corruption(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    # Write an adjusted marker without liquidity.
+    _write_liquidity_artifacts(prepared.roots.building)
+    evidence = _write_adjusted_artifacts(
+        prepared.roots.building, [MON, TUE, WED, THU, FRI]
+    )
+    _install_marker(prepared, "adjusted", evidence)
+    with pytest.raises(RunConfigError, match="after a missing predecessor"):
+        inspect_stage_markers(prepared.roots.building, prepared.run_config)
+
+
+def test_output_without_marker_is_cleaned_and_stage_reruns(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    building = prepared.roots.building
+    stale = building / "input" / "liquidity" / "stale.txt"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("stale", encoding="utf-8")
+
+    calls: list[str] = []
+
+    def runner(stage: str):
+        calls.append(stage)
+        if stage == "liquidity":
+            return _write_liquidity_artifacts(building)
+        if stage == "adjusted":
+            return _write_adjusted_artifacts(building, [MON, TUE, WED, THU, FRI])
+        if stage == "spot":
+            return _write_spot_artifacts(building)
+        return _write_surface_artifacts(building)
+
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        execute_backfill_stages(
+            prepared, lock, producer_repo_sha="b" * 40, stage_runner=runner
+        )
+
+    assert calls[0] == "liquidity"
+    assert not stale.exists()
+    assert stage_marker_path(building, "liquidity").is_file()
+
+
+def test_accepted_predecessor_output_not_modified(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    building = prepared.roots.building
+    liq_evidence = _write_liquidity_artifacts(building)
+    _install_marker(prepared, "liquidity", liq_evidence)
+    panel = building / "input" / "liquidity" / "ticker_liquidity_panel.parquet"
+    before = panel.read_bytes()
+
+    def runner(stage: str):
+        assert stage != "liquidity"
+        if stage == "adjusted":
+            return _write_adjusted_artifacts(building, [MON, TUE, WED, THU, FRI])
+        if stage == "spot":
+            return _write_spot_artifacts(building)
+        return _write_surface_artifacts(building)
+
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        execute_backfill_stages(
+            prepared, lock, producer_repo_sha="b" * 40, stage_runner=runner
+        )
+
+    assert panel.read_bytes() == before
+
+
+def test_failed_stage_writes_no_marker(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+
+    def runner(stage: str):
+        raise RuntimeError("producer failed")
+
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        with pytest.raises(RuntimeError, match="producer failed"):
+            execute_backfill_stages(
+                prepared, lock, producer_repo_sha="b" * 40, stage_runner=runner
+            )
+
+    assert not stage_marker_path(prepared.roots.building, "liquidity").exists()
+
+
+def test_keyboard_interrupt_writes_no_marker_preserves_prefix(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    building = prepared.roots.building
+    _install_marker(prepared, "liquidity", _write_liquidity_artifacts(building))
+
+    def runner(stage: str):
+        raise KeyboardInterrupt
+
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        with pytest.raises(KeyboardInterrupt):
+            execute_backfill_stages(
+                prepared, lock, producer_repo_sha="b" * 40, stage_runner=runner
+            )
+
+    assert stage_marker_path(building, "liquidity").is_file()
+    assert not stage_marker_path(building, "adjusted").exists()
+
+
+def test_changed_repo_sha_does_not_invalidate_marker(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    evidence = _write_liquidity_artifacts(prepared.roots.building)
+    _install_marker(prepared, "liquidity", evidence, repo_sha="oldsha00000000000000000000000000000001")
+    # Validation must succeed even though producer_repo_sha != current HEAD.
+    marker = load_and_validate_stage_marker(
+        prepared.roots.building, "liquidity", prepared.run_config
+    )
+    assert marker["producer_repo_sha"].startswith("oldsha")
+
+
+def test_marker_write_is_atomic_and_refuses_overwrite(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    evidence = _write_liquidity_artifacts(prepared.roots.building)
+    marker = build_stage_marker(
+        building_root=prepared.roots.building,
+        stage="liquidity",
+        run_config=prepared.run_config,
+        evidence=evidence,
+        producer_repo_sha="a" * 40,
+    )
+    path = write_stage_marker(prepared.roots.building, marker)
+    assert path.is_file()
+    assert not list(path.parent.glob("*.tmp-*"))
+    with pytest.raises(RunConfigError, match="refusing to overwrite"):
+        write_stage_marker(prepared.roots.building, marker)
+
+
+def test_execute_requires_held_lock(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    lock = SiblingBuildLock(snapshots_root, BUILD_ID_A)
+    with pytest.raises(SnapshotLockError, match="already be held"):
+        execute_backfill_stages(prepared, lock, stage_runner=lambda stage: {})
