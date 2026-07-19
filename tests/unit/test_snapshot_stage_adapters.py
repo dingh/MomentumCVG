@@ -9,6 +9,7 @@ objects built from tiny temporary raw ZIP fixtures.
 from __future__ import annotations
 
 import json
+import os
 import zipfile
 from datetime import date, timedelta
 from pathlib import Path
@@ -21,17 +22,23 @@ import src.data.snapshot_stage_adapters as adapters
 from src.data.snapshot_foundation import digest_json, ticker_date_keys_digest
 from src.data.snapshot_orchestrator import prepare_new_backfill_run
 from src.data.snapshot_stage_adapters import (
+    SECURITY_TYPES_FILENAME,
     StageExecutionError,
+    _promote_candidate,
     run_adjusted_stage,
     run_liquidity_stage,
     run_spot_stage,
     run_surface_stage,
 )
-from src.features.option_surface_contract import check_expected_meta_keys
+from src.features.option_surface_contract import (
+    ContractCheckResult,
+    check_expected_meta_keys,
+)
 
 BUILD_ID = "20240412T000000000000Z_deadbeef"
 DAY_1 = date(2024, 4, 5)   # Friday
 DAY_2 = date(2024, 4, 12)  # Friday
+DAY_3 = date(2024, 4, 19)  # Friday successor beyond as-of
 GOOD_CSV = "ticker,stkPx\nAAA,10.0\nBBB,20.0\n"
 
 
@@ -242,6 +249,24 @@ def test_liquidity_stage_passes_frozen_inputs_and_promotes(run, monkeypatch, tmp
     assert _stage_files(building / "markers") == []
 
 
+def test_liquidity_default_security_types_path_is_building_local(run, monkeypatch):
+    calls: dict = {}
+    monkeypatch.setattr(
+        adapters, "_liquidity_module", lambda: _fake_liquidity_module(calls)
+    )
+    monkeypatch.setattr(adapters, "_pit_audit_module", lambda: _fake_pit_audit(calls))
+
+    run_liquidity_stage(
+        run,
+        fetch_observation_fn=lambda ticker, day: pd.DataFrame(),
+    )
+
+    building = Path(run.roots.building)
+    expected = building / "work" / "liquidity" / SECURITY_TYPES_FILENAME
+    assert calls["classifier_path"] == expected
+    assert str(calls["classifier_path"]).startswith(str(building))
+
+
 def test_liquidity_gate_failure_promotes_nothing(run, monkeypatch, tmp_path):
     calls: dict = {}
     monkeypatch.setattr(
@@ -438,6 +463,93 @@ def test_adjusted_stage_rejects_non_pass_audit_verdict(run, monkeypatch):
         run_adjusted_stage(run)
 
     assert _stage_files(building / "input" / "adjusted_liquid") == []
+
+
+def test_adjusted_ordinary_fetch_exception_becomes_stage_error(run, monkeypatch):
+    building = Path(run.roots.building)
+    _write_liquid_csv(building, ["AAA", "BBB"])
+    monkeypatch.setenv("ORATS_API_TOKEN", "FAKE_TOKEN")
+
+    def boom(argv):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(
+        adapters, "_fetch_splits_module", lambda: SimpleNamespace(main=boom)
+    )
+
+    with pytest.raises(StageExecutionError, match="scoped split fetch failed"):
+        run_adjusted_stage(run)
+
+    assert _stage_files(building / "input" / "adjusted_liquid") == []
+
+
+def test_adjusted_keyboard_interrupt_from_fetch_propagates(run, monkeypatch):
+    building = Path(run.roots.building)
+    _write_liquid_csv(building, ["AAA", "BBB"])
+    monkeypatch.setenv("ORATS_API_TOKEN", "FAKE_TOKEN")
+
+    def interrupt(argv):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        adapters, "_fetch_splits_module", lambda: SimpleNamespace(main=interrupt)
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_adjusted_stage(run)
+
+    assert _stage_files(building / "input" / "adjusted_liquid") == []
+
+
+# ── promotion ──────────────────────────────────────────────────────────────────
+
+
+def test_promote_candidate_uses_one_directory_rename(tmp_path, monkeypatch):
+    candidate = tmp_path / "candidate"
+    stable = tmp_path / "stable"
+    candidate.mkdir()
+    (candidate / "a.parquet").write_text("a", encoding="utf-8")
+    (candidate / "b.parquet").write_text("b", encoding="utf-8")
+    stable.mkdir()
+    (stable / "old.parquet").write_text("old", encoding="utf-8")
+
+    calls: list[tuple[Path, Path]] = []
+    real_replace = os.replace
+
+    def spy(src, dst):
+        calls.append((Path(src), Path(dst)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(adapters.os, "replace", spy)
+
+    promoted = _promote_candidate(candidate, stable)
+
+    assert calls == [(candidate, stable)]
+    assert promoted == ["a.parquet", "b.parquet"]
+    assert not candidate.exists()
+    assert _stage_files(stable) == ["a.parquet", "b.parquet"]
+
+
+def test_promote_candidate_failed_rename_leaves_candidate_intact(tmp_path, monkeypatch):
+    candidate = tmp_path / "candidate"
+    stable = tmp_path / "stable"
+    candidate.mkdir()
+    (candidate / "a.parquet").write_text("a", encoding="utf-8")
+    (candidate / "b.parquet").write_text("b", encoding="utf-8")
+    stable.mkdir()
+    (stable / "old.parquet").write_text("old", encoding="utf-8")
+
+    monkeypatch.setattr(
+        adapters.os, "replace", lambda src, dst: (_ for _ in ()).throw(OSError("boom"))
+    )
+
+    with pytest.raises(StageExecutionError, match="failed to promote"):
+        _promote_candidate(candidate, stable)
+
+    assert candidate.is_dir()
+    assert _stage_files(candidate) == ["a.parquet", "b.parquet"]
+    # Prior uncertified stable was removed; no partial promotion remains.
+    assert not stable.exists()
 
 
 # ── spot stage ─────────────────────────────────────────────────────────────────
@@ -683,7 +795,11 @@ def _fake_surface_module(
     quotes_df: pd.DataFrame,
     trade_dates: list[date],
     calls: dict,
+    *,
+    schedule: list[date] | None = None,
 ):
+    schedule = list(schedule) if schedule is not None else list(trade_dates)
+
     def main(argv):
         calls["surface_argv"] = list(argv)
         output_root = Path(argv[argv.index("--output-root") + 1])
@@ -703,24 +819,48 @@ def _fake_surface_module(
 
     def generate_trade_dates(start, end, frequency, data_root):
         calls["schedule_request"] = (start, end, frequency, Path(data_root))
-        return list(trade_dates), list(trade_dates)
+        return list(trade_dates), list(schedule)
 
     return SimpleNamespace(main=main, generate_trade_dates=generate_trade_dates)
 
 
-def _surface_inputs(building: Path) -> None:
+def _surface_inputs(
+    building: Path,
+    *,
+    adjusted_days: list[date] | None = None,
+    spot_days: list[date] | None = None,
+) -> None:
     _write_liquid_csv(building, ["AAA", "BBB"])
-    _write_adjusted_parquets(building, {DAY_1: ["AAA", "BBB"], DAY_2: ["AAA", "BBB"]})
+    days = adjusted_days or [DAY_1, DAY_2]
+    _write_adjusted_parquets(
+        building, {day: ["AAA", "BBB"] for day in days}
+    )
+    spot_days = spot_days or [DAY_1, DAY_2]
     spot_dir = building / "cache" / "spot"
     spot_dir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(
-        {"date": [DAY_1], "ticker": ["AAA"], "adj_spot_price": [10.0], "spot_price": [10.0]}
-    ).to_parquet(spot_dir / "spot_prices_adjusted.parquet", index=False)
+    rows = [
+        {
+            "date": day,
+            "ticker": ticker,
+            "adj_spot_price": 10.0,
+            "spot_price": 10.0,
+        }
+        for day in spot_days
+        for ticker in ("AAA", "BBB")
+    ]
+    pd.DataFrame(rows).to_parquet(
+        spot_dir / "spot_prices_adjusted.parquet", index=False
+    )
 
 
 def test_surface_stage_exact_coverage_promotes_pair(run, monkeypatch):
     building = Path(run.roots.building)
-    _surface_inputs(building)
+    # DAY_3 is the schedule successor that makes DAY_2 supported.
+    _surface_inputs(
+        building,
+        adjusted_days=[DAY_1, DAY_2, DAY_3],
+        spot_days=[DAY_1, DAY_2, DAY_3],
+    )
 
     keys = [(t, d) for t in ("AAA", "BBB") for d in (DAY_1, DAY_2)]
     meta_df, quotes_df = _surface_frames(keys)
@@ -728,7 +868,13 @@ def test_surface_stage_exact_coverage_promotes_pair(run, monkeypatch):
     monkeypatch.setattr(
         adapters,
         "_surface_module",
-        lambda: _fake_surface_module(meta_df, quotes_df, [DAY_1, DAY_2], calls),
+        lambda: _fake_surface_module(
+            meta_df,
+            quotes_df,
+            [DAY_1, DAY_2],
+            calls,
+            schedule=[DAY_1, DAY_2, DAY_3],
+        ),
     )
 
     evidence = run_surface_stage(run, workers=2)
@@ -737,6 +883,8 @@ def test_surface_stage_exact_coverage_promotes_pair(run, monkeypatch):
     assert argv[argv.index("--frequency") + 1] == "weekly"
     assert argv[argv.index("--tickers-file") + 1].endswith("liquid_tickers.csv")
     assert argv[argv.index("--workers") + 1] == "2"
+    assert argv[argv.index("--start-date") + 1] == DAY_1.isoformat()
+    assert argv[argv.index("--end-date") + 1] == DAY_2.isoformat()
 
     stable = building / "cache" / "surface"
     assert _stage_files(stable) == [
@@ -746,18 +894,59 @@ def test_surface_stage_exact_coverage_promotes_pair(run, monkeypatch):
     assert not (building / "work" / "surface" / "candidate").exists()
 
     assert evidence["stage"] == "surface"
-    assert evidence["status"] in ("PASS", "WARN")
+    assert evidence["status"] == "PASS"
+    assert evidence["supported_entry_dates"] == [
+        DAY_1.isoformat(),
+        DAY_2.isoformat(),
+    ]
     assert evidence["expected_a1_key_count"] == 4
     assert evidence["actual_a1_key_count"] == 4
     assert evidence["expected_a1_key_digest"] == evidence["actual_a1_key_digest"]
     assert evidence["a2_row_count"] == 8
     assert evidence["surface_valid_true_count"] == 4
     assert evidence["surface_valid_false_count"] == 0
+    assert evidence["accepted_warnings"] == []
+
+
+def test_surface_terminal_weekly_entry_excluded_from_expected_denominator(
+    run, monkeypatch
+):
+    building = Path(run.roots.building)
+    _surface_inputs(building)  # adjusted+spot cover DAY_1/DAY_2 only
+
+    # Schedule ends at DAY_2 with no successor → DAY_2 is unsupported.
+    keys = [(t, DAY_1) for t in ("AAA", "BBB")]
+    meta_df, quotes_df = _surface_frames(keys)
+    calls: dict = {}
+    monkeypatch.setattr(
+        adapters,
+        "_surface_module",
+        lambda: _fake_surface_module(
+            meta_df,
+            quotes_df,
+            [DAY_1, DAY_2],
+            calls,
+            schedule=[DAY_1, DAY_2],
+        ),
+    )
+
+    evidence = run_surface_stage(run)
+
+    argv = calls["surface_argv"]
+    assert argv[argv.index("--start-date") + 1] == DAY_1.isoformat()
+    assert argv[argv.index("--end-date") + 1] == DAY_1.isoformat()
+    assert evidence["supported_entry_dates"] == [DAY_1.isoformat()]
+    assert evidence["expected_a1_key_count"] == 2
+    assert DAY_2.isoformat() not in evidence["supported_entry_dates"]
 
 
 def test_surface_stage_missing_a1_key_fails_and_promotes_nothing(run, monkeypatch):
     building = Path(run.roots.building)
-    _surface_inputs(building)
+    _surface_inputs(
+        building,
+        adjusted_days=[DAY_1, DAY_2, DAY_3],
+        spot_days=[DAY_1, DAY_2, DAY_3],
+    )
 
     # Producer output is missing (BBB, DAY_2).
     keys = [("AAA", DAY_1), ("AAA", DAY_2), ("BBB", DAY_1)]
@@ -766,7 +955,13 @@ def test_surface_stage_missing_a1_key_fails_and_promotes_nothing(run, monkeypatc
     monkeypatch.setattr(
         adapters,
         "_surface_module",
-        lambda: _fake_surface_module(meta_df, quotes_df, [DAY_1, DAY_2], calls),
+        lambda: _fake_surface_module(
+            meta_df,
+            quotes_df,
+            [DAY_1, DAY_2],
+            calls,
+            schedule=[DAY_1, DAY_2, DAY_3],
+        ),
     )
 
     with pytest.raises(StageExecutionError, match="surface acceptance FAILED"):
@@ -783,6 +978,81 @@ def test_surface_stage_missing_a1_key_fails_and_promotes_nothing(run, monkeypatc
         c for c in report["checks"] if c["name"] == "expected_meta_keys"
     )
     assert expected_check["status"] == "FAIL"
+
+
+def test_surface_accepts_informational_a1_a2_join_warning(run, monkeypatch):
+    building = Path(run.roots.building)
+    _surface_inputs(building)
+
+    keys = [(t, DAY_1) for t in ("AAA", "BBB")]
+    meta_df, quotes_df = _surface_frames(keys)
+    # Mark one row invalid but keep its quote rows → informational a1_a2_join WARN.
+    meta_df = meta_df.copy()
+    meta_df.loc[meta_df["ticker"] == "BBB", "surface_valid"] = False
+    meta_df.loc[meta_df["ticker"] == "BBB", "failure_reason"] = "no_spot_price"
+    meta_df.loc[meta_df["ticker"] == "BBB", "has_body_call"] = False
+    meta_df.loc[meta_df["ticker"] == "BBB", "has_body_put"] = False
+    meta_df.loc[meta_df["ticker"] == "BBB", "n_surface_quotes"] = 0
+
+    calls: dict = {}
+    monkeypatch.setattr(
+        adapters,
+        "_surface_module",
+        lambda: _fake_surface_module(
+            meta_df,
+            quotes_df,
+            [DAY_1, DAY_2],
+            calls,
+            schedule=[DAY_1, DAY_2],
+        ),
+    )
+
+    evidence = run_surface_stage(run)
+
+    assert evidence["status"] == "WARN"
+    assert evidence["accepted_warnings"]
+    assert any("surface_valid=False" in w for w in evidence["accepted_warnings"])
+    assert _stage_files(building / "cache" / "surface")
+
+
+def test_surface_structural_c6_warning_blocks_promotion(run, monkeypatch):
+    building = Path(run.roots.building)
+    _surface_inputs(building)
+
+    keys = [(t, DAY_1) for t in ("AAA", "BBB")]
+    meta_df, quotes_df = _surface_frames(keys)
+    calls: dict = {}
+    monkeypatch.setattr(
+        adapters,
+        "_surface_module",
+        lambda: _fake_surface_module(
+            meta_df,
+            quotes_df,
+            [DAY_1, DAY_2],
+            calls,
+            schedule=[DAY_1, DAY_2],
+        ),
+    )
+
+    real_run_contract_checks = adapters.run_contract_checks
+
+    def inject_structural_warn(meta, quotes, **kwargs):
+        results = real_run_contract_checks(meta, quotes, **kwargs)
+        results.append(
+            ContractCheckResult(
+                name="failure_vocabulary",
+                status="WARN",
+                warnings=["unknown failure_reason tag(s): ['made_up_tag']"],
+            )
+        )
+        return results
+
+    monkeypatch.setattr(adapters, "run_contract_checks", inject_structural_warn)
+
+    with pytest.raises(StageExecutionError, match="failure_vocabulary"):
+        run_surface_stage(run)
+
+    assert _stage_files(building / "cache" / "surface") == []
 
 
 # ── expected-A1-key contract check ─────────────────────────────────────────────

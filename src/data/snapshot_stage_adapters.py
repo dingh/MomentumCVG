@@ -39,7 +39,6 @@ from typing import Any, Callable, Mapping
 
 import pandas as pd
 
-from src.data.paths import DEFAULT_SECURITY_TYPES_PATH
 from src.data.security_types import classification_digest
 from src.data.snapshot_foundation import (
     GateResult,
@@ -53,7 +52,9 @@ from src.data.snapshot_foundation import (
 from src.data.snapshot_orchestrator import SnapshotOrchestratorError
 from src.data.split_adjuster import SplitAdjuster
 from src.data.ticker_universe import load_ticker_universe
+from src.data.trading_day import target_weekly_expiry_from_schedule
 from src.features.option_surface_contract import (
+    ContractCheckResult,
     check_expected_meta_keys,
     compute_overall_verdict,
     run_contract_checks,
@@ -72,6 +73,8 @@ _ACCEPTED_SPOT_WARNING_MARKERS = (
 SPLITS_FILENAME = "splits_hist_liquid.parquet"
 SPOT_PARQUET_FILENAME = "spot_prices_adjusted.parquet"
 SPOT_SUMMARY_FILENAME = "spot_summary.json"
+# Stage-local Core dictionary filename (never the global durable path by default).
+SECURITY_TYPES_FILENAME = "orats_security_types.parquet"
 
 
 class StageExecutionError(SnapshotOrchestratorError):
@@ -162,29 +165,32 @@ def _fresh_candidate_dir(path: Path) -> Path:
 
 
 def _promote_candidate(candidate_dir: Path, stable_dir: Path) -> list[str]:
-    """Move every candidate entry into the stage's stable directory.
+    """Atomically promote a stage candidate directory to its stable directory.
 
-    Same-volume ``os.replace`` per entry; an existing same-named stable entry
-    (from a previously restarted incomplete stage) is replaced. The emptied
-    candidate directory is removed afterwards.
+    Collects artifact names first, removes only this stage's uncertified
+    ``stable_dir`` if present, then renames ``candidate_dir`` → ``stable_dir``
+    with a single ``os.replace``. A failed rename leaves the candidate intact
+    and never leaves a partially populated stable tree. No backup/rollback.
     """
-    entries = sorted(candidate_dir.iterdir(), key=lambda p: p.name)
-    if not entries:
+    if not candidate_dir.is_dir():
+        raise StageExecutionError(
+            f"candidate directory is missing; nothing to promote: {candidate_dir}"
+        )
+    artifacts = sorted(p.name for p in candidate_dir.iterdir())
+    if not artifacts:
         raise StageExecutionError(
             f"candidate directory is empty; nothing to promote: {candidate_dir}"
         )
-    stable_dir.mkdir(parents=True, exist_ok=True)
-    promoted: list[str] = []
-    for entry in entries:
-        target = stable_dir / entry.name
-        if target.is_dir():
-            shutil.rmtree(target)
-        elif target.exists():
-            target.unlink()
-        os.replace(entry, target)
-        promoted.append(entry.name)
-    candidate_dir.rmdir()
-    return promoted
+    stable_dir.parent.mkdir(parents=True, exist_ok=True)
+    if stable_dir.exists():
+        shutil.rmtree(stable_dir)
+    try:
+        os.replace(candidate_dir, stable_dir)
+    except OSError as exc:
+        raise StageExecutionError(
+            f"failed to promote {candidate_dir} -> {stable_dir}: {exc}"
+        ) from exc
+    return artifacts
 
 
 def _tree_stats(root: Path, pattern: str = "**/*") -> tuple[int, int]:
@@ -210,13 +216,41 @@ def _spot_warnings_accepted(gate: GateResult) -> bool:
     )
 
 
+def _accepted_surface_warnings(
+    checks: list[ContractCheckResult],
+) -> list[str]:
+    """Return accepted surface warning strings, or raise on any other WARN.
+
+    The only publishable C6 WARN is the nonstructural ``a1_a2_join_integrity``
+    informational case where ``surface_valid=false`` metadata still has quote
+    rows (``invalid_meta_with_quotes_count > 0``). Every other WARN fails the
+    stage before promotion.
+    """
+    accepted: list[str] = []
+    for check in checks:
+        if check.status != "WARN":
+            continue
+        if (
+            check.name == "a1_a2_join_integrity"
+            and int(check.metrics.get("invalid_meta_with_quotes_count") or 0) > 0
+            and not check.failures
+        ):
+            accepted.extend(check.warnings)
+            continue
+        raise StageExecutionError(
+            f"surface acceptance rejected nonstructural-policy WARN from "
+            f"{check.name!r}: {'; '.join(check.warnings[:5]) or check.status}"
+        )
+    return accepted
+
+
 # ── stage 1: liquidity ─────────────────────────────────────────────────────────
 
 
 def run_liquidity_stage(
     run,
     *,
-    security_types_path: Path | str = DEFAULT_SECURITY_TYPES_PATH,
+    security_types_path: Path | str | None = None,
     fetch_observation_fn: Callable[[str, date], pd.DataFrame] | None = None,
     show_progress: bool = False,
 ) -> dict[str, Any]:
@@ -226,10 +260,21 @@ def run_liquidity_stage(
     resolved trading dates and the accepted equity-only Core classification,
     writes candidate artifacts under ``work/liquidity/candidate``, requires a
     strict C7 PASS, and promotes to ``input/liquidity``.
+
+    The Core security-types dictionary defaults to a path owned by this run
+    under ``work/liquidity/``; callers may inject ``security_types_path`` for
+    tests. The global durable dictionary path is never the default here.
     """
     building = Path(run.roots.building)
     config = run.run_config
     inventory = _require_inventory(run)
+
+    if security_types_path is None:
+        security_types_path = (
+            building / "work" / "liquidity" / SECURITY_TYPES_FILENAME
+        )
+    security_types_path = Path(security_types_path)
+    security_types_path.parent.mkdir(parents=True, exist_ok=True)
 
     start = _config_date(config, "requested_output_start")
     end = _config_date(config, "as_of_resolved_trading_day")
@@ -253,7 +298,7 @@ def run_liquidity_stage(
         return mod.load_raw_day_from_zip(raw_root, trade_date)
 
     classify_fn = mod.make_core_classifier(
-        Path(security_types_path), fetch_observation_fn=fetch_observation_fn
+        security_types_path, fetch_observation_fn=fetch_observation_fn
     )
 
     try:
@@ -381,7 +426,11 @@ def run_adjusted_stage(run, *, max_workers: int | None = None) -> dict[str, Any]
         _fetch_splits_module().main(
             ["--ticker-universe", str(liquid_csv), "--out", str(splits_path)]
         )
+    except KeyboardInterrupt:
+        raise
     except SystemExit as exc:
+        raise StageExecutionError(f"scoped split fetch failed: {exc}") from exc
+    except Exception as exc:
         raise StageExecutionError(f"scoped split fetch failed: {exc}") from exc
     # The fetch checkpoint is working state only; it must not be promoted.
     splits_path.with_name(
@@ -602,10 +651,13 @@ def run_surface_stage(run, *, workers: int | None = None) -> dict[str, Any]:
     """Precompute the weekly A1/A2 option surface and gate exact A1 coverage.
 
     Consumes the certified equity superset, adjusted chains, and spot data;
-    runs the existing weekly producer into ``work/surface/candidate``;
+    derives the supported weekly entry schedule (successor present; entry and
+    successor in both adjusted and spot inventories); runs the existing weekly
+    producer into ``work/surface/candidate`` over that supported interval;
     requires exact equality between expected and actual A1 keys plus a C6
-    contract-check suite with no FAIL; and promotes the A1/A2 pair together
-    to ``cache/surface``.
+    contract-check suite with no FAIL and only the accepted informational
+    ``a1_a2_join_integrity`` WARN; and promotes the A1/A2 pair together to
+    ``cache/surface``.
     """
     building = Path(run.roots.building)
     config = run.run_config
@@ -626,9 +678,65 @@ def run_surface_stage(run, *, workers: int | None = None) -> dict[str, Any]:
     end = _config_date(config, "as_of_resolved_trading_day")
     start_year, end_year = start.year, end.year
 
-    candidate = _fresh_candidate_dir(building / "work" / "surface" / "candidate")
-
     mod = _surface_module()
+    trade_dates, weekly_schedule = mod.generate_trade_dates(
+        start, end, "weekly", adjusted_root
+    )
+    if not weekly_schedule:
+        raise StageExecutionError(
+            "weekly surface schedule is empty; cannot resolve supported entries"
+        )
+
+    try:
+        adjusted_inventory = resolve_adjusted_inventory(
+            adjusted_root, start_year, end_year
+        )
+    except Exception as exc:
+        raise StageExecutionError(
+            f"cannot resolve adjusted inventory for surface schedule: {exc}"
+        ) from exc
+    adjusted_dates = set(adjusted_inventory.resolved_trading_dates)
+
+    try:
+        spot_dates = {
+            d
+            for d in pd.to_datetime(
+                pd.read_parquet(spot_path, columns=["date"])["date"]
+            ).dt.date
+            if d is not None
+        }
+    except Exception as exc:
+        raise StageExecutionError(
+            f"cannot read spot date inventory from {spot_path}: {exc}"
+        ) from exc
+
+    supported_dates: list[date] = []
+    for entry_date in trade_dates:
+        successor = target_weekly_expiry_from_schedule(entry_date, weekly_schedule)
+        if successor is None:
+            continue
+        if entry_date not in adjusted_dates or successor not in adjusted_dates:
+            continue
+        if entry_date not in spot_dates or successor not in spot_dates:
+            continue
+        supported_dates.append(entry_date)
+
+    if not supported_dates:
+        raise StageExecutionError(
+            "no supported weekly surface entry dates: every candidate entry "
+            "lacks a schedule successor present in both the resolved adjusted "
+            "inventory and the spot parquet date inventory"
+        )
+
+    supported_start = supported_dates[0]
+    supported_end = supported_dates[-1]
+    expected_keys = {
+        (ticker, entry_date)
+        for ticker in tickers
+        for entry_date in supported_dates
+    }
+
+    candidate = _fresh_candidate_dir(building / "work" / "surface" / "candidate")
     argv = [
         "--data-root", str(adjusted_root),
         "--output-root", str(candidate),
@@ -637,8 +745,8 @@ def run_surface_stage(run, *, workers: int | None = None) -> dict[str, Any]:
         "--frequency", "weekly",
         "--start-year", str(start_year),
         "--end-year", str(end_year),
-        "--start-date", start.isoformat(),
-        "--end-date", end.isoformat(),
+        "--start-date", supported_start.isoformat(),
+        "--end-date", supported_end.isoformat(),
         "--log-file", "-",
     ]
     if workers is not None:
@@ -657,13 +765,6 @@ def run_surface_stage(run, *, workers: int | None = None) -> dict[str, Any]:
         if not produced.is_file():
             raise StageExecutionError(f"surface producer output missing: {produced}")
 
-    trade_dates, _schedule = mod.generate_trade_dates(
-        start, end, "weekly", adjusted_root
-    )
-    expected_keys = {
-        (ticker, entry_date) for ticker in tickers for entry_date in trade_dates
-    }
-
     meta_df = pd.read_parquet(meta_path)
     quotes_df = pd.read_parquet(quotes_path)
 
@@ -674,8 +775,8 @@ def run_surface_stage(run, *, workers: int | None = None) -> dict[str, Any]:
             quotes_df,
             frequency="weekly",
             data_root=adjusted_root,
-            start_date=start,
-            end_date=end,
+            start_date=supported_start,
+            end_date=supported_end,
         )
     )
     verdict = compute_overall_verdict(checks)
@@ -712,7 +813,10 @@ def run_surface_stage(run, *, workers: int | None = None) -> dict[str, Any]:
             f"surface acceptance FAILED ({', '.join(failing)}); "
             f"report: {report_path}"
         )
-    accepted_warnings = [w for c in checks for w in c.warnings]
+    try:
+        accepted_warnings = _accepted_surface_warnings(checks)
+    except StageExecutionError as exc:
+        raise StageExecutionError(f"{exc}; report: {report_path}") from exc
 
     actual_keys = {
         (str(t), d)
@@ -747,6 +851,7 @@ def run_surface_stage(run, *, workers: int | None = None) -> dict[str, Any]:
         "quotes_path": str(stable_quotes),
         "report_path": str(report_path),
         "artifacts": promoted,
+        "supported_entry_dates": [d.isoformat() for d in supported_dates],
         "expected_a1_key_count": len(expected_keys),
         "expected_a1_key_digest": ticker_date_keys_digest(
             (d, t) for t, d in expected_keys
