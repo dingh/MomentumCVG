@@ -40,6 +40,7 @@ from src.data.snapshot_orchestrator import (
     compute_raw_dependency_start,
     compute_run_config_id,
     execute_backfill_stages,
+    finalize_candidate_snapshot,
     inspect_stage_markers,
     load_and_validate_stage_marker,
     load_raw_inventory_document,
@@ -523,7 +524,17 @@ def _write_liquidity_artifacts(building: Path, tickers: list[str] = ("AAA", "BBB
         "ticker_liquidity_weekly_observations.parquet",
         "ticker_liquidity_panel.parquet",
     ):
-        pd.DataFrame({"ticker": list(tickers)}).to_parquet(liquid_dir / name, index=False)
+        if name == "ticker_liquidity_panel.parquet":
+            pd.DataFrame(
+                {
+                    "ticker": list(tickers),
+                    "month_date": [date(2023, 12, 29)] * len(tickers),
+                }
+            ).to_parquet(liquid_dir / name, index=False)
+        else:
+            pd.DataFrame({"ticker": list(tickers)}).to_parquet(
+                liquid_dir / name, index=False
+            )
     pd.DataFrame(
         {
             "Ticker": list(tickers),
@@ -611,36 +622,38 @@ def _write_adjusted_artifacts(building: Path, days: list[date]):
     }
 
 
-def _write_spot_artifacts(building: Path, day: date = FRI):
+def _write_spot_artifacts(building: Path, days: list[date] | date = FRI):
     import pandas as pd
 
+    if isinstance(days, date):
+        days = [days]
     spot_dir = building / "cache" / "spot"
     spot_dir.mkdir(parents=True, exist_ok=True)
     reports = building / "reports" / "spot"
     reports.mkdir(parents=True, exist_ok=True)
-    keys = [(day, "AAA"), (day, "BBB")]
+    keys = [(day, t) for day in days for t in ("AAA", "BBB")]
     frame = pd.DataFrame(
         {
             "date": [d for d, _ in keys],
             "ticker": [t for _, t in keys],
-            "adj_spot_price": [10.0, 11.0],
-            "spot_price": [10.0, 11.0],
+            "adj_spot_price": [10.0] * len(keys),
+            "spot_price": [10.0] * len(keys),
         }
     )
     out = spot_dir / "spot_prices_adjusted.parquet"
     frame.to_parquet(out, index=False)
     summary = {
-        "resolved_date_count": 1,
-        "resolved_date_min": day.isoformat(),
-        "resolved_date_max": day.isoformat(),
+        "resolved_date_count": len(days),
+        "resolved_date_min": days[0].isoformat(),
+        "resolved_date_max": days[-1].isoformat(),
         "weekend_excluded_dates": [],
-        "source_ticker_date_key_count": 2,
+        "source_ticker_date_key_count": len(keys),
         "source_ticker_date_key_digest": ticker_date_keys_digest(keys),
-        "output_ticker_date_key_count": 2,
+        "output_ticker_date_key_count": len(keys),
         "output_ticker_date_key_digest": ticker_date_keys_digest(keys),
         "ambiguous_exclusion_count": 0,
         "ambiguous_exclusions": [],
-        "output_row_count": 2,
+        "output_row_count": len(keys),
         "producer_status": "PASS",
         "warnings": [],
     }
@@ -668,50 +681,78 @@ def _write_spot_artifacts(building: Path, day: date = FRI):
         "summary_path": str(spot_dir / "spot_summary.json"),
         "report_path": str(reports / "gate_spot_reconciliation.json"),
         "artifacts": ["spot_prices_adjusted.parquet", "spot_summary.json"],
-        "source_key_count": 2,
+        "source_key_count": len(keys),
         "source_key_digest": summary["source_ticker_date_key_digest"],
-        "output_key_count": 2,
+        "output_key_count": len(keys),
         "output_key_digest": summary["output_ticker_date_key_digest"],
         "ambiguous_exclusion_count": 0,
-        "output_row_count": 2,
+        "output_row_count": len(keys),
         "output_total_bytes": out.stat().st_size,
         "accepted_warnings": [],
     }
 
 
-def _write_surface_artifacts(building: Path, day: date = FRI):
+def _write_surface_artifacts(
+    building: Path,
+    entries: list[date] | date = FRI,
+    *,
+    expiry_by_entry: dict[date, date] | None = None,
+    empty_checks: bool = False,
+):
     import pandas as pd
 
+    if isinstance(entries, date):
+        entries = [entries]
+    if expiry_by_entry is None:
+        expiry_by_entry = {e: e for e in entries}
     surface = building / "cache" / "surface"
     surface.mkdir(parents=True, exist_ok=True)
     reports = building / "reports" / "surface"
     reports.mkdir(parents=True, exist_ok=True)
-    meta = pd.DataFrame(
-        {
-            "ticker": ["AAA", "BBB"],
-            "entry_date": [day, day],
-            "expiry_date": [day + timedelta(days=7), day + timedelta(days=7)],
-            "surface_valid": [True, True],
-        }
-    )
-    quotes = pd.DataFrame(
-        {
-            "ticker": ["AAA", "AAA", "BBB", "BBB"],
-            "entry_date": [day] * 4,
-            "expiry_date": [day + timedelta(days=7)] * 4,
-            "strike": [10.0, 10.0, 11.0, 11.0],
-            "side": ["call", "put", "call", "put"],
-        }
-    )
+    tickers = ["AAA", "BBB"]
+    meta_rows = []
+    quote_rows = []
+    for entry in entries:
+        expiry = expiry_by_entry[entry]
+        for t in tickers:
+            meta_rows.append(
+                {
+                    "ticker": t,
+                    "entry_date": entry,
+                    "expiry_date": expiry,
+                    "surface_valid": True,
+                }
+            )
+            for side in ("call", "put"):
+                quote_rows.append(
+                    {
+                        "ticker": t,
+                        "entry_date": entry,
+                        "expiry_date": expiry,
+                        "strike": 10.0,
+                        "side": side,
+                    }
+                )
+    meta = pd.DataFrame(meta_rows)
+    quotes = pd.DataFrame(quote_rows)
     meta_path = surface / "option_surface_meta_weekly_2024_2024.parquet"
     quotes_path = surface / "option_surface_quotes_weekly_2024_2024.parquet"
     meta.to_parquet(meta_path, index=False)
     quotes.to_parquet(quotes_path, index=False)
+    checks = [] if empty_checks else [
+        {
+            "name": "expected_meta_keys",
+            "status": "PASS",
+            "metrics": {},
+            "failures": [],
+            "warnings": [],
+        }
+    ]
     (reports / "surface_contract_checks.json").write_text(
-        json.dumps({"overall_verdict": "PASS", "checks": []}) + "\n",
+        json.dumps({"overall_verdict": "PASS", "checks": checks}) + "\n",
         encoding="utf-8",
     )
-    keys = [(day, "AAA"), (day, "BBB")]
+    keys = [(e, t) for e in entries for t in tickers]
     digest = ticker_date_keys_digest(keys)
     a2_grain = sorted(
         [
@@ -737,14 +778,14 @@ def _write_surface_artifacts(building: Path, day: date = FRI):
         "quotes_path": str(quotes_path),
         "report_path": str(reports / "surface_contract_checks.json"),
         "artifacts": [meta_path.name, quotes_path.name],
-        "supported_entry_dates": [day.isoformat()],
-        "expected_a1_key_count": 2,
+        "supported_entry_dates": [e.isoformat() for e in entries],
+        "expected_a1_key_count": len(keys),
         "expected_a1_key_digest": digest,
-        "actual_a1_key_count": 2,
+        "actual_a1_key_count": len(keys),
         "actual_a1_key_digest": digest,
-        "surface_valid_true_count": 2,
+        "surface_valid_true_count": len(keys),
         "surface_valid_false_count": 0,
-        "a2_row_count": 4,
+        "a2_row_count": len(quotes),
         "a2_grain_digest": digest_json(a2_grain),
         "meta_total_bytes": meta_path.stat().st_size,
         "quotes_total_bytes": quotes_path.stat().st_size,
@@ -1095,3 +1136,205 @@ def test_liquidity_or_adjusted_evidence_with_warning_rejects(snapshots_root, raw
             evidence=adj,
             producer_repo_sha="a" * 40,
         )
+
+
+# ── final cross-stage validation and candidate manifest ────────────────────────
+
+
+def _seed_trading_weeks(raw_root: Path, fridays: list[date]) -> None:
+    for fri in fridays:
+        monday = fri - timedelta(days=4)
+        for offset in range(5):
+            _write_zip(raw_root, monday + timedelta(days=offset), rows=2)
+        _write_zip(raw_root, fri + timedelta(days=1), rows=0)
+
+
+def _install_finalizable(
+    prepared,
+    *,
+    surface_entries: list[date] | None = None,
+    expiry_by_entry: dict[date, date] | None = None,
+    empty_checks: bool = False,
+    adjusted_days: list[date] | None = None,
+    spot_days: list[date] | None = None,
+):
+    building = prepared.roots.building
+    physical = [date.fromisoformat(d) for d in prepared.run_config["physical_raw_dates"]]
+    resolved = [date.fromisoformat(d) for d in prepared.run_config["resolved_trading_dates"]]
+    if surface_entries is None:
+        surface_entries = [resolved[-1]]
+    _install_marker(prepared, "liquidity", _write_liquidity_artifacts(building))
+    _install_marker(
+        prepared,
+        "adjusted",
+        _write_adjusted_artifacts(building, adjusted_days or physical),
+    )
+    _install_marker(
+        prepared,
+        "spot",
+        _write_spot_artifacts(building, spot_days or resolved),
+    )
+    _install_marker(
+        prepared,
+        "surface",
+        _write_surface_artifacts(
+            building,
+            surface_entries,
+            expiry_by_entry=expiry_by_entry,
+            empty_checks=empty_checks,
+        ),
+    )
+
+
+def _fingerprints(building: Path) -> dict[str, str]:
+    out = {}
+    for path in sorted(building.rglob("*")):
+        if path.is_file():
+            rel = path.relative_to(building).as_posix()
+            out[rel] = sha256_file(path)
+    return out
+
+
+def test_finalize_four_markers_writes_valid_manifest(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    _install_finalizable(prepared)
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        manifest, path = finalize_candidate_snapshot(prepared, lock)
+    assert path.is_file()
+    assert path.parent.name == "manifests"
+    assert prepared.roots.building.name.endswith(".building")
+    assert not prepared.roots.final.exists()
+    assert manifest.production_accepted is True
+    assert manifest.data_source == "orats_raw_rebuild"
+    assert Path(manifest.cache_dir).resolve() == prepared.roots.final.resolve()
+    assert manifest.params["scope"] == "full"
+    assert (prepared.roots.building / "reports/final/final_validation.json").is_file()
+
+
+def test_finalize_missing_marker_writes_no_manifest(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    building = prepared.roots.building
+    _install_marker(prepared, "liquidity", _write_liquidity_artifacts(building))
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        with pytest.raises(RunConfigError, match="all four stages"):
+            finalize_candidate_snapshot(prepared, lock)
+    assert list((building / "manifests").glob("input_snapshot_*.json")) == []
+
+
+def test_finalize_universe_or_date_disagreement_blocks(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    _install_finalizable(prepared, adjusted_days=[MON, TUE, WED, THU, FRI])
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        with pytest.raises(RunConfigError, match="physical_raw_dates"):
+            finalize_candidate_snapshot(prepared, lock)
+
+    prepared2 = _prepare(snapshots_root, raw_root, build_id=BUILD_ID_B)
+    _install_finalizable(prepared2)
+    liquid = prepared2.roots.building / "input/liquidity/liquid_tickers.csv"
+    liquid.write_text(
+        "Ticker,snapshots_qualified,months_qualified\nAAA,3,3\nCCC,3,3\n",
+        encoding="utf-8",
+    )
+    with SiblingBuildLock(snapshots_root, BUILD_ID_B) as lock:
+        with pytest.raises(RunConfigError, match="universe identity|equity_universe"):
+            finalize_candidate_snapshot(prepared2, lock)
+
+
+def test_finalize_readiness_gap_selects_largest_earliest(snapshots_root, raw_root):
+    fri_a, fri_b, fri_c = FRI, date(2024, 1, 12), date(2024, 1, 19)
+    _seed_trading_weeks(raw_root, [fri_a, fri_b, fri_c])
+    prepared = prepare_new_backfill_run(
+        snapshots_root=snapshots_root,
+        raw_root=raw_root,
+        requested_output_start=fri_a,
+        as_of_requested=date(2024, 1, 21),
+        lookback_weeks=1,
+        repo_sha_at_freeze="f" * 40,
+        build_id=BUILD_ID_A,
+    )
+    outside = date(2024, 2, 1)
+    _install_finalizable(
+        prepared,
+        surface_entries=[fri_a, fri_b, fri_c],
+        expiry_by_entry={fri_a: outside, fri_b: fri_b, fri_c: fri_c},
+    )
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        manifest, _ = finalize_candidate_snapshot(prepared, lock)
+    assert manifest.params["feature_ready_start"] == fri_b.isoformat()
+    assert manifest.params["feature_ready_end"] == fri_c.isoformat()
+
+    prepared2 = prepare_new_backfill_run(
+        snapshots_root=snapshots_root,
+        raw_root=raw_root,
+        requested_output_start=fri_a,
+        as_of_requested=date(2024, 1, 21),
+        lookback_weeks=1,
+        repo_sha_at_freeze="f" * 40,
+        build_id=BUILD_ID_B,
+    )
+    _install_finalizable(
+        prepared2,
+        surface_entries=[fri_a, fri_b, fri_c],
+        expiry_by_entry={fri_a: fri_a, fri_b: outside, fri_c: fri_c},
+    )
+    with SiblingBuildLock(snapshots_root, BUILD_ID_B) as lock:
+        manifest2, _ = finalize_candidate_snapshot(prepared2, lock)
+    assert manifest2.params["feature_ready_start"] == fri_a.isoformat()
+    assert manifest2.params["feature_ready_end"] == fri_a.isoformat()
+
+
+def test_finalize_manifest_paths_resolve_in_building(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    _install_finalizable(prepared)
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        manifest, _ = finalize_candidate_snapshot(prepared, lock)
+    building = prepared.roots.building
+    assert Path(manifest.cache_dir).resolve() == prepared.roots.final.resolve()
+    assert not str(Path(manifest.cache_dir).resolve()).endswith(".building")
+    for rel in manifest.artifacts.values():
+        assert (building / rel).exists()
+        assert "work" not in Path(rel).parts
+        assert "candidate" not in Path(rel).parts
+    for rel in manifest.reports.values():
+        assert rel is not None
+        assert (building / rel).is_file()
+
+
+def test_finalize_rejects_empty_surface_checks(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    _install_finalizable(prepared, empty_checks=True)
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        with pytest.raises(RunConfigError, match="checks list is empty"):
+            finalize_candidate_snapshot(prepared, lock)
+
+
+def test_finalize_rerun_only_touches_final_and_manifests(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    _install_finalizable(prepared)
+    building = prepared.roots.building
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        finalize_candidate_snapshot(prepared, lock)
+        before = _fingerprints(building)
+        (building / "reports/final/sentinel.txt").write_text("x", encoding="utf-8")
+        finalize_candidate_snapshot(prepared, lock)
+        after = _fingerprints(building)
+    assert "reports/final/sentinel.txt" not in after
+    stable_before = {
+        rel: digest
+        for rel, digest in before.items()
+        if not rel.startswith("reports/final/") and not rel.startswith("manifests/")
+    }
+    stable_after = {
+        rel: digest
+        for rel, digest in after.items()
+        if not rel.startswith("reports/final/") and not rel.startswith("manifests/")
+    }
+    assert stable_before == stable_after
+    assert any(rel.startswith("manifests/") for rel in after)
+    assert any(rel.startswith("reports/final/") for rel in after)

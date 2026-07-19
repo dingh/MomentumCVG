@@ -10,12 +10,13 @@ This module holds direct functions and small dataclasses for:
   directory layout) and resume-open of an explicitly named ``.building`` run;
 * raw-inventory rescan with digest-drift rejection on resume;
 * four completion markers and stage-boundary resume over the fixed order
-  liquidity → adjusted → spot → surface.
+  liquidity → adjusted → spot → surface;
+* final cross-stage validation and schema-v1 candidate-manifest construction
+  while the root remains named ``.building``.
 
-Final cross-stage validation, manifest construction, locking acquisition,
-CLI execution, and atomic publication remain deferred. There is no framework,
-DAG, plugin, receipt, or state-machine abstraction here — and no ``.failed``
-lifecycle.
+Sibling-lock acquisition, CLI execution, and atomic publication remain
+deferred. There is no framework, DAG, plugin, receipt, or state-machine
+abstraction here — and no ``.failed`` lifecycle.
 
 Design: docs/tmp/c8_3b_resumable_cold_backfill_design.md
 """
@@ -36,6 +37,22 @@ from typing import Any, Callable, Mapping
 
 import pandas as pd
 
+from src.data.input_snapshot import (
+    ARTIFACT_ADJUSTED_CHAINS_ROOT,
+    ARTIFACT_LIQUID_TICKERS,
+    ARTIFACT_LIQUIDITY_DAILY,
+    ARTIFACT_LIQUIDITY_PANEL,
+    ARTIFACT_LIQUIDITY_WEEKLY,
+    ARTIFACT_OPTION_SURFACE_META,
+    ARTIFACT_OPTION_SURFACE_QUOTES,
+    ARTIFACT_SPOT_PRICES,
+    ARTIFACT_SPLITS,
+    INPUT_SNAPSHOT_SCHEMA_VERSION,
+    InputSnapshotManifest,
+    compute_snapshot_id,
+    read_manifest,
+    write_manifest,
+)
 from src.data.security_types import classification_digest
 from src.data.snapshot_foundation import (
     SNAPSHOT_BUILD_ID_RE,
@@ -52,6 +69,7 @@ from src.data.snapshot_foundation import (
     generate_snapshot_build_id,
     resolve_under_root,
     sha256_file,
+    sibling_lock_path,
     ticker_date_keys_digest,
 )
 from src.data.ticker_universe import load_ticker_universe
@@ -1521,3 +1539,336 @@ def execute_backfill_stages(
         validated[stage] = load_and_validate_stage_marker(building, stage, config)
 
     return validated
+
+
+# ── Final cross-stage validation and candidate manifest ────────────────────────
+
+
+_FINAL_REPORT_REL = "reports/final/final_validation.json"
+_ORATS_RAW_REBUILD = "orats_raw_rebuild"
+
+
+def _adjusted_dates(building: Path) -> list[date]:
+    dates: list[date] = []
+    for path in sorted(
+        (building / "input" / "adjusted_liquid").glob("*/ORATS_SMV_Strikes_*.parquet")
+    ):
+        try:
+            dates.append(datetime.strptime(path.stem.rsplit("_", 1)[-1], "%Y%m%d").date())
+        except ValueError as exc:
+            raise RunConfigError(
+                f"adjusted parquet filename is not a trade date: {path.name}"
+            ) from exc
+    return dates
+
+
+def _spot_dates(building: Path) -> list[date]:
+    frame = pd.read_parquet(building / _SPOT_OUTPUT, columns=["date"])
+    return sorted({pd.Timestamp(d).date() for d in frame["date"]})
+
+
+def _cross_check_identity(
+    building: Path,
+    config: Mapping[str, Any],
+    markers: Mapping[str, Mapping[str, Any]],
+) -> tuple[list[str], str]:
+    universe = sorted(
+        load_ticker_universe(building / "input" / "liquidity" / "liquid_tickers.csv")
+    )
+    digest = digest_json(universe)
+    liq = markers["liquidity"]["evidence"].get("equity_universe_digest")
+    adj = markers["adjusted"]["evidence"].get("universe_digest")
+    if liq != digest or adj != digest:
+        raise RunConfigError(
+            "cross-stage universe identity disagreement "
+            f"(liquidity={liq!r}, adjusted={adj!r}, recomputed={digest!r})"
+        )
+    supported = [
+        date.fromisoformat(d)
+        for d in markers["surface"]["evidence"]["supported_entry_dates"]
+    ]
+    expected = {(d, t) for t in universe for d in supported}
+    surf = markers["surface"]["evidence"]
+    if (
+        surf.get("expected_a1_key_count") != len(expected)
+        or surf.get("expected_a1_key_digest") != ticker_date_keys_digest(expected)
+    ):
+        raise RunConfigError("recomputed Surface expected A1 count/digest mismatch")
+    physical = [date.fromisoformat(d) for d in config["physical_raw_dates"]]
+    resolved = [date.fromisoformat(d) for d in config["resolved_trading_dates"]]
+    if _adjusted_dates(building) != physical:
+        raise RunConfigError(
+            "adjusted daily parquet dates disagree with frozen physical_raw_dates"
+        )
+    if _spot_dates(building) != resolved:
+        raise RunConfigError(
+            "spot resolved dates disagree with frozen resolved_trading_dates"
+        )
+    if any(d not in set(resolved) for d in supported):
+        raise RunConfigError(
+            "surface supported_entry_dates are outside frozen resolved inventory"
+        )
+    return universe, digest
+
+
+def _select_feature_ready(
+    building: Path,
+    markers: Mapping[str, Mapping[str, Any]],
+    universe: list[str],
+) -> tuple[date | None, date | None, int]:
+    schedule = [
+        date.fromisoformat(d)
+        for d in markers["surface"]["evidence"]["supported_entry_dates"]
+    ]
+    panel = pd.read_parquet(
+        building / "input" / "liquidity" / "ticker_liquidity_panel.parquet"
+    )
+    if "month_date" not in panel.columns:
+        raise RunConfigError(
+            "liquidity panel missing month_date for strict-prior readiness"
+        )
+    prior_months = {pd.Timestamp(m).date() for m in panel["month_date"] if pd.notna(m)}
+    adjusted_set, spot_set = set(_adjusted_dates(building)), set(_spot_dates(building))
+    meta = pd.read_parquet(
+        building / markers["surface"]["evidence"]["meta_path"],
+        columns=["ticker", "entry_date", "expiry_date"],
+    )
+    rows = [
+        (str(t).strip().upper(), pd.Timestamp(e).date(), pd.Timestamp(x).date())
+        for t, e, x in zip(meta["ticker"], meta["entry_date"], meta["expiry_date"])
+    ]
+    universe_set = set(universe)
+    ready: set[date] = set()
+    for entry in schedule:
+        expiries = {x for _t, e, x in rows if e == entry}
+        present = {t for t, e, _x in rows if e == entry}
+        if (
+            any(m < entry for m in prior_months)
+            and expiries
+            and entry in adjusted_set
+            and entry in spot_set
+            and all(x in adjusted_set and x in spot_set for x in expiries)
+            and present == universe_set
+        ):
+            ready.add(entry)
+    best_start = best_end = None
+    best_count = 0
+    i = 0
+    while i < len(schedule):
+        if schedule[i] not in ready:
+            i += 1
+            continue
+        j = i
+        while j < len(schedule) and schedule[j] in ready:
+            j += 1
+        if (j - i) > best_count:
+            best_start, best_end, best_count = schedule[i], schedule[j - 1], j - i
+        i = j
+    return best_start, best_end, best_count
+
+
+def _manifest_rel_ok(building: Path, rel: str, *, label: str, directory: bool = False) -> str:
+    if not isinstance(rel, str) or not rel:
+        raise RunConfigError(f"{label} must be a nonempty relative path")
+    normalized = rel.replace("\\", "/")
+    parts = Path(normalized).parts
+    if any(p in ("work", "candidate") or p.startswith(".tmp") for p in parts):
+        raise RunConfigError(f"{label} may not reference work/, candidate, or temps: {rel}")
+    if any(p.endswith(".building") for p in parts):
+        raise RunConfigError(f"{label} may not reference a .building path: {rel}")
+    try:
+        path = resolve_under_root(building, normalized, label=label)
+    except SnapshotPathError as exc:
+        raise RunConfigError(str(exc)) from exc
+    if directory:
+        if not path.is_dir():
+            raise RunConfigError(f"{label} missing required directory: {rel}")
+    elif not path.is_file():
+        raise RunConfigError(f"{label} missing required file: {rel}")
+    return normalized
+
+
+def finalize_candidate_snapshot(
+    run: PreparedRun | ResumedRun,
+    lock: SiblingBuildLock,
+) -> tuple[InputSnapshotManifest, Path]:
+    """Validate four complete stages, write final report + schema-v1 manifest.
+
+    Requires an already-held sibling lock for this build. Leaves the root named
+    ``.building``; does not acquire/release the lock or publish.
+    """
+    if not lock.held:
+        raise SnapshotLockError(
+            "finalize_candidate_snapshot requires the sibling lock to already be held"
+        )
+    expected_lock = sibling_lock_path(run.snapshots_root, run.build_id)
+    if Path(lock.path).resolve() != Path(expected_lock).resolve():
+        raise SnapshotLockError(
+            f"sibling lock {lock.path} does not belong to build {run.build_id}"
+        )
+    building = Path(run.roots.building)
+    if not str(building).endswith(".building"):
+        raise RunConfigError(f"candidate root must remain .building: {building}")
+    config = run.run_config
+    state = inspect_stage_markers(building, config)
+    if state.next_stage is not None or set(state.completed_stages) != set(STAGE_ORDER):
+        raise RunConfigError(
+            "finalization requires all four stages complete; next="
+            f"{state.next_stage!r} completed={state.completed_stages!r}"
+        )
+    markers = state.validated_markers
+    surface_report = json.loads(
+        _require_rel_file(building, _SURFACE_REPORT, label="surface report").read_text(
+            encoding="utf-8"
+        )
+    )
+    if not (surface_report.get("checks") or []):
+        raise RunConfigError(
+            "surface report checks list is empty; cannot certify candidate"
+        )
+    universe, universe_digest = _cross_check_identity(building, config, markers)
+    ready_start, ready_end, ready_count = _select_feature_ready(
+        building, markers, universe
+    )
+
+    for rel in ("reports/final", "manifests"):
+        path = building / rel
+        if path.exists():
+            shutil.rmtree(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+    weekday_gaps = list(
+        load_raw_inventory_document(building).get("missing_weekday_dates_diagnostic")
+        or []
+    )
+    accepted_warnings = [
+        w
+        for stage in ("spot", "surface")
+        for w in markers[stage].get("accepted_warnings") or []
+    ]
+    overall = "WARN" if accepted_warnings else "PASS"
+    ready_start_s = None if ready_start is None else ready_start.isoformat()
+    ready_end_s = None if ready_end is None else ready_end.isoformat()
+    gap_notes = [f"missing weekday (diagnostic): {d}" for d in weekday_gaps]
+    final_report = {
+        "status": overall,
+        "run_config_id": config["run_config_id"],
+        "stages": [
+            {
+                "stage": stage,
+                "stage_contract_version": markers[stage]["stage_contract_version"],
+            }
+            for stage in STAGE_ORDER
+        ],
+        "universe_count": len(universe),
+        "universe_digest": universe_digest,
+        "physical_date_count": len(config["physical_raw_dates"]),
+        "resolved_date_count": len(config["resolved_trading_dates"]),
+        "feature_ready_start": ready_start_s,
+        "feature_ready_end": ready_end_s,
+        "feature_ready_entry_count": ready_count,
+        "accepted_warnings": accepted_warnings,
+        "weekday_gap_notes": gap_notes,
+    }
+    (building / _FINAL_REPORT_REL).write_text(
+        json.dumps(final_report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    surf = markers["surface"]["evidence"]
+    artifacts = {
+        ARTIFACT_LIQUIDITY_DAILY: _LIQUIDITY_ARTIFACTS[0],
+        ARTIFACT_LIQUIDITY_WEEKLY: _LIQUIDITY_ARTIFACTS[1],
+        ARTIFACT_LIQUIDITY_PANEL: _LIQUIDITY_ARTIFACTS[2],
+        ARTIFACT_LIQUID_TICKERS: _LIQUIDITY_ARTIFACTS[3],
+        ARTIFACT_SPLITS: _ADJUSTED_SPLITS,
+        ARTIFACT_ADJUSTED_CHAINS_ROOT: "input/adjusted_liquid",
+        ARTIFACT_SPOT_PRICES: _SPOT_OUTPUT,
+        ARTIFACT_OPTION_SURFACE_META: surf["meta_path"],
+        ARTIFACT_OPTION_SURFACE_QUOTES: surf["quotes_path"],
+    }
+    reports = {
+        "liquidity": _LIQUIDITY_REPORT,
+        "adjusted": _ADJUSTED_REPORT,
+        "spot": _SPOT_REPORT,
+        "surface": _SURFACE_REPORT,
+        "final": _FINAL_REPORT_REL,
+    }
+    for label, rel in {**artifacts, **reports}.items():
+        _manifest_rel_ok(
+            building,
+            rel,
+            label=label,
+            directory=label == ARTIFACT_ADJUSTED_CHAINS_ROOT,
+        )
+
+    planned_final = str(Path(run.roots.final).resolve())
+    params = {
+        "scope": "full",
+        "run_config_id": config["run_config_id"],
+        "inventory_digest": config["inventory_digest"],
+        "equity_universe_digest": universe_digest,
+        "classification_digest": markers["liquidity"]["evidence"]["classification_digest"],
+        "adjusted_inventory_digest": markers["adjusted"]["evidence"][
+            "adjusted_inventory_digest"
+        ],
+        "spot_output_key_digest": markers["spot"]["evidence"]["output_key_digest"],
+        "surface_expected_a1_key_digest": surf["expected_a1_key_digest"],
+        "surface_actual_a1_key_digest": surf["actual_a1_key_digest"],
+        "c4_params": dict(config["c4_params"]),
+        "surface_policy": dict(config["surface_policy"]),
+        "feature_ready_start": ready_start_s,
+        "feature_ready_end": ready_end_s,
+    }
+    snapshot_id = compute_snapshot_id(
+        {
+            "schema_version": INPUT_SNAPSHOT_SCHEMA_VERSION,
+            "as_of_resolved_trading_day": config["as_of_resolved_trading_day"],
+            "data_source": _ORATS_RAW_REBUILD,
+            "artifacts": artifacts,
+            "params": params,
+        }
+    )
+    manifest = InputSnapshotManifest(
+        schema_version=INPUT_SNAPSHOT_SCHEMA_VERSION,
+        snapshot_id=snapshot_id,
+        build_id=run.build_id,
+        created_at_utc=datetime.now(timezone.utc),
+        as_of_requested=date.fromisoformat(config["as_of_requested"]),
+        as_of_resolved_trading_day=date.fromisoformat(
+            config["as_of_resolved_trading_day"]
+        ),
+        data_source=_ORATS_RAW_REBUILD,
+        cache_dir=planned_final,
+        artifacts=artifacts,
+        params=params,
+        reports=reports,
+        overall_status=overall,
+        blocking_failures=[],
+        notes=gap_notes,
+        production_accepted=True,
+    )
+    manifest_path = building / "manifests" / f"input_snapshot_{snapshot_id}.json"
+    write_manifest(manifest_path, manifest)
+    loaded = read_manifest(manifest_path)
+    if (
+        compute_snapshot_id(loaded) != loaded.snapshot_id
+        or loaded.build_id != run.build_id
+        or Path(loaded.cache_dir).resolve() != Path(planned_final).resolve()
+        or loaded.data_source != _ORATS_RAW_REBUILD
+        or loaded.params.get("scope") != "full"
+        or loaded.production_accepted is not True
+    ):
+        raise RunConfigError("manifest read-back identity/publication checks failed")
+    for label, rel in {
+        **loaded.artifacts,
+        **{k: v for k, v in loaded.reports.items() if v},
+    }.items():
+        _manifest_rel_ok(
+            building,
+            rel,
+            label=f"readback {label}",
+            directory=label == ARTIFACT_ADJUSTED_CHAINS_ROOT,
+        )
+    for stage in STAGE_ORDER:
+        load_and_validate_stage_marker(building, stage, config)
+    return loaded, manifest_path
