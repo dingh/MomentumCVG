@@ -998,51 +998,147 @@ def _require_marker_fields(marker: Mapping[str, Any], stage: str) -> None:
 def _normalize_accepted_warnings(stage: str, evidence: Mapping[str, Any]) -> list[dict[str, str]]:
     """Map adapter warnings to the narrow marker acceptance policy."""
     raw = list(evidence.get("accepted_warnings") or [])
+    status = evidence.get("status")
     if stage in ("liquidity", "adjusted"):
+        if raw:
+            raise RunConfigError(
+                f"{stage} evidence must not contain accepted_warnings"
+            )
         return []
+    if status == "PASS":
+        if raw:
+            raise RunConfigError(
+                f"{stage} PASS evidence must not contain accepted_warnings"
+            )
+        return []
+    if status != "WARN":
+        raise RunConfigError(
+            f"{stage} evidence status must be PASS or WARN; got {status!r}"
+        )
     if stage == "spot":
-        if evidence.get("status") == "PASS" and not raw:
-            return []
         if not raw or not evidence.get("ambiguous_exclusion_count"):
             raise RunConfigError(
-                "spot stage accepted_warnings must be empty on PASS or describe "
-                "only the reconciled ambiguous-key case"
+                "spot WARN evidence must describe only the reconciled "
+                "ambiguous-key case"
             )
         if not all(
             any(marker in str(w) for marker in _SPOT_WARN_MARKERS) for w in raw
         ):
             raise RunConfigError(
-                "spot stage accepted_warnings are not the reconciled ambiguous-key case"
+                "spot accepted_warnings are not the reconciled ambiguous-key case"
             )
         return [{"warning": str(w), "reason": _SPOT_WARN_REASON} for w in raw]
     if stage == "surface":
-        if evidence.get("status") == "PASS" and not raw:
-            return []
         if not raw or not all(_SURFACE_WARN_MARKER in str(w) for w in raw):
             raise RunConfigError(
-                "surface stage accepted_warnings must be empty on PASS or only "
-                "the a1_a2_join_integrity informational case"
+                "surface WARN evidence must describe only the "
+                "a1_a2_join_integrity informational case"
             )
         return [{"warning": str(w), "reason": _SURFACE_WARN_REASON} for w in raw]
     raise RunConfigError(f"unknown stage for warning normalization: {stage!r}")
 
 
-def _validate_marker_warnings(stage: str, warnings: list[Any]) -> None:
-    if stage in ("liquidity", "adjusted"):
-        if warnings:
-            raise RunConfigError(f"{stage} marker must not record accepted warnings")
+def _bind_marker_envelope(stage: str, marker: Mapping[str, Any]) -> None:
+    """Require marker envelope fields to match the embedded evidence."""
+    evidence = marker["evidence"]
+    if not isinstance(evidence, Mapping):
+        raise RunConfigError(f"{stage} marker evidence must be an object")
+    if evidence.get("stage") != stage:
+        raise RunConfigError(
+            f"{stage} marker evidence.stage is {evidence.get('stage')!r}"
+        )
+    if marker.get("gate_status") != evidence.get("status"):
+        raise RunConfigError(
+            f"{stage} marker gate_status {marker.get('gate_status')!r} does not "
+            f"match evidence.status {evidence.get('status')!r}"
+        )
+    expected = _normalize_accepted_warnings(stage, evidence)
+    if marker.get("accepted_warnings") != expected:
+        raise RunConfigError(
+            f"{stage} marker accepted_warnings do not match evidence warnings"
+        )
+
+
+def _validate_acceptance_report(
+    building: Path, stage: str, evidence: Mapping[str, Any]
+) -> None:
+    """Read the stage acceptance report and bind it to evidence (no re-audit)."""
+    if stage == "liquidity":
+        text = _require_rel_file(
+            building, _LIQUIDITY_REPORT, label="liquidity report"
+        ).read_text(encoding="utf-8")
+        if "- overall status: `PASS`" not in text:
+            raise RunConfigError("liquidity C7 report does not record overall PASS")
+        if "- strict mode: `True`" not in text:
+            raise RunConfigError("liquidity C7 report does not record strict mode")
         return
-    for item in warnings:
-        if not isinstance(item, Mapping):
-            raise RunConfigError(f"{stage} marker accepted_warnings entries must be objects")
-        warning = str(item.get("warning", ""))
-        reason = str(item.get("reason", ""))
-        if stage == "spot":
-            if reason != _SPOT_WARN_REASON or not any(m in warning for m in _SPOT_WARN_MARKERS):
-                raise RunConfigError("spot marker has an unaccepted warning")
-        elif stage == "surface":
-            if reason != _SURFACE_WARN_REASON or _SURFACE_WARN_MARKER not in warning:
-                raise RunConfigError("surface marker has an unaccepted warning")
+    if stage == "adjusted":
+        text = _require_rel_file(
+            building, _ADJUSTED_REPORT, label="adjusted report"
+        ).read_text(encoding="utf-8")
+        if "**PASS WITH WARNINGS**" in text:
+            raise RunConfigError(
+                "adjusted C5 report is PASS WITH WARNINGS; exact PASS is required"
+            )
+        if "## Overall verdict: **PASS**" not in text:
+            raise RunConfigError("adjusted C5 report does not record exact PASS")
+        return
+    if stage == "spot":
+        path = _require_rel_file(building, _SPOT_REPORT, label="spot report")
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RunConfigError(f"malformed spot report: {exc}") from exc
+        if not isinstance(report, Mapping):
+            raise RunConfigError("spot report must be a JSON object")
+        if report.get("status") != evidence.get("status"):
+            raise RunConfigError("spot report status does not match evidence.status")
+        if report.get("failures"):
+            raise RunConfigError("spot report failures must be empty")
+        if list(report.get("warnings") or []) != list(
+            evidence.get("accepted_warnings") or []
+        ):
+            raise RunConfigError(
+                "spot report warnings do not match evidence.accepted_warnings"
+            )
+        return
+    if stage == "surface":
+        path = _require_rel_file(building, _SURFACE_REPORT, label="surface report")
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RunConfigError(f"malformed surface report: {exc}") from exc
+        if not isinstance(report, Mapping):
+            raise RunConfigError("surface report must be a JSON object")
+        if report.get("overall_verdict") != evidence.get("status"):
+            raise RunConfigError(
+                "surface report overall_verdict does not match evidence.status"
+            )
+        checks = report.get("checks") or []
+        if not isinstance(checks, list):
+            raise RunConfigError("surface report checks must be a list")
+        if any(isinstance(c, Mapping) and c.get("status") == "FAIL" for c in checks):
+            raise RunConfigError("surface report contains a FAIL check")
+        failures = [
+            f
+            for c in checks
+            if isinstance(c, Mapping)
+            for f in (c.get("failures") or [])
+        ]
+        if failures:
+            raise RunConfigError("surface report failures must be empty")
+        flattened = [
+            w
+            for c in checks
+            if isinstance(c, Mapping)
+            for w in (c.get("warnings") or [])
+        ]
+        if flattened != list(evidence.get("accepted_warnings") or []):
+            raise RunConfigError(
+                "surface report warnings do not match evidence.accepted_warnings"
+            )
+        return
+    raise RunConfigError(f"unknown stage for report validation: {stage!r}")
 
 
 def _evidence_required_paths(
@@ -1229,6 +1325,8 @@ def validate_stage_evidence(
         _validate_spot_evidence(building, evidence)
     else:
         _validate_surface_evidence(building, evidence)
+    _normalize_accepted_warnings(stage, evidence)
+    _validate_acceptance_report(building, stage, evidence)
 
 
 def build_stage_marker(
@@ -1313,7 +1411,7 @@ def load_and_validate_stage_marker(
             f"{stage} marker run_config_id mismatch: marker "
             f"{marker['run_config_id']!r} vs run {run_config['run_config_id']!r}"
         )
-    _validate_marker_warnings(stage, marker["accepted_warnings"])
+    _bind_marker_envelope(stage, marker)
     for rel in marker["required_paths"]:
         if not isinstance(rel, str):
             raise RunConfigError(f"{stage} marker required_paths entries must be strings")

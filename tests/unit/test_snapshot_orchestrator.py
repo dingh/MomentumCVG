@@ -539,7 +539,12 @@ def _write_liquidity_artifacts(building: Path, tickers: list[str] = ("AAA", "BBB
         }
     )
     classification.to_parquet(liquid_dir / "security_classification.parquet", index=False)
-    (reports / "pit_universe_audit.md").write_text("# C7 PASS\n", encoding="utf-8")
+    (reports / "pit_universe_audit.md").write_text(
+        "# C7 PIT Universe Audit\n\n## Verdict\n\n"
+        "- overall status: `PASS`\n"
+        "- strict mode: `True`\n",
+        encoding="utf-8",
+    )
     return {
         "stage": "liquidity",
         "status": "PASS",
@@ -643,7 +648,17 @@ def _write_spot_artifacts(building: Path, day: date = FRI):
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"
     )
     (reports / "gate_spot_reconciliation.json").write_text(
-        json.dumps({"status": "PASS"}) + "\n", encoding="utf-8"
+        json.dumps(
+            {
+                "name": "spot_summary_reconciliation",
+                "status": "PASS",
+                "failures": [],
+                "warnings": [],
+                "metrics": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
     )
     return {
         "stage": "spot",
@@ -693,7 +708,8 @@ def _write_surface_artifacts(building: Path, day: date = FRI):
     meta.to_parquet(meta_path, index=False)
     quotes.to_parquet(quotes_path, index=False)
     (reports / "surface_contract_checks.json").write_text(
-        json.dumps({"overall_verdict": "PASS"}) + "\n", encoding="utf-8"
+        json.dumps({"overall_verdict": "PASS", "checks": []}) + "\n",
+        encoding="utf-8",
     )
     keys = [(day, "AAA"), (day, "BBB")]
     digest = ticker_date_keys_digest(keys)
@@ -994,3 +1010,88 @@ def test_execute_requires_held_lock(snapshots_root, raw_root):
     lock = SiblingBuildLock(snapshots_root, BUILD_ID_A)
     with pytest.raises(SnapshotLockError, match="already be held"):
         execute_backfill_stages(prepared, lock, stage_runner=lambda stage: {})
+
+
+def _rewrite_marker(building: Path, stage: str, mutate) -> None:
+    path = stage_marker_path(building, stage)
+    marker = json.loads(path.read_text(encoding="utf-8"))
+    mutate(marker)
+    path.unlink()
+    write_stage_marker(building, marker)
+
+
+def test_report_changed_to_fail_rejects_marker(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    building = prepared.roots.building
+    _install_marker(prepared, "liquidity", _write_liquidity_artifacts(building))
+    (
+        building / "reports" / "liquidity" / "pit_universe_audit.md"
+    ).write_text(
+        "# C7 PIT Universe Audit\n\n## Verdict\n\n"
+        "- overall status: `FAIL`\n"
+        "- strict mode: `True`\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RunConfigError, match="overall PASS"):
+        load_and_validate_stage_marker(building, "liquidity", prepared.run_config)
+
+
+def test_marker_gate_status_disagreeing_with_evidence_rejects(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    building = prepared.roots.building
+    _install_marker(prepared, "liquidity", _write_liquidity_artifacts(building))
+
+    def mutate(marker):
+        marker["gate_status"] = "WARN"
+
+    _rewrite_marker(building, "liquidity", mutate)
+    with pytest.raises(RunConfigError, match="gate_status"):
+        load_and_validate_stage_marker(building, "liquidity", prepared.run_config)
+
+
+def test_marker_warnings_disagreeing_with_evidence_rejects(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    building = prepared.roots.building
+    _install_marker(prepared, "spot", _write_spot_artifacts(building))
+
+    def mutate(marker):
+        marker["accepted_warnings"] = [
+            {
+                "warning": "1 ambiguous ticker-date exclusion(s) present",
+                "reason": "reconciled_ambiguous_ticker_date_exclusion",
+            }
+        ]
+
+    _rewrite_marker(building, "spot", mutate)
+    with pytest.raises(RunConfigError, match="accepted_warnings"):
+        load_and_validate_stage_marker(building, "spot", prepared.run_config)
+
+
+def test_liquidity_or_adjusted_evidence_with_warning_rejects(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    building = prepared.roots.building
+    liq = _write_liquidity_artifacts(building)
+    liq["accepted_warnings"] = ["unexpected warning"]
+    with pytest.raises(RunConfigError, match="must not contain accepted_warnings"):
+        build_stage_marker(
+            building_root=building,
+            stage="liquidity",
+            run_config=prepared.run_config,
+            evidence=liq,
+            producer_repo_sha="a" * 40,
+        )
+
+    adj = _write_adjusted_artifacts(building, [MON, TUE, WED, THU, FRI])
+    adj["accepted_warnings"] = ["unexpected warning"]
+    with pytest.raises(RunConfigError, match="must not contain accepted_warnings"):
+        build_stage_marker(
+            building_root=building,
+            stage="adjusted",
+            run_config=prepared.run_config,
+            evidence=adj,
+            producer_repo_sha="a" * 40,
+        )
