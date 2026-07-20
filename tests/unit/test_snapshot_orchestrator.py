@@ -1388,3 +1388,91 @@ def test_finalize_rejects_missing_strict_prior_pit_snapshot(snapshots_root, raw_
         with pytest.raises(RunConfigError, match="no feature-ready interval"):
             finalize_candidate_snapshot(prepared, lock)
     _assert_no_final_outputs(prepared.roots.building)
+
+
+# ── atomic publication ─────────────────────────────────────────────────────────
+
+
+def test_publish_removes_work_renames_and_keeps_sibling_lock(tmp_path):
+    from src.data.snapshot_foundation import derive_snapshot_roots
+    from src.data.snapshot_orchestrator import publish_candidate_snapshot
+    from types import SimpleNamespace
+
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    roots = derive_snapshot_roots(snapshots, BUILD_ID_A)
+    roots.building.mkdir()
+    (roots.building / "work" / "liquidity" / "candidate").mkdir(parents=True)
+    (roots.building / "markers").mkdir()
+    (roots.building / "input").mkdir()
+    (roots.building / "work" / "liquidity" / "candidate" / "tmp.txt").write_text(
+        "x", encoding="utf-8"
+    )
+    run = SimpleNamespace(
+        build_id=BUILD_ID_A, snapshots_root=snapshots, roots=roots
+    )
+    with SiblingBuildLock(snapshots, BUILD_ID_A) as lock:
+        final = publish_candidate_snapshot(run, lock)
+        assert lock.held
+        assert final == roots.final
+        assert final.is_dir()
+        assert not roots.building.exists()
+        assert not (final / "work").exists()
+        assert (final / "markers").is_dir()
+        lock_path = snapshots / f"{BUILD_ID_A}.lock"
+        assert lock_path.is_file()
+        assert lock_path.parent == snapshots
+        assert lock_path.parent == final.parent
+
+
+def test_publish_refuses_existing_final_root(tmp_path):
+    from src.data.snapshot_foundation import (
+        SnapshotLifecycleError,
+        derive_snapshot_roots,
+    )
+    from src.data.snapshot_orchestrator import publish_candidate_snapshot
+    from types import SimpleNamespace
+
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    roots = derive_snapshot_roots(snapshots, BUILD_ID_A)
+    roots.building.mkdir()
+    (roots.building / "work").mkdir()
+    roots.final.mkdir()
+    run = SimpleNamespace(
+        build_id=BUILD_ID_A, snapshots_root=snapshots, roots=roots
+    )
+    with SiblingBuildLock(snapshots, BUILD_ID_A) as lock:
+        with pytest.raises(SnapshotLifecycleError, match="overwrite"):
+            publish_candidate_snapshot(run, lock)
+        assert roots.building.is_dir()
+        assert (roots.building / "work").is_dir()
+        assert lock.held
+
+
+def test_publish_rename_failure_leaves_building(tmp_path, monkeypatch):
+    from src.data.snapshot_foundation import derive_snapshot_roots
+    from src.data.snapshot_orchestrator import publish_candidate_snapshot
+    from types import SimpleNamespace
+    import src.data.snapshot_orchestrator as orch
+
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    roots = derive_snapshot_roots(snapshots, BUILD_ID_A)
+    roots.building.mkdir()
+    (roots.building / "work").mkdir()
+    run = SimpleNamespace(
+        build_id=BUILD_ID_A, snapshots_root=snapshots, roots=roots
+    )
+
+    def boom(*_a, **_k):
+        raise OSError("simulated rename failure")
+
+    monkeypatch.setattr(orch.os, "replace", boom)
+    with SiblingBuildLock(snapshots, BUILD_ID_A) as lock:
+        with pytest.raises(OSError, match="simulated rename failure"):
+            publish_candidate_snapshot(run, lock)
+        assert roots.building.is_dir()
+        assert not roots.final.exists()
+        # work/ may already be removed before rename; building itself remains.
+        assert lock.held

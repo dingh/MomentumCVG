@@ -19,12 +19,11 @@ Resume::
 
 What this commit executes
 -------------------------
-Only ``plan`` and ``refresh --dry-run`` succeed (exit 0). A non-dry ``refresh``
-parses and validates its arguments, then exits 2 with a clear message: the
-producer, marker, and publication wiring lands in the next C8.3B commit. The
-blocked path creates **no** ``.building`` root, run config, raw inventory, or
-lock state. The snapshot preparation/resume functions live in
-``src.data.snapshot_orchestrator`` and are exercised directly by unit tests.
+``plan`` and ``refresh --dry-run`` succeed without scanning, locking, or writing.
+A non-dry ``refresh --mode backfill`` or ``refresh --resume BUILD_ID`` acquires
+the sibling lock, prepares or opens the ``.building`` run, executes incomplete
+stages, finalizes the candidate manifest, publishes via rename, then releases
+the lock.
 
 * ``--mode backfill`` is the only executable mode; ``incremental`` and
   ``repair`` are deferred (exit 2).
@@ -38,9 +37,10 @@ lock state. The snapshot preparation/resume functions live in
 
 Exit codes
 ----------
-0   = ``plan`` or ``refresh --dry-run`` success
-1   = runtime / producer / gate failure (reserved for the next commit)
-2   = usage error, config/corruption failure, or unsupported operation
+0   = published successfully, or ``plan`` / ``refresh --dry-run`` success
+1   = producer/gate failure, lock contention, or publication/runtime failure
+2   = usage error, unsupported mode, invalid frozen config, raw drift,
+      marker/manifest corruption
 130 = interrupted (KeyboardInterrupt)
 
 Design: docs/tmp/c8_3b_resumable_cold_backfill_design.md
@@ -58,12 +58,26 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-# NOTE: this module deliberately does not import src.data.snapshot_orchestrator
-# yet. The blocked non-dry refresh must not be able to scan inventory, create
-# a .building root, or acquire a lock; the wiring arrives in the next commit.
+from src.data.snapshot_foundation import (  # noqa: E402
+    SiblingBuildLock,
+    SnapshotFoundationError,
+    SnapshotLifecycleError,
+    SnapshotLockError,
+    generate_snapshot_build_id,
+)
+from src.data.snapshot_orchestrator import (  # noqa: E402
+    RawInventoryError,
+    RunConfigError,
+    execute_backfill_stages,
+    finalize_candidate_snapshot,
+    open_resume_run,
+    prepare_new_backfill_run,
+    publish_candidate_snapshot,
+)
+from src.data.snapshot_stage_adapters import StageExecutionError  # noqa: E402
 
 EXIT_OK = 0
-EXIT_RUNTIME = 1  # reserved: producer/gate/runtime failure (next commit)
+EXIT_RUNTIME = 1  # producer/gate/lock/publication/runtime failure
 EXIT_USAGE = 2  # usage / config / corruption / unsupported operation
 EXIT_INTERRUPT = 130
 
@@ -225,12 +239,86 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _print_publish_summary(*, build_id: str, final_root: Path, snapshot_id: str) -> None:
+    print(f"build_id: {build_id}")
+    print(f"final_root: {final_root}")
+    print(f"snapshot_id: {snapshot_id}")
+
+
+def _execute_locked_backfill(
+    *,
+    snapshots_root: Path,
+    build_id: str,
+    workers: int | None,
+    prepare_or_open,
+) -> tuple[str, Path, str]:
+    """Acquire lock, run stages/finalize/publish, release lock after rename attempt."""
+    lock = SiblingBuildLock(snapshots_root, build_id)
+    try:
+        lock.acquire()
+        run = prepare_or_open()
+        execute_backfill_stages(
+            run,
+            lock,
+            max_workers=workers,
+            surface_workers=workers,
+        )
+        manifest, _manifest_path = finalize_candidate_snapshot(run, lock)
+        final_root = publish_candidate_snapshot(run, lock)
+        return build_id, final_root, manifest.snapshot_id
+    finally:
+        lock.release()
+
+
+def _run_new_backfill(args: argparse.Namespace) -> int:
+    build_id = generate_snapshot_build_id()
+    snapshots_root = Path(args.snapshots_root)
+
+    def _prepare():
+        return prepare_new_backfill_run(
+            snapshots_root=snapshots_root,
+            raw_root=args.raw_root,
+            requested_output_start=args.start_date,
+            as_of_requested=args.as_of,
+            build_id=build_id,
+        )
+
+    build_id_out, final_root, snapshot_id = _execute_locked_backfill(
+        snapshots_root=snapshots_root,
+        build_id=build_id,
+        workers=args.workers,
+        prepare_or_open=_prepare,
+    )
+    _print_publish_summary(
+        build_id=build_id_out, final_root=final_root, snapshot_id=snapshot_id
+    )
+    return EXIT_OK
+
+
+def _run_resume_backfill(args: argparse.Namespace) -> int:
+    build_id = args.resume
+    snapshots_root = Path(args.snapshots_root)
+
+    def _open():
+        return open_resume_run(snapshots_root, build_id, rescan_raw=True)
+
+    build_id_out, final_root, snapshot_id = _execute_locked_backfill(
+        snapshots_root=snapshots_root,
+        build_id=build_id,
+        workers=args.workers,
+        prepare_or_open=_open,
+    )
+    _print_publish_summary(
+        build_id=build_id_out, final_root=final_root, snapshot_id=snapshot_id
+    )
+    return EXIT_OK
+
+
 def cmd_refresh(args: argparse.Namespace) -> int:
-    """Validate the permanent refresh contract; execution is deferred.
+    """Validate the refresh contract, then execute or dry-run.
 
     Validation order: workers → resume identity-flag rejection → dry-run →
-    mode support → new-run required flags → blocked-execution message. The
-    blocked path never creates ``.building``, config, inventory, or lock state.
+    mode support → new-run required flags → locked execution.
     """
     failed = _validate_workers(args)
     if failed is not None:
@@ -266,13 +354,20 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         if args.snapshots_root is None:
             print("--resume requires --snapshots-root", file=sys.stderr)
             return EXIT_USAGE
-        print(
-            f"refresh --resume {args.resume} is validated but blocked: "
-            "producer, marker, and publication wiring is deferred to the next "
-            "C8.3B commit. No snapshot state was opened or modified.",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
+        try:
+            return _run_resume_backfill(args)
+        except (RunConfigError, RawInventoryError) as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_USAGE
+        except (
+            SnapshotLockError,
+            SnapshotLifecycleError,
+            StageExecutionError,
+            OSError,
+            SnapshotFoundationError,
+        ) as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_RUNTIME
 
     if args.mode is None:
         print(
@@ -305,15 +400,20 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         )
         return EXIT_USAGE
 
-    # Arguments are valid, but a partial refresh must not masquerade as a
-    # completed backfill: block before any inventory scan, write, or lock.
-    print(
-        "refresh --mode backfill is validated but blocked: producer, marker, "
-        "and publication wiring is deferred to the next C8.3B commit. No "
-        ".building root, run config, inventory, or lock was created.",
-        file=sys.stderr,
-    )
-    return EXIT_USAGE
+    try:
+        return _run_new_backfill(args)
+    except (RunConfigError, RawInventoryError) as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_USAGE
+    except (
+        SnapshotLockError,
+        SnapshotLifecycleError,
+        StageExecutionError,
+        OSError,
+        SnapshotFoundationError,
+    ) as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_RUNTIME
 
 
 def cmd_validate(_args: argparse.Namespace) -> int:

@@ -12,11 +12,13 @@ This module holds direct functions and small dataclasses for:
 * four completion markers and stage-boundary resume over the fixed order
   liquidity → adjusted → spot → surface;
 * final cross-stage validation and schema-v1 candidate-manifest construction
-  while the root remains named ``.building``.
+  while the root remains named ``.building``;
+* atomic publication of a finalized candidate (``work/`` removal + rename to
+  the final root) under an already-held sibling lock.
 
-Sibling-lock acquisition, CLI execution, and atomic publication remain
-deferred. There is no framework, DAG, plugin, receipt, or state-machine
-abstraction here — and no ``.failed`` lifecycle.
+CLI argument parsing and lock acquisition/release remain in
+``scripts/refresh_weekly_inputs.py``. There is no framework, DAG, plugin,
+receipt, or state-machine abstraction here — and no ``.failed`` lifecycle.
 
 Design: docs/tmp/c8_3b_resumable_cold_backfill_design.md
 """
@@ -59,6 +61,7 @@ from src.data.snapshot_foundation import (
     SNAPSHOT_BUILD_ID_RE,
     SiblingBuildLock,
     SnapshotFoundationError,
+    SnapshotLifecycleError,
     SnapshotLockError,
     SnapshotPathError,
     SnapshotRoots,
@@ -72,6 +75,7 @@ from src.data.snapshot_foundation import (
     sha256_file,
     sibling_lock_path,
     ticker_date_keys_digest,
+    validate_same_volume_publication,
 )
 from src.data.ticker_universe import load_ticker_universe
 
@@ -1886,3 +1890,37 @@ def finalize_candidate_snapshot(
     for stage in STAGE_ORDER:
         load_and_validate_stage_marker(building, stage, config)
     return loaded, manifest_path
+
+
+def publish_candidate_snapshot(
+    run: PreparedRun | ResumedRun,
+    lock: SiblingBuildLock,
+) -> Path:
+    """Publish a finalized ``.building`` candidate by removing ``work/`` and renaming.
+
+    Requires the correct sibling lock to already be held. Does not re-validate
+    the manifest, release the lock, or inspect the snapshot after rename.
+    """
+    if not lock.held:
+        raise SnapshotLockError(
+            "publish_candidate_snapshot requires the sibling lock to already be held"
+        )
+    expected_lock = sibling_lock_path(run.snapshots_root, run.build_id)
+    if Path(lock.path).resolve() != Path(expected_lock).resolve():
+        raise SnapshotLockError(
+            f"sibling lock {lock.path} does not belong to build {run.build_id}"
+        )
+    building = Path(run.roots.building)
+    final = Path(run.roots.final)
+    if not building.is_dir():
+        raise SnapshotLifecycleError(f"missing .building root for publication: {building}")
+    if final.exists():
+        raise SnapshotLifecycleError(
+            f"refusing to overwrite existing final root: {final}"
+        )
+    validate_same_volume_publication(building, final)
+    work = building / "work"
+    if work.exists():
+        shutil.rmtree(work)
+    os.replace(building, final)
+    return final
