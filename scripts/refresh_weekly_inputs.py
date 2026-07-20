@@ -59,6 +59,7 @@ _PROJECT_ROOT = _SCRIPT_DIR.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.data.snapshot_foundation import (  # noqa: E402
+    SNAPSHOT_BUILD_ID_RE,
     SiblingBuildLock,
     SnapshotFoundationError,
     SnapshotLifecycleError,
@@ -253,6 +254,7 @@ def _execute_locked_backfill(
     prepare_or_open,
 ) -> tuple[str, Path, str]:
     """Acquire lock, run stages/finalize/publish, release lock after rename attempt."""
+    effective_workers = workers if workers is not None else 1
     lock = SiblingBuildLock(snapshots_root, build_id)
     try:
         lock.acquire()
@@ -260,8 +262,8 @@ def _execute_locked_backfill(
         execute_backfill_stages(
             run,
             lock,
-            max_workers=workers,
-            surface_workers=workers,
+            max_workers=effective_workers,
+            surface_workers=effective_workers,
         )
         manifest, _manifest_path = finalize_candidate_snapshot(run, lock)
         final_root = publish_candidate_snapshot(run, lock)
@@ -297,6 +299,8 @@ def _run_new_backfill(args: argparse.Namespace) -> int:
 
 def _run_resume_backfill(args: argparse.Namespace) -> int:
     build_id = args.resume
+    if not isinstance(build_id, str) or not SNAPSHOT_BUILD_ID_RE.match(build_id):
+        raise RunConfigError(f"malformed build id for resume: {build_id!r}")
     snapshots_root = Path(args.snapshots_root)
 
     def _open():

@@ -356,6 +356,143 @@ class TestRefreshExecution:
         assert seen["max_workers"] == 4
         assert seen["surface_workers"] == 4
 
+    def test_omitted_workers_defaults_to_one_for_both_stages(
+        self, cli_module, snapshots_root, raw_root, monkeypatch, capsys
+    ):
+        calls: list[str] = []
+        self._install_success_mocks(cli_module, monkeypatch, snapshots_root, calls)
+        seen = {}
+
+        def execute(run, lock, **kwargs):
+            seen.update(kwargs)
+            return {}
+
+        monkeypatch.setattr(cli_module, "execute_backfill_stages", execute)
+        argv = _new_run_argv(snapshots_root, raw_root)
+        workers_idx = argv.index("--workers")
+        del argv[workers_idx : workers_idx + 2]
+        code, _out, _err = _run_main(cli_module, argv, capsys=capsys)
+        assert code == 0
+        assert seen["max_workers"] == 1
+        assert seen["surface_workers"] == 1
+
+    def test_resume_omitted_workers_defaults_to_one(
+        self, cli_module, snapshots_root, monkeypatch, capsys
+    ):
+        _RecordingLock.instances = []
+        monkeypatch.setattr(cli_module, "SiblingBuildLock", _RecordingLock)
+        seen = {}
+
+        def execute(run, lock, **kwargs):
+            seen.update(kwargs)
+            return {}
+
+        monkeypatch.setattr(
+            cli_module,
+            "open_resume_run",
+            lambda *a, **k: _fake_run(snapshots_root),
+        )
+        monkeypatch.setattr(cli_module, "execute_backfill_stages", execute)
+        monkeypatch.setattr(
+            cli_module,
+            "finalize_candidate_snapshot",
+            lambda *a, **k: (_fake_manifest(), Path("m.json")),
+        )
+        monkeypatch.setattr(
+            cli_module,
+            "publish_candidate_snapshot",
+            lambda *a, **k: snapshots_root / BUILD_ID,
+        )
+        code, _out, _err = _run_main(
+            cli_module,
+            [
+                "refresh",
+                "--resume",
+                BUILD_ID,
+                "--snapshots-root",
+                str(snapshots_root),
+            ],
+            capsys=capsys,
+        )
+        assert code == 0
+        assert seen["max_workers"] == 1
+        assert seen["surface_workers"] == 1
+
+    def test_malformed_resume_build_id_exits_two_without_lock(
+        self, cli_module, snapshots_root, tmp_path, monkeypatch, capsys
+    ):
+        constructed: list[str] = []
+
+        class TrackingLock:
+            def __init__(self, *_a, **_k):
+                constructed.append("constructed")
+                raise AssertionError("SiblingBuildLock must not be constructed")
+
+        monkeypatch.setattr(cli_module, "SiblingBuildLock", TrackingLock)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        for bad_id in ("not-a-build-id", "../escaped", str(outside / "abs.lock")):
+            constructed.clear()
+            before_snap = {p.resolve() for p in snapshots_root.rglob("*")}
+            before_out = {p.resolve() for p in outside.rglob("*")}
+            code, _out, err = _run_main(
+                cli_module,
+                [
+                    "refresh",
+                    "--resume",
+                    bad_id,
+                    "--snapshots-root",
+                    str(snapshots_root),
+                ],
+                capsys=capsys,
+            )
+            assert code == 2
+            assert "malformed build id" in err
+            assert constructed == []
+            assert list(snapshots_root.glob("*.lock")) == []
+            assert list(outside.glob("*.lock")) == []
+            assert {p.resolve() for p in snapshots_root.rglob("*")} == before_snap
+            assert {p.resolve() for p in outside.rglob("*")} == before_out
+
+    def test_valid_resume_build_id_still_reaches_flow(
+        self, cli_module, snapshots_root, monkeypatch, capsys
+    ):
+        _RecordingLock.instances = []
+        monkeypatch.setattr(cli_module, "SiblingBuildLock", _RecordingLock)
+        opened: list[str] = []
+
+        def open_resume(snapshots_root_arg, build_id, **kwargs):
+            opened.append(build_id)
+            return _fake_run(Path(snapshots_root_arg), build_id)
+
+        monkeypatch.setattr(cli_module, "open_resume_run", open_resume)
+        monkeypatch.setattr(cli_module, "execute_backfill_stages", lambda *a, **k: {})
+        monkeypatch.setattr(
+            cli_module,
+            "finalize_candidate_snapshot",
+            lambda *a, **k: (_fake_manifest(), Path("m.json")),
+        )
+        monkeypatch.setattr(
+            cli_module,
+            "publish_candidate_snapshot",
+            lambda *a, **k: snapshots_root / BUILD_ID,
+        )
+        code, out, _err = _run_main(
+            cli_module,
+            [
+                "refresh",
+                "--resume",
+                BUILD_ID,
+                "--snapshots-root",
+                str(snapshots_root),
+            ],
+            capsys=capsys,
+        )
+        assert code == 0
+        assert opened == [BUILD_ID]
+        assert _RecordingLock.instances[0].calls == ["acquire", "release"]
+        assert BUILD_ID in out
+
     def test_rename_failure_releases_lock_and_leaves_building(
         self, cli_module, snapshots_root, raw_root, monkeypatch, capsys
     ):
