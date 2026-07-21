@@ -31,6 +31,8 @@ from src.data.snapshot_orchestrator import (
     RAW_DEPENDENCY_PAD_WEEKS,
     RAW_INVENTORY_FILENAME,
     RUN_CONFIG_FILENAME,
+    SCOPE_BOUNDED,
+    SCOPE_FULL,
     STAGE_CONTRACT_VERSION,
     STAGE_ORDER,
     RawInventoryError,
@@ -39,6 +41,7 @@ from src.data.snapshot_orchestrator import (
     build_stage_marker,
     compute_raw_dependency_start,
     compute_run_config_id,
+    effective_run_scope,
     execute_backfill_stages,
     finalize_candidate_snapshot,
     inspect_stage_markers,
@@ -332,6 +335,7 @@ def test_new_run_writes_immutable_config_inventory_and_layout(
     config = prepared.run_config
     assert config["build_id"] == BUILD_ID_A
     assert config["mode"] == "backfill"
+    assert config["scope"] == SCOPE_FULL
     assert config["requested_output_start"] == FRI.isoformat()
     assert config["raw_dependency_start"] == (FRI - timedelta(weeks=3)).isoformat()
     assert config["as_of_requested"] == SUN.isoformat()
@@ -345,6 +349,62 @@ def test_new_run_writes_immutable_config_inventory_and_layout(
 
     inventory_doc = load_raw_inventory_document(building)
     assert inventory_doc["inventory_digest"] == config["inventory_digest"]
+
+
+def test_bounded_evidence_freezes_scope_bounded(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = prepare_new_backfill_run(
+        snapshots_root=snapshots_root,
+        raw_root=raw_root,
+        requested_output_start=FRI,
+        as_of_requested=SUN,
+        lookback_weeks=1,
+        repo_sha_at_freeze="f" * 40,
+        build_id=BUILD_ID_A,
+        scope=SCOPE_BOUNDED,
+    )
+    assert prepared.run_config["scope"] == SCOPE_BOUNDED
+    assert effective_run_scope(prepared.run_config) == SCOPE_BOUNDED
+
+
+def test_scope_changes_run_config_id_and_manifest_snapshot_id(snapshots_root, raw_root):
+    from src.data.input_snapshot import compute_snapshot_id
+
+    _seed_week(raw_root)
+    full = _prepare(snapshots_root, raw_root, build_id=BUILD_ID_A)
+    bounded = prepare_new_backfill_run(
+        snapshots_root=snapshots_root,
+        raw_root=raw_root,
+        requested_output_start=FRI,
+        as_of_requested=SUN,
+        lookback_weeks=1,
+        repo_sha_at_freeze="f" * 40,
+        build_id=BUILD_ID_B,
+        scope=SCOPE_BOUNDED,
+    )
+    assert full.run_config["run_config_id"] != bounded.run_config["run_config_id"]
+
+    _install_finalizable(full)
+    _install_finalizable(bounded)
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        full_manifest, _ = finalize_candidate_snapshot(full, lock)
+    with SiblingBuildLock(snapshots_root, BUILD_ID_B) as lock:
+        bounded_manifest, _ = finalize_candidate_snapshot(bounded, lock)
+    assert full_manifest.snapshot_id != bounded_manifest.snapshot_id
+    assert full_manifest.params["scope"] == SCOPE_FULL
+    assert bounded_manifest.params["scope"] == SCOPE_BOUNDED
+    assert compute_snapshot_id(full_manifest) == full_manifest.snapshot_id
+    assert compute_snapshot_id(bounded_manifest) == bounded_manifest.snapshot_id
+
+
+def test_legacy_config_without_scope_validates_as_full(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    config = dict(prepared.run_config)
+    del config["scope"]
+    config["run_config_id"] = compute_run_config_id(config)
+    validate_run_config(config)
+    assert effective_run_scope(config) == SCOPE_FULL
 
 
 def test_new_run_refuses_existing_building_or_final_root(snapshots_root, raw_root):
@@ -1232,8 +1292,56 @@ def test_finalize_four_markers_writes_valid_manifest(snapshots_root, raw_root):
     assert manifest.production_accepted is True
     assert manifest.data_source == "orats_raw_rebuild"
     assert Path(manifest.cache_dir).resolve() == prepared.roots.final.resolve()
-    assert manifest.params["scope"] == "full"
+    assert manifest.params["scope"] == SCOPE_FULL
     assert (prepared.roots.building / "reports/final/final_validation.json").is_file()
+
+
+def test_bounded_finalize_sets_production_accepted_false(snapshots_root, raw_root):
+    _seed_week(raw_root)
+    prepared = prepare_new_backfill_run(
+        snapshots_root=snapshots_root,
+        raw_root=raw_root,
+        requested_output_start=FRI,
+        as_of_requested=SUN,
+        lookback_weeks=1,
+        repo_sha_at_freeze="f" * 40,
+        build_id=BUILD_ID_A,
+        scope=SCOPE_BOUNDED,
+    )
+    _install_finalizable(prepared)
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        manifest, _ = finalize_candidate_snapshot(prepared, lock)
+    assert manifest.params["scope"] == SCOPE_BOUNDED
+    assert manifest.production_accepted is False
+    assert manifest.overall_status == "PASS"
+    assert manifest.data_source == "orats_raw_rebuild"
+
+
+def test_bounded_pass_can_publish_without_production_accepted(
+    snapshots_root, raw_root
+):
+    from src.data.snapshot_orchestrator import publish_candidate_snapshot
+
+    _seed_week(raw_root)
+    prepared = prepare_new_backfill_run(
+        snapshots_root=snapshots_root,
+        raw_root=raw_root,
+        requested_output_start=FRI,
+        as_of_requested=SUN,
+        lookback_weeks=1,
+        repo_sha_at_freeze="f" * 40,
+        build_id=BUILD_ID_A,
+        scope=SCOPE_BOUNDED,
+    )
+    _install_finalizable(prepared)
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        manifest, _ = finalize_candidate_snapshot(prepared, lock)
+        final = publish_candidate_snapshot(prepared, lock)
+        assert lock.held
+    assert final.is_dir()
+    assert not prepared.roots.building.exists()
+    assert manifest.production_accepted is False
+    assert manifest.overall_status == "PASS"
 
 
 def test_finalize_missing_marker_writes_no_manifest(snapshots_root, raw_root):

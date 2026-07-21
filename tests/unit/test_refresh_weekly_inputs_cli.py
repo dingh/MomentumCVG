@@ -738,6 +738,98 @@ class TestRefreshResumeContract:
         assert code == 2
         assert "--snapshots-root" in err
 
+    def test_resume_rejects_bounded_evidence(
+        self, cli_module, snapshots_root, capsys
+    ):
+        code, _out, err = _run_main(
+            cli_module,
+            [
+                "refresh",
+                "--resume",
+                BUILD_ID,
+                "--snapshots-root",
+                str(snapshots_root),
+                "--bounded-evidence",
+            ],
+            capsys=capsys,
+        )
+        assert code == 2
+        assert "identity-defining flags" in err
+        assert "--bounded-evidence" in err
+
+    def test_bounded_dry_run_reports_scope_without_work(
+        self, cli_module, snapshots_root, raw_root, monkeypatch, capsys
+    ):
+        def boom(*_a, **_k):
+            raise AssertionError("bounded dry-run must not execute")
+
+        monkeypatch.setattr(cli_module, "prepare_new_backfill_run", boom)
+        monkeypatch.setattr(cli_module, "SiblingBuildLock", boom)
+        monkeypatch.setattr(cli_module, "generate_snapshot_build_id", boom)
+        code, out, _err = _run_main(
+            cli_module,
+            _new_run_argv(
+                snapshots_root, raw_root, extra=["--dry-run", "--bounded-evidence"]
+            ),
+            capsys=capsys,
+        )
+        assert code == 0
+        assert "scope:           bounded" in out
+        assert "production_accepted: false" in out
+        assert cli_module.DRY_RUN_BANNER in out
+        _assert_no_snapshot_state(snapshots_root, raw_root)
+
+    def test_no_general_scope_or_ticker_flag(
+        self, cli_module, snapshots_root, raw_root, capsys
+    ):
+        for flag, value in (("--scope", "bounded"), ("--tickers", "AAA,BBB")):
+            code, _out, _err = _run_main(
+                cli_module,
+                _new_run_argv(snapshots_root, raw_root, extra=[flag, value]),
+                capsys=capsys,
+            )
+            assert code == 2
+            _assert_no_snapshot_state(snapshots_root, raw_root)
+
+    def test_new_run_passes_bounded_scope_to_prepare(
+        self, cli_module, snapshots_root, raw_root, monkeypatch, capsys
+    ):
+        calls: list[str] = []
+        seen = {}
+        _RecordingLock.instances = []
+        monkeypatch.setattr(cli_module, "SiblingBuildLock", _RecordingLock)
+        monkeypatch.setattr(
+            cli_module,
+            "generate_snapshot_build_id",
+            lambda: BUILD_ID,
+        )
+
+        def prepare(**kwargs):
+            seen.update(kwargs)
+            calls.append("prepare")
+            return _fake_run(snapshots_root)
+
+        monkeypatch.setattr(cli_module, "prepare_new_backfill_run", prepare)
+        monkeypatch.setattr(cli_module, "execute_backfill_stages", lambda *a, **k: {})
+        monkeypatch.setattr(
+            cli_module,
+            "finalize_candidate_snapshot",
+            lambda *a, **k: (_fake_manifest(), Path("m.json")),
+        )
+        monkeypatch.setattr(
+            cli_module,
+            "publish_candidate_snapshot",
+            lambda *a, **k: snapshots_root / BUILD_ID,
+        )
+        code, _out, _err = _run_main(
+            cli_module,
+            _new_run_argv(snapshots_root, raw_root, extra=["--bounded-evidence"]),
+            capsys=capsys,
+        )
+        assert code == 0
+        assert seen.get("scope") == "bounded"
+        assert calls == ["prepare"]
+
 
 # ── blocked subcommands ────────────────────────────────────────────────────────
 

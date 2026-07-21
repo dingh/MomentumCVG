@@ -17,6 +17,11 @@ Resume::
 
     refresh --resume BUILD_ID --snapshots-root DIR --workers N
 
+Bounded evidence (non-production)::
+
+    refresh --mode backfill --bounded-evidence --snapshots-root DIR \
+        --raw-root DIR --start-date D --as-of D --workers N
+
 What this commit executes
 -------------------------
 ``plan`` and ``refresh --dry-run`` succeed without scanning, locking, or writing.
@@ -27,12 +32,15 @@ the lock.
 
 * ``--mode backfill`` is the only executable mode; ``incremental`` and
   ``repair`` are deferred (exit 2).
+* ``--bounded-evidence`` freezes ``scope="bounded"`` and
+  ``production_accepted=false`` (evidence-only; not a general ``--scope``).
 * Resume rejects explicitly supplied identity-defining flags (``--mode``,
-  ``--raw-root``, ``--start-date``, ``--as-of``); ``--workers`` may differ.
+  ``--raw-root``, ``--start-date``, ``--as-of``, ``--bounded-evidence``);
+  ``--workers`` may differ. Frozen scope is authoritative on resume.
 * ``validate`` / ``split-audit`` / ``surface-audit`` stay blocked (exit 2) and
   point to the existing standalone audit scripts.
 * The ORATS API token is read only from ``ORATS_API_TOKEN`` — there is no
-  token flag, and no copy-source / evidence-ID / scope / skip-stage /
+  token flag, and no copy-source / evidence-ID / general scope / skip-stage /
   security-master flags.
 
 Exit codes
@@ -67,6 +75,8 @@ from src.data.snapshot_foundation import (  # noqa: E402
     generate_snapshot_build_id,
 )
 from src.data.snapshot_orchestrator import (  # noqa: E402
+    SCOPE_BOUNDED,
+    SCOPE_FULL,
     RawInventoryError,
     RunConfigError,
     execute_backfill_stages,
@@ -143,6 +153,15 @@ def _add_refresh_like_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Worker process count (positive; may differ on resume)",
     )
+    parser.add_argument(
+        "--bounded-evidence",
+        action="store_true",
+        default=False,
+        help=(
+            "Freeze scope=bounded and production_accepted=false "
+            "(C8.4 evidence-only; rejected on resume)"
+        ),
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -186,10 +205,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def render_plan(args: argparse.Namespace) -> str:
     """Permanent four-stage cold backfill plan (``plan`` and ``refresh --dry-run``)."""
     mode = args.mode or "backfill"
+    scope = (
+        SCOPE_BOUNDED
+        if getattr(args, "bounded_evidence", False)
+        else SCOPE_FULL
+    )
+    production_accepted = scope == SCOPE_FULL
     lines: list[str] = [
         "=== Weekly input snapshot plan - cold backfill (C8.3B) ===",
         f"mode:            {mode}"
         + ("" if mode == "backfill" else "  [execute-unsupported: exit 2]"),
+        f"scope:           {scope}",
+        f"production_accepted: {str(production_accepted).lower()}",
         f"snapshots_root:  {args.snapshots_root if args.snapshots_root else '(required for execution)'}",
         f"raw_root:        {args.raw_root if args.raw_root else '(required for a new run)'}",
         f"start_date:      {args.start_date.isoformat() if args.start_date else '(required for a new run)'}",
@@ -275,6 +302,7 @@ def _execute_locked_backfill(
 def _run_new_backfill(args: argparse.Namespace) -> int:
     build_id = generate_snapshot_build_id()
     snapshots_root = Path(args.snapshots_root)
+    scope = SCOPE_BOUNDED if args.bounded_evidence else SCOPE_FULL
 
     def _prepare():
         return prepare_new_backfill_run(
@@ -283,6 +311,7 @@ def _run_new_backfill(args: argparse.Namespace) -> int:
             requested_output_start=args.start_date,
             as_of_requested=args.as_of,
             build_id=build_id,
+            scope=scope,
         )
 
     build_id_out, final_root, snapshot_id = _execute_locked_backfill(
@@ -339,6 +368,8 @@ def cmd_refresh(args: argparse.Namespace) -> int:
             )
             if value is not None
         ]
+        if args.bounded_evidence:
+            supplied.append("--bounded-evidence")
         if supplied:
             print(
                 "--resume rejects identity-defining flags "

@@ -160,6 +160,11 @@ _RUN_CONFIG_REQUIRED_KEYS = (
     "run_config_id",
 )
 
+# Allowed frozen scopes. Absent ``scope`` on a pre-C8.4 config means ``full``.
+SCOPE_FULL = "full"
+SCOPE_BOUNDED = "bounded"
+_ALLOWED_SCOPES = frozenset({SCOPE_FULL, SCOPE_BOUNDED})
+
 _RAW_INVENTORY_REQUIRED_KEYS = (
     "schema_version",
     "raw_dependency_start",
@@ -495,6 +500,16 @@ def compute_run_config_id(config: Mapping[str, Any]) -> str:
     return digest_json(body)
 
 
+def effective_run_scope(config: Mapping[str, Any]) -> str:
+    """Return frozen scope; missing pre-C8.4 ``scope`` means ``full``."""
+    if "scope" not in config:
+        return SCOPE_FULL
+    scope = config["scope"]
+    if scope not in _ALLOWED_SCOPES:
+        raise RunConfigError(f"unsupported run config scope: {scope!r}")
+    return scope
+
+
 def _parse_config_date(config: Mapping[str, Any], key: str) -> date:
     value = config.get(key)
     if not isinstance(value, str):
@@ -527,6 +542,10 @@ def validate_run_config(config: Mapping[str, Any]) -> None:
         raise RunConfigError(f"run config build_id is malformed: {build_id!r}")
     if config["mode"] != "backfill":
         raise RunConfigError(f"unsupported run config mode: {config['mode']!r}")
+    if "scope" in config:
+        scope = config["scope"]
+        if scope not in _ALLOWED_SCOPES:
+            raise RunConfigError(f"unsupported run config scope: {scope!r}")
 
     requested_output_start = _parse_config_date(config, "requested_output_start")
     raw_dependency_start = _parse_config_date(config, "raw_dependency_start")
@@ -597,8 +616,11 @@ def build_run_config(
     c4_params: Mapping[str, Any],
     surface_policy: Mapping[str, Any],
     repo_sha_at_freeze: str,
+    scope: str = SCOPE_FULL,
 ) -> dict[str, Any]:
     """Assemble the immutable run configuration dict (with ``run_config_id``)."""
+    if scope not in _ALLOWED_SCOPES:
+        raise RunConfigError(f"unsupported run config scope: {scope!r}")
     c4 = dict(c4_params)
     if c4.get("lookback_weeks") != lookback_weeks:
         raise RunConfigError(
@@ -609,6 +631,7 @@ def build_run_config(
         "schema_version": RUN_CONFIG_SCHEMA_VERSION,
         "build_id": build_id,
         "mode": "backfill",
+        "scope": scope,
         "snapshots_root": _normalize_root(snapshots_root),
         "raw_root": _normalize_root(raw_root),
         "requested_output_start": requested_output_start.isoformat(),
@@ -757,6 +780,7 @@ def prepare_new_backfill_run(
     surface_policy: Mapping[str, Any] | None = None,
     repo_sha_at_freeze: str | None = None,
     build_id: str | None = None,
+    scope: str = SCOPE_FULL,
 ) -> PreparedRun:
     """Freeze a new cold-backfill run: inventory, layout, and immutable config.
 
@@ -798,6 +822,7 @@ def prepare_new_backfill_run(
         c4_params=c4_params,
         surface_policy=surface_policy,
         repo_sha_at_freeze=repo_sha_at_freeze,
+        scope=scope,
     )
 
     roots = create_fresh_staging_root(snapshots_root, build_id)
@@ -1820,8 +1845,10 @@ def finalize_candidate_snapshot(
         )
 
     planned_final = str(Path(run.roots.final).resolve())
+    scope = effective_run_scope(config)
+    production_accepted = scope == SCOPE_FULL
     params = {
-        "scope": "full",
+        "scope": scope,
         "run_config_id": config["run_config_id"],
         "inventory_digest": config["inventory_digest"],
         "equity_universe_digest": universe_digest,
@@ -1863,7 +1890,7 @@ def finalize_candidate_snapshot(
         overall_status=overall,
         blocking_failures=[],
         notes=gap_notes,
-        production_accepted=True,
+        production_accepted=production_accepted,
     )
     manifest_path = building / "manifests" / f"input_snapshot_{snapshot_id}.json"
     write_manifest(manifest_path, manifest)
@@ -1873,8 +1900,8 @@ def finalize_candidate_snapshot(
         or loaded.build_id != run.build_id
         or Path(loaded.cache_dir).resolve() != Path(planned_final).resolve()
         or loaded.data_source != _ORATS_RAW_REBUILD
-        or loaded.params.get("scope") != "full"
-        or loaded.production_accepted is not True
+        or loaded.params.get("scope") != scope
+        or loaded.production_accepted is not production_accepted
     ):
         raise RunConfigError("manifest read-back identity/publication checks failed")
     for label, rel in {
