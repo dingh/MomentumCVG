@@ -21,20 +21,30 @@ Classification policy (version 2 — date-specific observation)
 * Returned ticker and trade date are validated against the request.
   Identical duplicate rows are deduplicated; conflicting rows, unexpected
   ticker/date values, malformed or out-of-domain ``assetType`` values, and
-  HTTP/parse failures fail the update.
+  hard HTTP/parse failures fail the update.
+* Core HTTP 404 for a ticker/date is treated like a valid-empty observation
+  (fall back to earlier observed dates). If no observation is obtained after
+  the bounded attempts, that ticker is **skipped**: it is not written to the
+  dictionary and is not treated as company equity for the current build, so a
+  later run can retry the API.
 * Existing dictionary entries are authoritative and never re-fetched or
   altered by a missing-ticker append.
 
 Cache behaviour
 ---------------
 * Dictionary absent: classify every candidate, validate all results, write
-  the complete dictionary atomically.
+  the complete dictionary atomically (with periodic checkpoints every
+  :data:`SECURITY_TYPES_CHECKPOINT_EVERY` newly classified tickers).
 * Dictionary present: load and validate it; classify only
   ``candidates - dictionary``; when nothing is missing make no request and do
   not rewrite the file; otherwise validate the complete batch, merge
-  deterministically, and atomically replace via temp-file + ``os.replace``.
-* Any fetch or validation failure leaves the previously accepted dictionary
-  byte-for-byte unchanged.
+  deterministically, and atomically replace via temp-file + ``os.replace``
+  (again checkpointing every :data:`SECURITY_TYPES_CHECKPOINT_EVERY` new rows).
+* Any hard fetch or validation failure leaves the previously accepted
+  dictionary (including the latest successful checkpoint) byte-for-byte
+  unchanged relative to that last good write.
+* Unresolved tickers (exhausted empty/404 attempts) are omitted so a later
+  run can retry; they are never written as fake classifications.
 
 Versioning
 ----------
@@ -71,6 +81,10 @@ CLASSIFICATION_VERSION = 2
 
 # Latest observed date plus up to four fallback observed dates.
 MAX_OBSERVED_DATE_ATTEMPTS = 5
+
+# Persist newly classified rows this often so an interrupted Core backfill can
+# resume without re-fetching already-accepted tickers.
+SECURITY_TYPES_CHECKPOINT_EVERY = 100
 
 COMPANY_EQUITY_ASSET_TYPES = frozenset({0, 1, 2, 3})
 NON_COMPANY_ASSET_TYPES = frozenset({4, 5, 6, 7, 8, 9})
@@ -245,14 +259,16 @@ def classify_ticker_with_fallback(
     fetch_observation_fn: Callable[[str, date], pd.DataFrame],
     *,
     classified_at_utc: str,
-) -> dict:
+) -> dict | None:
     """Classify one ticker from its latest successfully retrieved observed date.
 
     Attempts the ticker's latest observed trade date first. A valid empty
-    response falls back to the next-newest observed date, up to
-    :data:`MAX_OBSERVED_DATE_ATTEMPTS` total attempts. Any HTTP/parse/
-    validation failure propagates immediately; exhausting the bounded
-    attempts without a row fails classification.
+    response (including Core HTTP 404 mapped to empty by the client) falls
+    back to the next-newest observed date, up to
+    :data:`MAX_OBSERVED_DATE_ATTEMPTS` total attempts. Hard HTTP/parse/
+    validation failures propagate immediately. Exhausting the bounded
+    attempts without a row returns ``None`` so the caller can skip the
+    ticker without writing a dictionary row (retry on a later run).
     """
     expected = normalize_ticker(ticker)
     dates = _normalize_observed_dates(observed_dates)
@@ -266,7 +282,7 @@ def classify_ticker_with_fallback(
                 "returned None; expected a DataFrame."
             )
         if frame.empty:
-            # Valid-empty: no Core record on this observed date — fall back.
+            # Valid-empty / Core 404-as-empty: no usable row on this date — fall back.
             continue
         asset_type = accept_asset_type_observation(expected, trade_date, frame)
         return {
@@ -280,11 +296,15 @@ def classify_ticker_with_fallback(
             "classification_version": CLASSIFICATION_VERSION,
         }
 
-    raise SecurityTypesError(
-        f"No Core assetType observation for ticker {expected} on any of "
-        f"{len(attempts)} attempted observed date(s) "
-        f"{[d.isoformat() for d in attempts]}; cannot classify."
+    logger.warning(
+        "Skipping ticker %s: no Core assetType observation on %d attempted "
+        "observed date(s) %s; not written to the security-type dictionary "
+        "(will retry when still missing on a later run).",
+        expected,
+        len(attempts),
+        [d.isoformat() for d in attempts],
     )
+    return None
 
 
 # ── dictionary schema validation ──────────────────────────────────────────────
@@ -445,20 +465,115 @@ def _classify_batch(
     fetch_observation_fn: Callable[[str, date], pd.DataFrame],
     *,
     now_fn: Callable[[], datetime],
+    checkpoint_path: Path | None = None,
+    checkpoint_existing: pd.DataFrame | None = None,
+    checkpoint_every: int = SECURITY_TYPES_CHECKPOINT_EVERY,
+    progress_path: Path | None = None,
+    progress_every: int = 25,
 ) -> pd.DataFrame:
-    """Classify every candidate ticker; any single failure fails the batch."""
+    """Classify candidate tickers; skip unresolved ones; hard failures abort.
+
+    Tickers that exhaust valid-empty / 404-as-empty attempts are omitted from
+    the result (not written to the dictionary). Transport/auth/parse failures
+    and observation validation errors still fail the whole batch.
+
+    When ``checkpoint_path`` is set, the dictionary is atomically rewritten
+    every ``checkpoint_every`` newly classified tickers (merged onto
+    ``checkpoint_existing``) so a crash loses at most that many Core fetches.
+
+    When ``progress_path`` is set (building root), ``run_progress.json`` is
+    updated every ``progress_every`` attempted tickers.
+    """
+    if checkpoint_every <= 0:
+        raise SecurityTypesError(
+            f"checkpoint_every must be positive; got {checkpoint_every!r}"
+        )
+    if progress_every <= 0:
+        raise SecurityTypesError(
+            f"progress_every must be positive; got {progress_every!r}"
+        )
     classified_at = (
         now_fn().astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     )
-    rows = [
-        classify_ticker_with_fallback(
+    rows: list[dict] = []
+    skipped: list[str] = []
+    existing = (
+        checkpoint_existing
+        if checkpoint_existing is not None
+        else pd.DataFrame(columns=list(SECURITY_TYPES_COLUMNS))
+    )
+    ordered = sorted(candidates)
+    total = len(ordered)
+
+    def _emit_progress(done: int) -> None:
+        if progress_path is None:
+            return
+        from src.data.run_progress import write_run_progress
+
+        write_run_progress(
+            progress_path,
+            stage="liquidity",
+            phase="core_classification",
+            current=done,
+            total=total,
+            message=(
+                f"Core security-type classification {done}/{total}"
+                if total
+                else "Core security-type classification"
+            ),
+            classified=len(rows),
+            skipped=len(skipped),
+        )
+
+    if progress_path is not None and total:
+        _emit_progress(0)
+
+    for index, ticker in enumerate(ordered, start=1):
+        row = classify_ticker_with_fallback(
             ticker,
             candidates[ticker],
             fetch_observation_fn,
             classified_at_utc=classified_at,
         )
-        for ticker in sorted(candidates)
-    ]
+        if row is None:
+            skipped.append(ticker)
+        else:
+            rows.append(row)
+            if (
+                checkpoint_path is not None
+                and len(rows) % checkpoint_every == 0
+            ):
+                checkpoint = _sorted_dictionary(
+                    pd.concat(
+                        [
+                            existing,
+                            pd.DataFrame(rows, columns=list(SECURITY_TYPES_COLUMNS)),
+                        ],
+                        ignore_index=True,
+                    )
+                )
+                write_security_types_atomic(checkpoint, checkpoint_path)
+                logger.info(
+                    "Checkpointed security-type dictionary: %d new classification(s) "
+                    "this batch, %d row(s) on disk at %s",
+                    len(rows),
+                    len(checkpoint),
+                    checkpoint_path,
+                )
+        if progress_path is not None and (
+            index % progress_every == 0 or index == total
+        ):
+            _emit_progress(index)
+    if skipped:
+        logger.warning(
+            "Skipped %d unresolved Core ticker(s) (not company equity this "
+            "run; not written to dictionary): %s%s",
+            len(skipped),
+            skipped[:20],
+            " ..." if len(skipped) > 20 else "",
+        )
+    if not rows:
+        return pd.DataFrame(columns=list(SECURITY_TYPES_COLUMNS))
     return pd.DataFrame(rows, columns=list(SECURITY_TYPES_COLUMNS))
 
 
@@ -468,14 +583,20 @@ def ensure_security_types(
     *,
     fetch_observation_fn: Callable[[str, date], pd.DataFrame],
     now_fn: Callable[[], datetime] | None = None,
+    checkpoint_every: int = SECURITY_TYPES_CHECKPOINT_EVERY,
+    progress_path: Path | None = None,
+    progress_every: int = 25,
 ) -> pd.DataFrame:
     """Ensure the dictionary covers every candidate ticker; return it.
 
     ``candidates`` maps each normalized ticker to the distinct trade dates on
     which it appeared in candidate daily liquidity data. Only tickers absent
     from the dictionary are classified, one date-specific Core observation at
-    a time (latest observed date first, bounded valid-empty fallback). See
-    the module docstring for the exact cache-behaviour contract.
+    a time (latest observed date first, bounded valid-empty / Core-404
+    fallback). Unresolved tickers are omitted from the dictionary so a later
+    run can retry. Newly classified rows are checkpointed to ``path`` every
+    ``checkpoint_every`` successes. Optional ``progress_path`` (building root)
+    receives ``run_progress.json`` updates during classification.
     """
     if now_fn is None:
         now_fn = lambda: datetime.now(timezone.utc)  # noqa: E731
@@ -488,9 +609,25 @@ def ensure_security_types(
             "Security-type dictionary absent at %s — classifying %d candidate ticker(s).",
             file_path, len(normalized),
         )
-        dictionary = _sorted_dictionary(
-            _classify_batch(normalized, fetch_observation_fn, now_fn=now_fn)
+        new_rows = _classify_batch(
+            normalized,
+            fetch_observation_fn,
+            now_fn=now_fn,
+            checkpoint_path=file_path,
+            checkpoint_existing=None,
+            checkpoint_every=checkpoint_every,
+            progress_path=progress_path,
+            progress_every=progress_every,
         )
+        if new_rows.empty:
+            # A partial checkpoint may already exist from an interrupted run.
+            if file_path.is_file():
+                return load_security_types(file_path)
+            raise SecurityTypesError(
+                "No candidate tickers could be classified from Core; refusing "
+                "to write an empty security-type dictionary."
+            )
+        dictionary = _sorted_dictionary(new_rows)
         write_security_types_atomic(dictionary, file_path)
         return dictionary
 
@@ -502,6 +639,20 @@ def ensure_security_types(
             "no fetch, no rewrite.",
             len(normalized),
         )
+        if progress_path is not None:
+            from src.data.run_progress import write_run_progress
+
+            write_run_progress(
+                progress_path,
+                stage="liquidity",
+                phase="core_classification",
+                current=len(normalized),
+                total=len(normalized),
+                message=(
+                    f"Core security-type dictionary already covers "
+                    f"{len(normalized)} candidate ticker(s)"
+                ),
+            )
         return existing
 
     logger.info(
@@ -510,8 +661,22 @@ def ensure_security_types(
         len(missing), len(normalized),
     )
     new_rows = _classify_batch(
-        {t: normalized[t] for t in missing}, fetch_observation_fn, now_fn=now_fn
+        {t: normalized[t] for t in missing},
+        fetch_observation_fn,
+        now_fn=now_fn,
+        checkpoint_path=file_path,
+        checkpoint_existing=existing,
+        checkpoint_every=checkpoint_every,
+        progress_path=progress_path,
+        progress_every=progress_every,
     )
+    if new_rows.empty:
+        logger.info(
+            "No newly classifiable tickers among %d missing candidate(s); "
+            "dictionary unchanged (unresolved tickers remain absent for retry).",
+            len(missing),
+        )
+        return existing
 
     # Existing classifications are authoritative: append-only merge, then a
     # deterministic sort. Existing rows are never altered.

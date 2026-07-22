@@ -1029,6 +1029,10 @@ def test_output_without_marker_is_cleaned_and_stage_reruns(snapshots_root, raw_r
     assert calls[0] == "liquidity"
     assert not stale.exists()
     assert stage_marker_path(building, "liquidity").is_file()
+    progress = json.loads((building / "run_progress.json").read_text(encoding="utf-8"))
+    assert progress["stage"] == "surface"
+    assert progress["phase"] == "complete"
+    assert progress["pct"] == 100.0
 
 
 def test_accepted_predecessor_output_not_modified(snapshots_root, raw_root):

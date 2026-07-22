@@ -152,9 +152,21 @@ def test_unparseable_body_is_failure(_token_env):
         client.fetch_asset_type_at_date("AAPL", TRADE_DATE)
 
 
+def test_http_404_returns_empty_observation(_token_env, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    client, session = _client([FakeResponse(404, text='{"message":"Not Found."}')])
+    frame = client.fetch_asset_type_at_date("ADTH", TRADE_DATE)
+    assert list(frame.columns) == ["ticker", "tradeDate", "assetType"]
+    assert frame.empty
+    assert len(session.calls) == 1
+    assert "404" in caplog.text
+
+
 def test_non_retryable_http_error_fails_immediately(_token_env):
-    client, session = _client([FakeResponse(404, text="not found")])
-    with pytest.raises(OratsCoreError, match="HTTP 404"):
+    client, session = _client([FakeResponse(403, text="forbidden")])
+    with pytest.raises(OratsCoreError, match="HTTP 403"):
         client.fetch_asset_type_at_date("AAPL", TRADE_DATE)
     assert len(session.calls) == 1
 

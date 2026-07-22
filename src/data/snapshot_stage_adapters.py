@@ -50,6 +50,7 @@ from src.data.snapshot_foundation import (
     ticker_date_keys_digest,
 )
 from src.data.snapshot_orchestrator import SnapshotOrchestratorError
+from src.data.paths import DEFAULT_SECURITY_TYPES_PATH
 from src.data.split_adjuster import SplitAdjuster
 from src.data.ticker_universe import load_ticker_universe
 from src.data.trading_day import target_weekly_expiry_from_schedule
@@ -73,7 +74,8 @@ _ACCEPTED_SPOT_WARNING_MARKERS = (
 SPLITS_FILENAME = "splits_hist_liquid.parquet"
 SPOT_PARQUET_FILENAME = "spot_prices_adjusted.parquet"
 SPOT_SUMMARY_FILENAME = "spot_summary.json"
-# Stage-local Core dictionary filename (never the global durable path by default).
+# Durable Core dictionary filename (used only when composing paths in tests).
+# Production default is ``DEFAULT_SECURITY_TYPES_PATH`` (shared reference root).
 SECURITY_TYPES_FILENAME = "orats_security_types.parquet"
 
 
@@ -261,18 +263,28 @@ def run_liquidity_stage(
     writes candidate artifacts under ``work/liquidity/candidate``, requires a
     strict C7 PASS, and promotes to ``input/liquidity``.
 
-    The Core security-types dictionary defaults to a path owned by this run
-    under ``work/liquidity/``; callers may inject ``security_types_path`` for
-    tests. The global durable dictionary path is never the default here.
+    The Core security-types dictionary defaults to the durable shared
+    reference file (:data:`DEFAULT_SECURITY_TYPES_PATH`). Existing tickers are
+    never re-fetched; only missing tickers hit Core (with checkpoints every
+    100 new classifications). Callers may inject ``security_types_path`` for
+    tests.
     """
     building = Path(run.roots.building)
     config = run.run_config
     inventory = _require_inventory(run)
 
+    from src.data.run_progress import write_run_progress
+
+    write_run_progress(
+        building,
+        stage="liquidity",
+        phase="preparing",
+        message="Liquidity stage: preparing frozen-inventory backfill",
+        build_id=config.get("build_id"),
+    )
+
     if security_types_path is None:
-        security_types_path = (
-            building / "work" / "liquidity" / SECURITY_TYPES_FILENAME
-        )
+        security_types_path = DEFAULT_SECURITY_TYPES_PATH
     security_types_path = Path(security_types_path)
     security_types_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -298,7 +310,9 @@ def run_liquidity_stage(
         return mod.load_raw_day_from_zip(raw_root, trade_date)
 
     classify_fn = mod.make_core_classifier(
-        security_types_path, fetch_observation_fn=fetch_observation_fn
+        security_types_path,
+        fetch_observation_fn=fetch_observation_fn,
+        progress_path=building,
     )
 
     try:

@@ -21,8 +21,11 @@ Outcome contract
 * HTTP 200 with an empty ``data`` list is a *successful empty* response and
   returns an empty DataFrame (columns ``ticker``, ``tradeDate``,
   ``assetType``).
-* HTTP errors, malformed / unparseable bodies, and exhausted retries raise
-  :class:`OratsCoreError`. A failure is never silently returned as empty.
+* HTTP 404 (ORATS ``Not Found`` for that ticker/date) is treated the same as
+  a successful empty observation: return an empty DataFrame so callers can
+  fall back to earlier observed dates. It is not a transport/auth failure.
+* Other HTTP errors, malformed / unparseable bodies, and exhausted retries
+  raise :class:`OratsCoreError`. Those failures are never returned as empty.
 * ``KeyboardInterrupt`` always propagates.
 
 Retry behaviour is narrow and mirrors ``OratsCorporateActionsFetcher``:
@@ -187,6 +190,15 @@ class OratsCoreClient:
 
             if response.status_code == 200:
                 return self._parse_success_body(response, ticker, token)
+
+            # Ticker/date absent in Core: same outcome as HTTP 200 + empty data
+            # so classification can fall back to earlier observed dates.
+            if response.status_code == 404:
+                logger.info(
+                    "ORATS Core HTTP 404 for %s — treating as empty observation",
+                    request_label,
+                )
+                return pd.DataFrame(columns=list(ASSET_TYPE_HISTORY_COLUMNS))
 
             if response.status_code in _RETRYABLE_STATUSES:
                 backoff = min(60.0, (2**attempt) * 1.0)

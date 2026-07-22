@@ -473,15 +473,20 @@ def filter_daily_to_tickers(df: pd.DataFrame, tickers: set[str]) -> pd.DataFrame
 def make_core_classifier(
     security_types_path: Path,
     fetch_observation_fn: Callable[[str, date], pd.DataFrame] | None = None,
+    *,
+    progress_path: Path | None = None,
 ) -> Callable[[dict[str, list[date]]], pd.DataFrame]:
     """Return a classify_fn backed by the persistent security-type dictionary.
 
     ``candidates`` maps each ticker to its observed trade dates (newest
     first). The shared dictionary at ``security_types_path`` is updated with
     one date-specific Core observation per missing ticker (latest observed
-    date first, bounded valid-empty fallback); existing tickers make no API
-    request. Returns the snapshot-local classification subset for exactly the
-    candidate set.
+    date first, bounded valid-empty / Core-404 fallback). Tickers that remain
+    unresolved are omitted from the dictionary and from the returned
+    classification subset (not treated as company equity; retried when still
+    missing on a later run). Existing dictionary tickers make no API request.
+    Optional ``progress_path`` is the snapshot building root for
+    ``run_progress.json`` updates during Core classification.
     """
     if fetch_observation_fn is None:
         fetch_observation_fn = OratsCoreClient().fetch_asset_type_at_date
@@ -491,8 +496,28 @@ def make_core_classifier(
             candidates,
             security_types_path,
             fetch_observation_fn=fetch_observation_fn,
+            progress_path=progress_path,
         )
-        return snapshot_classification(dictionary, candidates.keys())
+        covered = set(dictionary["ticker"])
+        classified_keys = [
+            ticker for ticker in candidates if str(ticker).strip().upper() in covered
+        ]
+        unresolved = sorted(
+            {
+                str(ticker).strip().upper()
+                for ticker in candidates
+            }
+            - covered
+        )
+        if unresolved:
+            logger.warning(
+                "Excluding %d unresolved Core ticker(s) from equity filter "
+                "(not in security-type dictionary): %s%s",
+                len(unresolved),
+                unresolved[:20],
+                " ..." if len(unresolved) > 20 else "",
+            )
+        return snapshot_classification(dictionary, classified_keys)
 
     return _classify
 

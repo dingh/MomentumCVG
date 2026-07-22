@@ -22,7 +22,6 @@ import src.data.snapshot_stage_adapters as adapters
 from src.data.snapshot_foundation import digest_json, ticker_date_keys_digest
 from src.data.snapshot_orchestrator import prepare_new_backfill_run
 from src.data.snapshot_stage_adapters import (
-    SECURITY_TYPES_FILENAME,
     StageExecutionError,
     _promote_candidate,
     run_adjusted_stage,
@@ -149,8 +148,9 @@ def _fake_liquidity_module(calls: dict, *, fail_with: BaseException | None = Non
         calls.setdefault("loaded_days", []).append(trade_date)
         return pd.DataFrame({"ticker": ["AAA"]})
 
-    def make_core_classifier(path, fetch_observation_fn=None):
+    def make_core_classifier(path, fetch_observation_fn=None, **kwargs):
         calls["classifier_path"] = Path(path)
+        calls["classifier_kwargs"] = dict(kwargs)
         return lambda candidates: classification
 
     def write_artifacts(cache_dir, build_result, *, liquid_tickers):
@@ -215,6 +215,7 @@ def test_liquidity_stage_passes_frozen_inputs_and_promotes(run, monkeypatch, tmp
     assert backfill["all_trading_dates"] == [DAY_1, DAY_2]
     assert backfill["lookback_weeks"] == 12
     assert calls["classifier_path"] == tmp_path / "security_types.parquet"
+    assert calls["classifier_kwargs"]["progress_path"] == Path(run.roots.building)
 
     # The loader is constrained to the frozen inventory.
     loader = backfill["load_day_fn"]
@@ -249,7 +250,7 @@ def test_liquidity_stage_passes_frozen_inputs_and_promotes(run, monkeypatch, tmp
     assert _stage_files(building / "markers") == []
 
 
-def test_liquidity_default_security_types_path_is_building_local(run, monkeypatch):
+def test_liquidity_default_security_types_path_is_durable_reference(run, monkeypatch):
     calls: dict = {}
     monkeypatch.setattr(
         adapters, "_liquidity_module", lambda: _fake_liquidity_module(calls)
@@ -261,10 +262,7 @@ def test_liquidity_default_security_types_path_is_building_local(run, monkeypatc
         fetch_observation_fn=lambda ticker, day: pd.DataFrame(),
     )
 
-    building = Path(run.roots.building)
-    expected = building / "work" / "liquidity" / SECURITY_TYPES_FILENAME
-    assert calls["classifier_path"] == expected
-    assert str(calls["classifier_path"]).startswith(str(building))
+    assert calls["classifier_path"] == adapters.DEFAULT_SECURITY_TYPES_PATH
 
 
 def test_liquidity_gate_failure_promotes_nothing(run, monkeypatch, tmp_path):

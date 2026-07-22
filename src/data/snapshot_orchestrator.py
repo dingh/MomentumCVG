@@ -1554,8 +1554,21 @@ def execute_backfill_stages(
     runner = stage_runner or _default_runner
     validated = dict(state.validated_markers)
     start_index = STAGE_ORDER.index(state.next_stage)
+    n_stages = len(STAGE_ORDER)
 
-    for stage in STAGE_ORDER[start_index:]:
+    from src.data.run_progress import write_run_progress
+
+    for stage_i, stage in enumerate(STAGE_ORDER[start_index:], start=start_index):
+        write_run_progress(
+            building,
+            stage=stage,
+            phase="starting",
+            current=stage_i,
+            total=n_stages,
+            message=f"Starting stage {stage} ({stage_i + 1}/{n_stages})",
+            build_id=config.get("build_id"),
+            completed_stages=list(validated),
+        )
         _reset_stage_owned_dirs(building, stage)
         evidence = runner(stage)
         marker = build_stage_marker(
@@ -1567,6 +1580,16 @@ def execute_backfill_stages(
         )
         write_stage_marker(building, marker)
         validated[stage] = load_and_validate_stage_marker(building, stage, config)
+        write_run_progress(
+            building,
+            stage=stage,
+            phase="complete",
+            current=stage_i + 1,
+            total=n_stages,
+            message=f"Completed stage {stage} ({stage_i + 1}/{n_stages})",
+            build_id=config.get("build_id"),
+            completed_stages=list(validated),
+        )
 
     return validated
 

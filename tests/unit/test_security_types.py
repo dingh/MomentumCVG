@@ -124,11 +124,10 @@ class TestClassificationPolicy:
         assert row["source_date_max"] == D2.isoformat()
         assert row["classification"] == "non_company_equity"
 
-    def test_exhausting_bounded_attempts_fails(self):
+    def test_exhausting_bounded_attempts_returns_none(self):
         days = [date(2024, 1, d) for d in range(2, 10)]  # 8 observed dates
         spy = FetchSpy({("GONE", d.isoformat()): EMPTY_OBS for d in days})
-        with pytest.raises(SecurityTypesError, match="cannot classify"):
-            _classify("GONE", days, spy)
+        assert _classify("GONE", days, spy) is None
         # Bounded: latest observed date + 4 fallbacks, newest first.
         assert len(spy.calls) == st.MAX_OBSERVED_DATE_ATTEMPTS
         expected = [
@@ -268,6 +267,52 @@ class TestEnsureSecurityTypes:
         assert path.read_bytes() == before
         assert set(result["ticker"]) == {"AAA"}
 
+    def test_progress_file_updates_during_classification(self, tmp_path):
+        import json
+
+        path = self._dict_path(tmp_path)
+        building = tmp_path / "run.building"
+        spy = FetchSpy(
+            {
+                ("AAA", D3.isoformat()): _obs("AAA", D3, 0),
+                ("BBB", D3.isoformat()): _obs("BBB", D3, 1),
+            }
+        )
+        ensure_security_types(
+            {"AAA": [D3], "BBB": [D3]},
+            path,
+            fetch_observation_fn=spy,
+            now_fn=_now_fn,
+            progress_path=building,
+            progress_every=1,
+        )
+        progress = json.loads(
+            (building / "run_progress.json").read_text(encoding="utf-8")
+        )
+        assert progress["stage"] == "liquidity"
+        assert progress["phase"] == "core_classification"
+        assert progress["current"] == 2
+        assert progress["total"] == 2
+        assert progress["pct"] == 100.0
+
+    def test_full_coverage_writes_100_pct_progress(self, tmp_path):
+        import json
+
+        path = self._seed(tmp_path, {"AAA": 0})
+        building = tmp_path / "run.building"
+        ensure_security_types(
+            {"AAA": [D3]},
+            path,
+            fetch_observation_fn=FetchSpy({}),
+            now_fn=_now_fn,
+            progress_path=building,
+        )
+        progress = json.loads(
+            (building / "run_progress.json").read_text(encoding="utf-8")
+        )
+        assert progress["pct"] == 100.0
+        assert "already covers" in progress["message"]
+
     def test_classifies_only_missing_tickers(self, tmp_path):
         path = self._seed(tmp_path, {"AAA": 0})
         spy = FetchSpy({("BBB", D3.isoformat()): _obs("BBB", D3, 1)})
@@ -319,7 +364,7 @@ class TestEnsureSecurityTypes:
         assert path.read_bytes() == before
         assert not list(tmp_path.glob("*.tmp-*"))
 
-    def test_exhausted_fallback_leaves_dictionary_unchanged(self, tmp_path):
+    def test_exhausted_fallback_skips_ticker_dictionary_unchanged(self, tmp_path):
         path = self._seed(tmp_path, {"AAA": 0})
         before = path.read_bytes()
 
@@ -329,14 +374,94 @@ class TestEnsureSecurityTypes:
                 ("GONE", D2.isoformat()): EMPTY_OBS,
             }
         )
-        with pytest.raises(SecurityTypesError, match="cannot classify"):
+        result = ensure_security_types(
+            {"AAA": [D3], "GONE": [D3, D2]},
+            path,
+            fetch_observation_fn=spy,
+            now_fn=_now_fn,
+        )
+        assert path.read_bytes() == before
+        assert list(result["ticker"]) == ["AAA"]
+        assert "GONE" not in set(result["ticker"])
+
+    def test_new_dictionary_skips_unresolved_keeps_resolved(self, tmp_path):
+        path = self._dict_path(tmp_path)
+        spy = FetchSpy(
+            {
+                ("AAA", D3.isoformat()): _obs("AAA", D3, 0),
+                ("GONE", D3.isoformat()): EMPTY_OBS,
+                ("GONE", D2.isoformat()): EMPTY_OBS,
+            }
+        )
+        result = ensure_security_types(
+            {"AAA": [D3], "GONE": [D3, D2]},
+            path,
+            fetch_observation_fn=spy,
+            now_fn=_now_fn,
+        )
+        assert list(result["ticker"]) == ["AAA"]
+        loaded = load_security_types(path)
+        assert list(loaded["ticker"]) == ["AAA"]
+
+    def test_new_dictionary_all_unresolved_fails(self, tmp_path):
+        path = self._dict_path(tmp_path)
+        spy = FetchSpy(
+            {
+                ("GONE", D3.isoformat()): EMPTY_OBS,
+                ("GONE", D2.isoformat()): EMPTY_OBS,
+            }
+        )
+        with pytest.raises(SecurityTypesError, match="empty security-type dictionary"):
             ensure_security_types(
-                {"AAA": [D3], "GONE": [D3, D2]},
+                {"GONE": [D3, D2]},
                 path,
                 fetch_observation_fn=spy,
                 now_fn=_now_fn,
             )
-        assert path.read_bytes() == before
+        assert not path.exists()
+
+    def test_checkpoint_every_n_persists_partial_progress(self, tmp_path, monkeypatch):
+        path = self._dict_path(tmp_path)
+        tickers = [f"T{i:03d}" for i in range(5)]
+        spy = FetchSpy(
+            {(t, D3.isoformat()): _obs(t, D3, 0) for t in tickers}
+        )
+        # Fail after the 3rd successful classification to simulate a crash
+        # after the checkpoint at n=2 has been written.
+        real_classify = st.classify_ticker_with_fallback
+        calls = {"n": 0}
+
+        def _counting_classify(ticker, dates, fetch_fn, *, classified_at_utc):
+            row = real_classify(
+                ticker, dates, fetch_fn, classified_at_utc=classified_at_utc
+            )
+            calls["n"] += 1
+            if calls["n"] == 3:
+                raise RuntimeError("simulated interrupt after checkpoint")
+            return row
+
+        monkeypatch.setattr(st, "classify_ticker_with_fallback", _counting_classify)
+        with pytest.raises(RuntimeError, match="simulated interrupt"):
+            ensure_security_types(
+                {t: [D3] for t in tickers},
+                path,
+                fetch_observation_fn=spy,
+                now_fn=_now_fn,
+                checkpoint_every=2,
+            )
+        assert path.is_file()
+        partial = load_security_types(path)
+        assert len(partial) == 2
+        # Resume: remaining tickers classified; prior rows kept.
+        monkeypatch.setattr(st, "classify_ticker_with_fallback", real_classify)
+        final = ensure_security_types(
+            {t: [D3] for t in tickers},
+            path,
+            fetch_observation_fn=spy,
+            now_fn=_now_fn,
+            checkpoint_every=2,
+        )
+        assert list(final["ticker"]) == sorted(tickers)
 
     def test_partial_batch_failure_publishes_nothing_when_absent(self, tmp_path):
         path = self._dict_path(tmp_path)
