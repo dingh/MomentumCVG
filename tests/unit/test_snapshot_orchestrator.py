@@ -13,6 +13,7 @@ import sys
 import zipfile
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Sequence
 
 import pytest
 
@@ -774,6 +775,7 @@ def _write_surface_artifacts(
     *,
     expiry_by_entry: dict[date, date] | None = None,
     empty_checks: bool = False,
+    invalid_null_expiry_tickers: Sequence[str] = (),
 ):
     import pandas as pd
 
@@ -786,11 +788,22 @@ def _write_surface_artifacts(
     reports = building / "reports" / "surface"
     reports.mkdir(parents=True, exist_ok=True)
     tickers = ["AAA", "BBB"]
+    invalid = {str(t).strip().upper() for t in invalid_null_expiry_tickers}
     meta_rows = []
     quote_rows = []
     for entry in entries:
         expiry = expiry_by_entry[entry]
         for t in tickers:
+            if t in invalid:
+                meta_rows.append(
+                    {
+                        "ticker": t,
+                        "entry_date": entry,
+                        "expiry_date": None,
+                        "surface_valid": False,
+                    }
+                )
+                continue
             meta_rows.append(
                 {
                     "ticker": t,
@@ -810,7 +823,10 @@ def _write_surface_artifacts(
                     }
                 )
     meta = pd.DataFrame(meta_rows)
-    quotes = pd.DataFrame(quote_rows)
+    quotes = pd.DataFrame(
+        quote_rows,
+        columns=["ticker", "entry_date", "expiry_date", "strike", "side"],
+    )
     meta_path = surface / "option_surface_meta_weekly_2024_2024.parquet"
     quotes_path = surface / "option_surface_quotes_weekly_2024_2024.parquet"
     meta.to_parquet(meta_path, index=False)
@@ -830,6 +846,7 @@ def _write_surface_artifacts(
     )
     keys = [(e, t) for e in entries for t in tickers]
     digest = ticker_date_keys_digest(keys)
+    valid_count = int((~meta["ticker"].astype(str).str.upper().isin(invalid)).sum())
     a2_grain = sorted(
         [
             str(t),
@@ -845,7 +862,7 @@ def _write_surface_artifacts(
             quotes["strike"],
             quotes["side"],
         )
-    )
+    ) if not quotes.empty else []
     return {
         "stage": "surface",
         "status": "PASS",
@@ -859,8 +876,8 @@ def _write_surface_artifacts(
         "expected_a1_key_digest": digest,
         "actual_a1_key_count": len(keys),
         "actual_a1_key_digest": digest,
-        "surface_valid_true_count": len(keys),
-        "surface_valid_false_count": 0,
+        "surface_valid_true_count": valid_count,
+        "surface_valid_false_count": len(keys) - valid_count,
         "a2_row_count": len(quotes),
         "a2_grain_digest": digest_json(a2_grain),
         "meta_total_bytes": meta_path.stat().st_size,
@@ -1239,6 +1256,7 @@ def _install_finalizable(
     spot_days: list[date] | None = None,
     panel_month: date = date(2023, 12, 29),
     panel_eligible: bool = True,
+    invalid_null_expiry_tickers: Sequence[str] = (),
 ):
     building = prepared.roots.building
     physical = [date.fromisoformat(d) for d in prepared.run_config["physical_raw_dates"]]
@@ -1270,6 +1288,7 @@ def _install_finalizable(
             surface_entries,
             expiry_by_entry=expiry_by_entry,
             empty_checks=empty_checks,
+            invalid_null_expiry_tickers=invalid_null_expiry_tickers,
         ),
     )
 
@@ -1420,6 +1439,44 @@ def test_finalize_readiness_gap_selects_largest_earliest(snapshots_root, raw_roo
         manifest2, _ = finalize_candidate_snapshot(prepared2, lock)
     assert manifest2.params["feature_ready_start"] == fri_a.isoformat()
     assert manifest2.params["feature_ready_end"] == fri_a.isoformat()
+
+
+def test_finalize_mixed_valid_invalid_a1_remains_feature_ready(
+    snapshots_root, raw_root
+):
+    """Invalid A1 rows with null expiry must not poison feature-ready dates.
+
+    AAA remains surface_valid=true with a covered expiry and A2 body. BBB stays
+    in the A1 schedule as surface_valid=false with null expiry and no A2 body.
+    Finalize must still succeed with a nonempty feature-ready interval.
+    """
+    import pandas as pd
+
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    _install_finalizable(prepared, invalid_null_expiry_tickers=("BBB",))
+
+    building = prepared.roots.building
+    meta_path = building / "cache" / "surface" / "option_surface_meta_weekly_2024_2024.parquet"
+    quotes_path = (
+        building / "cache" / "surface" / "option_surface_quotes_weekly_2024_2024.parquet"
+    )
+    meta = pd.read_parquet(meta_path)
+    quotes = pd.read_parquet(quotes_path)
+    assert set(meta["ticker"].astype(str).str.upper()) == {"AAA", "BBB"}
+    bbb = meta.loc[meta["ticker"].astype(str).str.upper() == "BBB"].iloc[0]
+    assert bool(bbb["surface_valid"]) is False
+    assert pd.isna(bbb["expiry_date"])
+    assert quotes.empty or set(quotes["ticker"].astype(str).str.upper()) == {"AAA"}
+    assert not ((quotes["ticker"].astype(str).str.upper() == "BBB").any())
+
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        manifest, path = finalize_candidate_snapshot(prepared, lock)
+    assert path.is_file()
+    assert manifest.params["feature_ready_start"] is not None
+    assert manifest.params["feature_ready_end"] is not None
+    assert manifest.params["feature_ready_start"] <= manifest.params["feature_ready_end"]
+    assert (building / "reports/final/final_validation.json").is_file()
 
 
 def test_finalize_manifest_paths_resolve_in_building(snapshots_root, raw_root):

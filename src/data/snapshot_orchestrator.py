@@ -1683,12 +1683,20 @@ def _select_feature_ready(
     adjusted_set, spot_set = set(_adjusted_dates(building)), set(_spot_dates(building))
     meta = pd.read_parquet(
         building / markers["surface"]["evidence"]["meta_path"],
-        columns=["ticker", "entry_date", "expiry_date"],
+        columns=["ticker", "entry_date", "expiry_date", "surface_valid"],
     )
-    rows = [
-        (str(t).strip().upper(), pd.Timestamp(e).date(), pd.Timestamp(x).date())
-        for t, e, x in zip(meta["ticker"], meta["entry_date"], meta["expiry_date"])
-    ]
+    rows: list[tuple[str, date, date | None, bool]] = []
+    for ticker, entry_raw, expiry_raw, valid_raw in zip(
+        meta["ticker"], meta["entry_date"], meta["expiry_date"], meta["surface_valid"]
+    ):
+        entry = pd.Timestamp(entry_raw).date()
+        if pd.isna(expiry_raw):
+            expiry: date | None = None
+        else:
+            expiry = pd.Timestamp(expiry_raw).date()
+        rows.append(
+            (str(ticker).strip().upper(), entry, expiry, bool(valid_raw))
+        )
     universe_set = set(universe)
     ready: set[date] = set()
     for entry in schedule:
@@ -1701,14 +1709,22 @@ def _select_feature_ready(
             and pd.Timestamp(resolved).date() < entry
             and pit.selected_count > 0
         )
-        expiries = {x for _t, e, x in rows if e == entry}
-        present = {t for t, e, _x in rows if e == entry}
+        present = {t for t, e, _x, _v in rows if e == entry}
+        # Only surface_valid=true rows participate in expiry coverage. Invalid
+        # A1 rows still count toward present/universe completeness but their
+        # null or unavailable expiries must not invalidate the calendar date.
+        valid_expiries = [
+            x for _t, e, x, valid in rows if e == entry and valid
+        ]
+        valid_expiries_covered = bool(valid_expiries) and all(
+            x is not None and x in adjusted_set and x in spot_set
+            for x in valid_expiries
+        )
         if (
             pit_ok
-            and expiries
+            and valid_expiries_covered
             and entry in adjusted_set
             and entry in spot_set
-            and all(x in adjusted_set and x in spot_set for x in expiries)
             and present == universe_set
         ):
             ready.add(entry)
