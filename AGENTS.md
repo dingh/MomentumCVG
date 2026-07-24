@@ -68,6 +68,7 @@ A task is done when:
 | [docs/README.md](docs/README.md) | Active doc index |
 | [docs/repo_map.md](docs/repo_map.md) | Repository layout and data flow |
 | [docs/sprint_memos/004_c5_adjusted_liquid.md](docs/sprint_memos/004_c5_adjusted_liquid.md) | C5 adjusted-liquid closeout |
+| [docs/sprint_memos/004_c8_4_bounded_evidence.md](docs/sprint_memos/004_c8_4_bounded_evidence.md) | C8.4 bounded snapshot evidence closeout |
 | [docs/backtest_evaluation_protocol.md](docs/backtest_evaluation_protocol.md) | Go/no-go windows and fills |
 | [docs/v1_universe_protocol.md](docs/v1_universe_protocol.md) | PIT liquidity universe |
 | [docs/v1_ops_model.md](docs/v1_ops_model.md) | Trade volume / broker thresholds |

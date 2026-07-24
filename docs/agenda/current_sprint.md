@@ -1,7 +1,7 @@
 # Current sprint — 004
 
-**Updated:** 2026-07-12  
-**Status:** Active — **C1** + **C2** + **C4** + **C5** + **C6** + **C7 closed**; **C3** deferred until C4–C8  
+**Updated:** 2026-07-22  
+**Status:** Active — **C1** + **C2** + **C4** + **C5** + **C6** + **C7** + **C8.4 closed**; **C8.5** (full production snapshot evidence) open; **C3** deferred until C4–C8; **C9** remaining  
 **Mode:** Build (HD decisions locked below)
 
 **C4 closeout memo:** [sprint_memos/004_c4_liquidity_panel.md](../sprint_memos/004_c4_liquidity_panel.md)
@@ -11,6 +11,10 @@
 **C6 closeout memo:** [sprint_memos/004_c6_option_surface.md](../sprint_memos/004_c6_option_surface.md)
 
 **C7 closeout memo:** [sprint_memos/004_c7_pit_universe.md](../sprint_memos/004_c7_pit_universe.md)
+
+**C8.4 closeout memo:** [sprint_memos/004_c8_4_bounded_evidence.md](../sprint_memos/004_c8_4_bounded_evidence.md)
+
+**C8.4 completion evidence:** [docs/tmp/c8_4_bounded_backfill_evidence.md](../tmp/c8_4_bounded_backfill_evidence.md)
 
 **C1 receipt design (canonical):** [docs/tmp/c1_manifest_design_plan.md](../tmp/c1_manifest_design_plan.md)
 
@@ -438,7 +442,8 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 | **C5** ✓ | Split golden tests + adjusted-liquid backfill + `audit_adjusted_liquid` | `split_adjuster`, `audit_adjusted_liquid.py`, `paths.py`, tests | pytest + full production audit PASS |
 | **C6** ✓ | Surface tests T1–T6 + `surface-audit` | extend contract/unit, audit module | pytest + `surface-audit` sample run |
 | **C7** ✓ | PIT universe harness (tests + audit module) | tests + CLI harness | sample dates in PIT report section |
-| **C8** | `refresh --dry-run` + bounded `refresh` subprocess wiring | CLI | dry-run manifest shape |
+| **C8.4** ✓ | Bounded real-data cold backfill evidence + publish | CLI/orchestrator + evidence under `docs/tmp/c8_4_*` | published bounded snapshot; memo [004_c8_4_bounded_evidence.md](../sprint_memos/004_c8_4_bounded_evidence.md) |
+| **C8.5** | Full production snapshot evidence / C8 closeout | production snapshots root + evidence | full-scope publish with `production_accepted` policy per design |
 | **C3** | `validate` + default report paths + umbrella inventory | CLI + report writer; wires C5/C6/C7 checks | `validate --as-of …` writes markdown |
 | **C9** | Runbook + `v1_universe_protocol` + data-contract drift + **CLI plan output cleanup** (blocker #13) | `docs/` + `scripts/refresh_weekly_inputs.py` + `tests/unit/test_refresh_weekly_inputs_cli.py` | review; plan has no commit-label deferrals |
 | **C10** | Sprint memo + progress log (closeout) | `docs/sprint_memos/004_*.md` | — |
@@ -480,7 +485,7 @@ Suggested **reviewable commit sequence** (agent commits only when user asks). Ea
 | **3** | Split unit/golden + adjusted-liquid audit (C5) ✓ | Production backfill audited; downstream defaults wired |
 | **4** ✓ | Surface tests T1–T6 + `surface-audit` (C6) | ≥1 sample run; report archived |
 | **5** ✓ | PIT universe harness (C7) | § PIT universe criteria |
-| **6** | Bounded `refresh` + `--dry-run` (core + surface) (C8) | Wired; no feature steps |
+| **6** | Bounded `refresh` + `--dry-run` (core + surface) (C8.4) | **Done (C8.4)** — published bounded evidence snapshot; see [004_c8_4_bounded_evidence.md](../sprint_memos/004_c8_4_bounded_evidence.md) |
 | **7** | `validate` umbrella inventory (A1/A2/A3, splits, spot) (C3) | PASS/WARN/FAIL report |
 | **8** | Runbook + universe protocol + drift + pytest (C9) | Docs + suite green |
 
@@ -587,6 +592,7 @@ Stale docs (e.g. `backtest_evaluation_protocol.md` “Sprint 004–005 baseline�
 | 2026-07-04 v13 | **C5 closed:** scoped splits + filtered adjust → `input/adjusted_liquid` (2299 parquets); C5.10D audit PASS; C5.11A downstream defaults; memo [004_c5_adjusted_liquid.md](../sprint_memos/004_c5_adjusted_liquid.md) |
 | 2026-07-11 v14 | **C6 closed:** three-layer A1/A2 trust gate (producer + contract + readiness + C6.4 real-cache/smoke evidence); blocker #9 closed; memo [004_c6_option_surface.md](../sprint_memos/004_c6_option_surface.md) |
 | 2026-07-12 v15 | **C7 closed:** strict prior-snapshot S1 accepted; independent PIT/rolling audit accepted; C7.4R production PASS; complete sample coverage counts 737/728/735; 477-snapshot full-history coverage; zero missing superset tickers; memo [004_c7_pit_universe.md](../sprint_memos/004_c7_pit_universe.md) |
+| 2026-07-22 v16 | **C8.4 closed (ACCEPT WITH LIMITATIONS):** bounded cold backfill published `20260721T062412533463Z_d42da59c` / snapshot `1b1e28b262ba40be`; feature-ready `2024-04-12`→`2024-06-21` (11); `scope=bounded`, `production_accepted=false`, overall **WARN**; evidence [c8_4_bounded_backfill_evidence.md](../tmp/c8_4_bounded_backfill_evidence.md); memo [004_c8_4_bounded_evidence.md](../sprint_memos/004_c8_4_bounded_evidence.md); **C8.5** full production evidence remains |
 
 ---
 
