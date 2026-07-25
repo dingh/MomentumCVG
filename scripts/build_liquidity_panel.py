@@ -26,15 +26,15 @@ See docs/tmp/c4_liquidity_panel_design_plan.md.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import logging
 import os
 import shutil
 import sys
-import zipfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Callable, Literal, Sequence
+from typing import Callable, Literal, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -50,6 +50,20 @@ _PROJECT_ROOT = _SCRIPT_DIR.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.data.input_snapshot import generate_build_id  # noqa: E402
+from src.data.liquidity_daily import (  # noqa: E402
+    DAILY_REQUIRED_COLS,
+    LIQUIDITY_SOURCE,
+    RAW_REQUIRED_COLS,
+    LiquidityPanelError,
+    candidate_expiries,
+    compute_daily_liquidity_observations,
+    compute_expiry_atm_liquidity,
+    compute_ticker_daily_observation,
+    load_raw_day_from_zip_path,
+    process_daily_zip,
+    select_atm_row,
+    validate_raw_columns,
+)
 from src.data.orats_core_client import OratsCoreClient, OratsCoreError  # noqa: E402
 from src.data.paths import DEFAULT_SECURITY_TYPES_PATH  # noqa: E402
 from src.data.security_types import (  # noqa: E402
@@ -77,32 +91,6 @@ PANEL_FILENAME = "ticker_liquidity_panel.parquet"
 LIQUID_TICKERS_FILENAME = "liquid_tickers.csv"
 SECURITY_CLASSIFICATION_FILENAME = "security_classification.parquet"
 STAGING_DIRNAME = ".liquidity_panel_staging"
-LIQUIDITY_SOURCE = "raw_option_bid_x_volume_sum_dte_5_60"
-
-RAW_REQUIRED_COLS = (
-    "ticker",
-    "expirDate",
-    "stkPx",
-    "strike",
-    "cBidPx",
-    "cAskPx",
-    "pBidPx",
-    "pAskPx",
-    "cVolu",
-    "pVolu",
-)
-
-DAILY_REQUIRED_COLS = (
-    "trade_date",
-    "ticker",
-    "daily_atm_straddle_dollar_vol",
-    "daily_atm_spread_pct",
-    "daily_has_valid_quote",
-    "n_candidate_expiries",
-    "n_expiries_total",
-    "no_expiry_in_band",
-    "liquidity_source",
-)
 WEEKLY_REQUIRED_COLS = (
     "week_end_date",
     "ticker",
@@ -133,10 +121,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-
-
-class LiquidityPanelError(Exception):
-    """Blocking failure building or extending the liquidity panel."""
 
 
 @dataclass
@@ -177,21 +161,7 @@ def orats_raw_zip_path(data_root: Path | str, day: date) -> Path:
 
 def load_raw_day_from_zip(data_root: Path | str, trade_date: date) -> pd.DataFrame:
     """Load one day's wide-format ORATS chain from raw ZIP; no split adjustment."""
-    zip_path = orats_raw_zip_path(data_root, trade_date)
-    if not zip_path.is_file():
-        return pd.DataFrame()
-
-    try:
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            csv_names = [n for n in zf.namelist() if n.endswith((".csv", ".txt"))]
-            if not csv_names:
-                raise LiquidityPanelError(f"No CSV/TXT inside {zip_path.name}")
-            with zf.open(csv_names[0]) as f:
-                return pd.read_csv(f, dtype={"ticker": str})
-    except LiquidityPanelError:
-        raise
-    except Exception as exc:
-        raise LiquidityPanelError(f"Failed to read {zip_path}: {exc}") from exc
+    return load_raw_day_from_zip_path(orats_raw_zip_path(data_root, trade_date))
 
 
 def make_raw_zip_loader(data_root: Path) -> Callable[[date], pd.DataFrame]:
@@ -273,145 +243,6 @@ def compute_dates_needed(
 # ── Stage 1: daily ────────────────────────────────────────────────────────────
 
 
-def _valid_leg_quote(bid: float, ask: float) -> bool:
-    return bool(np.isfinite(bid) and np.isfinite(ask) and bid > 0 and ask > 0 and ask >= bid)
-
-
-def _leg_spread_pct(bid: float, ask: float) -> float:
-    if not _valid_leg_quote(bid, ask):
-        return float("nan")
-    mid = (bid + ask) / 2.0
-    return (ask - bid) / mid
-
-
-def validate_raw_columns(day_df: pd.DataFrame) -> None:
-    missing = [c for c in RAW_REQUIRED_COLS if c not in day_df.columns]
-    if missing:
-        raise LiquidityPanelError(
-            f"ORATS raw ZIP missing columns required for liquidity: {missing}. "
-            "Expected native ORATS wide-format columns (stkPx, cBidPx, …); "
-            "do not use adj_* or ORATS_Adjusted as input."
-        )
-
-
-def candidate_expiries(
-    expiries: Sequence[date],
-    trade_date: date,
-    *,
-    dte_min: int = DEFAULT_DTE_MIN,
-    dte_max: int = DEFAULT_DTE_MAX,
-) -> list[date]:
-    return sorted(
-        e for e in expiries if dte_min <= (e - trade_date).days <= dte_max
-    )
-
-
-def select_atm_row(g_exp: pd.DataFrame) -> pd.Series:
-    """ATM row using raw stkPx and raw strike."""
-    g = g_exp.copy()
-    g["_dist"] = (g["strike"] - g["stkPx"]).abs()
-    return g.sort_values(["_dist", "strike"], kind="mergesort").iloc[0]
-
-
-def compute_expiry_atm_liquidity(atm: pd.Series) -> tuple[float, float]:
-    """
-    Returns (expiry_atm_straddle_dollar_vol, expiry_atm_spread_pct).
-    Uses raw bid × volume when both call and put quotes are valid (bid/ask > 0, ask >= bid).
-    """
-    c_bid = float(atm["cBidPx"])
-    p_bid = float(atm["pBidPx"])
-    c_ask = float(atm["cAskPx"])
-    p_ask = float(atm["pAskPx"])
-    c_vol = 0.0 if pd.isna(atm["cVolu"]) else float(atm["cVolu"])
-    p_vol = 0.0 if pd.isna(atm["pVolu"]) else float(atm["pVolu"])
-
-    if not (_valid_leg_quote(c_bid, c_ask) and _valid_leg_quote(p_bid, p_ask)):
-        return 0.0, float("nan")
-
-    call_bid_dollar = 100.0 * c_bid * c_vol
-    put_bid_dollar = 100.0 * p_bid * p_vol
-    expiry_vol = min(call_bid_dollar, put_bid_dollar)
-
-    call_sp = _leg_spread_pct(c_bid, c_ask)
-    put_sp = _leg_spread_pct(p_bid, p_ask)
-    expiry_spread = float(max(call_sp, put_sp))
-
-    return expiry_vol, expiry_spread
-
-
-def compute_ticker_daily_observation(
-    g_all: pd.DataFrame,
-    trade_date: date,
-    *,
-    dte_min: int = DEFAULT_DTE_MIN,
-    dte_max: int = DEFAULT_DTE_MAX,
-) -> dict:
-    expiries = sorted(g_all["expirDate"].dropna().unique())
-    n_total = len(expiries)
-    candidates = candidate_expiries(expiries, trade_date, dte_min=dte_min, dte_max=dte_max)
-
-    if not candidates:
-        return {
-            "daily_atm_straddle_dollar_vol": 0.0,
-            "daily_atm_spread_pct": np.nan,
-            "daily_has_valid_quote": False,
-            "n_candidate_expiries": 0,
-            "n_expiries_total": n_total,
-            "no_expiry_in_band": True,
-            "liquidity_source": LIQUIDITY_SOURCE,
-        }
-
-    total_vol = 0.0
-    spread_num = 0.0
-    spread_den = 0.0
-    for expiry in candidates:
-        g_exp = g_all[g_all["expirDate"] == expiry]
-        if g_exp.empty:
-            continue
-        atm = select_atm_row(g_exp)
-        exp_vol, exp_spread = compute_expiry_atm_liquidity(atm)
-        total_vol += exp_vol
-        if exp_vol > 0 and np.isfinite(exp_spread):
-            spread_num += exp_spread * exp_vol
-            spread_den += exp_vol
-
-    daily_spread = spread_num / spread_den if spread_den > 0 else float("nan")
-    has_valid = total_vol > 0 and np.isfinite(daily_spread)
-
-    return {
-        "daily_atm_straddle_dollar_vol": total_vol,
-        "daily_atm_spread_pct": daily_spread,
-        "daily_has_valid_quote": has_valid,
-        "n_candidate_expiries": len(candidates),
-        "n_expiries_total": n_total,
-        "no_expiry_in_band": False,
-        "liquidity_source": LIQUIDITY_SOURCE,
-    }
-
-
-def compute_daily_liquidity_observations(
-    day_df: pd.DataFrame,
-    trade_date: date,
-    *,
-    dte_min: int = DEFAULT_DTE_MIN,
-    dte_max: int = DEFAULT_DTE_MAX,
-) -> pd.DataFrame:
-    validate_raw_columns(day_df)
-    df = day_df.copy()
-    df["expirDate"] = pd.to_datetime(df["expirDate"]).dt.date
-
-    records: list[dict] = []
-    for ticker, g_all in df.groupby("ticker", sort=False):
-        obs = compute_ticker_daily_observation(
-            g_all, trade_date, dte_min=dte_min, dte_max=dte_max
-        )
-        records.append({"trade_date": trade_date, "ticker": ticker, **obs})
-
-    if not records:
-        return pd.DataFrame(columns=list(DAILY_REQUIRED_COLS))
-    return pd.DataFrame(records)
-
-
 def extract_daily_observations(
     dates: Sequence[date],
     load_day_fn: Callable[[date], pd.DataFrame],
@@ -419,29 +250,112 @@ def extract_daily_observations(
     dte_min: int = DEFAULT_DTE_MIN,
     dte_max: int = DEFAULT_DTE_MAX,
     show_progress: bool = True,
+    max_workers: int = 1,
+    zip_paths_by_date: Mapping[date, Path] | None = None,
+    progress_path: Path | None = None,
+    build_id: str | None = None,
 ) -> tuple[pd.DataFrame, int]:
-    """Read each trade_date once via load_day_fn; return slim daily observations."""
+    """Read each trade date once and return deterministic slim daily rows.
+
+    ``max_workers=1`` preserves the injectable sequential loader path.  A
+    process pool is used when ``max_workers > 1``; callers must then provide
+    exact frozen ZIP paths so Windows workers receive only picklable inputs.
+    """
+    if max_workers <= 0:
+        raise LiquidityPanelError(
+            f"max_workers must be a positive integer; got {max_workers}"
+        )
+
     frames: list[pd.DataFrame] = []
     sorted_dates = sorted(dates)
-    day_iter = tqdm(
-        sorted_dates,
-        desc="Daily liquidity ZIPs",
-        unit="day",
-        disable=not show_progress or not sys.stderr.isatty(),
-    )
-    for trade_date in day_iter:
-        day_iter.set_postfix_str(trade_date.isoformat(), refresh=False)
-        day_df = load_day_fn(trade_date)
-        if day_df is None or day_df.empty:
-            continue
-        frames.append(
-            compute_daily_liquidity_observations(
-                day_df, trade_date, dte_min=dte_min, dte_max=dte_max
-            )
+
+    def _write_progress(completed: int) -> None:
+        if progress_path is None:
+            return
+        from src.data.run_progress import write_run_progress
+
+        write_run_progress(
+            progress_path,
+            stage="liquidity",
+            phase="daily_prepare",
+            current=completed,
+            total=len(sorted_dates),
+            message=(
+                f"Liquidity daily prepare: {completed}/{len(sorted_dates)} "
+                f"days ({max_workers} worker{'s' if max_workers != 1 else ''})"
+            ),
+            build_id=build_id,
+            workers=max_workers,
         )
+
+    _write_progress(0)
+    if max_workers == 1:
+        day_iter = tqdm(
+            sorted_dates,
+            desc="Daily liquidity ZIPs",
+            unit="day",
+            disable=not show_progress or not sys.stderr.isatty(),
+        )
+        for completed, trade_date in enumerate(day_iter, start=1):
+            day_iter.set_postfix_str(trade_date.isoformat(), refresh=False)
+            day_df = load_day_fn(trade_date)
+            if day_df is not None and not day_df.empty:
+                frames.append(
+                    compute_daily_liquidity_observations(
+                        day_df,
+                        trade_date,
+                        dte_min=dte_min,
+                        dte_max=dte_max,
+                    )
+                )
+            if completed % 25 == 0 or completed == len(sorted_dates):
+                _write_progress(completed)
+    else:
+        if zip_paths_by_date is None:
+            raise LiquidityPanelError(
+                "parallel daily liquidity requires exact zip_paths_by_date"
+            )
+        missing = [day for day in sorted_dates if day not in zip_paths_by_date]
+        if missing:
+            raise LiquidityPanelError(
+                "parallel daily liquidity is missing frozen ZIP path(s) for "
+                f"{len(missing)} date(s), first: {missing[0].isoformat()}"
+            )
+
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    process_daily_zip,
+                    zip_paths_by_date[trade_date],
+                    trade_date,
+                    dte_min,
+                    dte_max,
+                ): trade_date
+                for trade_date in sorted_dates
+            }
+            for completed, future in enumerate(as_completed(futures), start=1):
+                trade_date = futures[future]
+                try:
+                    frame = future.result()
+                except Exception as exc:
+                    for pending in futures:
+                        pending.cancel()
+                    raise LiquidityPanelError(
+                        "Parallel daily liquidity failed for "
+                        f"{trade_date.isoformat()}: {exc}"
+                    ) from exc
+                if not frame.empty:
+                    frames.append(frame)
+                if completed % 25 == 0 or completed == len(sorted_dates):
+                    _write_progress(completed)
+
     if not frames:
         return pd.DataFrame(columns=list(DAILY_REQUIRED_COLS)), len(dates)
-    return pd.concat(frames, ignore_index=True), len(dates)
+    daily = pd.concat(frames, ignore_index=True)
+    daily = daily.sort_values(
+        ["trade_date", "ticker"], kind="mergesort"
+    ).reset_index(drop=True)
+    return daily, len(dates)
 
 
 # ── Stage 1b: security classification (company-equity filter) ────────────────
@@ -796,6 +710,10 @@ def run_incremental(
     dte_max: int = DEFAULT_DTE_MAX,
     show_progress: bool = True,
     classify_fn: Callable[[dict[str, list[date]]], pd.DataFrame] | None = None,
+    max_workers: int = 1,
+    zip_paths_by_date: Mapping[date, Path] | None = None,
+    progress_path: Path | None = None,
+    build_id: str | None = None,
 ) -> BuildResult:
     calendar = build_week_calendar(all_trading_dates)
     new_weeks = [(we, days) for we, days in calendar if we > state.panel_watermark]
@@ -830,7 +748,15 @@ def run_incremental(
             )
 
     new_daily, files_read = extract_daily_observations(
-        new_daily_dates, load_day_fn, dte_min=dte_min, dte_max=dte_max, show_progress=show_progress
+        new_daily_dates,
+        load_day_fn,
+        dte_min=dte_min,
+        dte_max=dte_max,
+        show_progress=show_progress,
+        max_workers=max_workers,
+        zip_paths_by_date=zip_paths_by_date,
+        progress_path=progress_path,
+        build_id=build_id,
     )
     if new_daily.empty:
         raise LiquidityPanelError("No daily observations extracted for incremental week.")
@@ -915,6 +841,10 @@ def run_backfill(
     dte_max: int = DEFAULT_DTE_MAX,
     show_progress: bool = True,
     classify_fn: Callable[[dict[str, list[date]]], pd.DataFrame] | None = None,
+    max_workers: int = 1,
+    zip_paths_by_date: Mapping[date, Path] | None = None,
+    progress_path: Path | None = None,
+    build_id: str | None = None,
 ) -> BuildResult:
     if not all_trading_dates:
         raise LiquidityPanelError(
@@ -938,6 +868,10 @@ def run_backfill(
         dte_min=dte_min,
         dte_max=dte_max,
         show_progress=show_progress,
+        max_workers=max_workers,
+        zip_paths_by_date=zip_paths_by_date,
+        progress_path=progress_path,
+        build_id=build_id,
     )
     if daily.empty:
         raise LiquidityPanelError("Daily observation stage produced no rows.")
@@ -1201,7 +1135,9 @@ def build_panel(
     show_progress: bool = True,
     security_types_path: Path = DEFAULT_SECURITY_TYPES_PATH,
     fetch_observation_fn: Callable[[str, date], pd.DataFrame] | None = None,
+    max_workers: int = 1,
 ) -> BuildResult:
+    using_default_loader = load_day_fn is None
     if load_day_fn is None:
         load_day_fn = make_raw_zip_loader(data_root)
     classify_fn = make_core_classifier(
@@ -1210,6 +1146,14 @@ def build_panel(
 
     hist_start = start_date - timedelta(weeks=lookback_weeks + 2)
     all_trading = discover_orats_trading_dates(data_root, hist_start, end_date)
+    zip_paths_by_date = (
+        {
+            trade_date: orats_raw_zip_path(data_root, trade_date)
+            for trade_date in all_trading
+        }
+        if using_default_loader and max_workers > 1
+        else None
+    )
 
     if mode == "backfill":
         return run_backfill(
@@ -1224,6 +1168,8 @@ def build_panel(
             dte_max=dte_max,
             show_progress=show_progress,
             classify_fn=classify_fn,
+            max_workers=max_workers,
+            zip_paths_by_date=zip_paths_by_date,
         )
 
     state = validate_incremental_artifacts(
@@ -1245,6 +1191,8 @@ def build_panel(
         dte_max=dte_max,
         show_progress=show_progress,
         classify_fn=classify_fn,
+        max_workers=max_workers,
+        zip_paths_by_date=zip_paths_by_date,
     )
 
 
@@ -1275,6 +1223,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--dvol-top-pct", type=float, default=DEFAULT_DVOL_TOP_PCT)
     p.add_argument("--spread-bot-pct", type=float, default=DEFAULT_SPREAD_BOT_PCT)
     p.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Parallel worker processes for independent daily ZIP calculations",
+    )
+    p.add_argument(
         "--security-types-path",
         type=Path,
         default=DEFAULT_SECURITY_TYPES_PATH,
@@ -1301,6 +1255,9 @@ def _resolve_date_range(args: argparse.Namespace) -> tuple[date, date]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.workers <= 0:
+        logger.error("--workers must be a positive integer; got %d", args.workers)
+        return 1
     start_date, end_date = _resolve_date_range(args)
     build_id = args.build_id or generate_build_id(
         now=datetime.utcnow(), command="build_liquidity_panel"
@@ -1321,6 +1278,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             spread_bot_pct=args.spread_bot_pct,
             show_progress=not args.no_progress,
             security_types_path=args.security_types_path,
+            max_workers=args.workers,
         )
     except (LiquidityPanelError, SecurityTypesError, OratsCoreError) as exc:
         logger.error("%s", exc)

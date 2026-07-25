@@ -1583,7 +1583,7 @@ def execute_backfill_stages(
         from src.data import snapshot_stage_adapters as adapters
 
         if stage == "liquidity":
-            return adapters.run_liquidity_stage(run)
+            return adapters.run_liquidity_stage(run, max_workers=max_workers)
         if stage == "adjusted":
             return adapters.run_adjusted_stage(run, max_workers=max_workers)
         if stage == "spot":

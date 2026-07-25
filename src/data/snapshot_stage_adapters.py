@@ -370,6 +370,7 @@ def run_liquidity_stage(
     security_types_path: Path | str | None = None,
     fetch_observation_fn: Callable[[str, date], pd.DataFrame] | None = None,
     show_progress: bool = False,
+    max_workers: int | None = None,
 ) -> dict[str, Any]:
     """Rebuild the C4 liquidity artifacts from the frozen raw inventory.
 
@@ -405,6 +406,11 @@ def run_liquidity_stage(
 
     c4 = config["c4_params"]
     mod = _liquidity_module()
+    effective_workers = max_workers if max_workers is not None else 1
+    if effective_workers <= 0:
+        raise StageExecutionError(
+            f"liquidity max_workers must be positive; got {effective_workers}"
+        )
 
     reused = _try_reuse_liquidity_candidate(
         building,
@@ -457,6 +463,10 @@ def run_liquidity_stage(
             dte_max=c4["dte_max"],
             show_progress=show_progress,
             classify_fn=classify_fn,
+            max_workers=effective_workers,
+            zip_paths_by_date=frozen_paths if effective_workers > 1 else None,
+            progress_path=building,
+            build_id=config.get("build_id"),
         )
     except StageExecutionError:
         raise

@@ -176,6 +176,94 @@ class TestDailyLiquidity:
         obs = blp.compute_daily_liquidity_observations(pd.DataFrame(rows), trade)
         assert bool(obs.iloc[0]["no_expiry_in_band"]) is True
 
+    def test_parallel_daily_matches_sequential_deterministically(self, tmp_path: Path):
+        days = [date(2024, 1, 3), date(2024, 1, 4), date(2024, 1, 5)]
+        frames: dict[date, pd.DataFrame] = {}
+        zip_paths: dict[date, Path] = {}
+        for day_index, trade_day in enumerate(days):
+            expiry = date(2024, 1, 12)
+            frame = pd.DataFrame(
+                [
+                    _orats_row(
+                        ticker,
+                        trade_day,
+                        expiry,
+                        100,
+                        100,
+                        c_vol=10 + day_index,
+                        p_vol=10 + day_index,
+                    )
+                    for ticker in ("BBB", "AAA")
+                ]
+            )
+            frames[trade_day] = frame
+            zip_path = (
+                tmp_path
+                / str(trade_day.year)
+                / f"ORATS_SMV_Strikes_{trade_day.strftime('%Y%m%d')}.zip"
+            )
+            zip_path.parent.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("strikes.csv", frame.to_csv(index=False))
+            zip_paths[trade_day] = zip_path
+
+        sequential, sequential_count = blp.extract_daily_observations(
+            days,
+            lambda trade_day: frames[trade_day],
+            show_progress=False,
+            max_workers=1,
+        )
+        progress_root = tmp_path / "progress"
+        parallel, parallel_count = blp.extract_daily_observations(
+            days,
+            lambda trade_day: frames[trade_day],
+            show_progress=False,
+            max_workers=2,
+            zip_paths_by_date=zip_paths,
+            progress_path=progress_root,
+            build_id="test-build",
+        )
+
+        pd.testing.assert_frame_equal(parallel, sequential)
+        assert parallel_count == sequential_count == 3
+        progress = pd.read_json(
+            progress_root / "run_progress.json", typ="series"
+        )
+        assert progress["phase"] == "daily_prepare"
+        assert progress["current"] == progress["total"] == 3
+        assert progress["pct"] == 100.0
+        assert progress["workers"] == 2
+
+    def test_parallel_daily_failure_identifies_trade_date(self, tmp_path: Path):
+        trade_day = date(2024, 1, 5)
+        zip_path = tmp_path / "bad.zip"
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("strikes.csv", "ticker,stkPx\nAAA,100\n")
+
+        with pytest.raises(
+            blp.LiquidityPanelError,
+            match=r"Parallel daily liquidity failed for 2024-01-05",
+        ):
+            blp.extract_daily_observations(
+                [trade_day],
+                lambda _: pd.DataFrame(),
+                show_progress=False,
+                max_workers=2,
+                zip_paths_by_date={trade_day: zip_path},
+            )
+
+    def test_parallel_daily_requires_exact_zip_paths(self):
+        with pytest.raises(
+            blp.LiquidityPanelError,
+            match="requires exact zip_paths_by_date",
+        ):
+            blp.extract_daily_observations(
+                [date(2024, 1, 5)],
+                lambda _: pd.DataFrame(),
+                show_progress=False,
+                max_workers=2,
+            )
+
 
 class TestWeeklyAndPanel:
     def test_weekly_mean_of_daily_with_missing_day_zero(self):
@@ -308,6 +396,11 @@ class TestWeeklyAndPanel:
 
 
 class TestBackfillPipeline:
+    def test_cli_workers_default_and_override(self):
+        assert blp.parse_args([]).workers == 1
+        assert blp.parse_args(["--workers", "4"]).workers == 4
+        assert blp.main(["--workers", "0"]) == 1
+
     def test_backfill_end_to_end_synthetic(self, tmp_path: Path):
         trade1 = date(2024, 1, 3)
         trade2 = date(2024, 1, 4)

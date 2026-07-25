@@ -207,6 +207,7 @@ def test_liquidity_stage_passes_frozen_inputs_and_promotes(run, monkeypatch, tmp
         run,
         security_types_path=tmp_path / "security_types.parquet",
         fetch_observation_fn=lambda ticker, day: pd.DataFrame(),
+        max_workers=3,
     )
 
     backfill = calls["run_backfill"]
@@ -214,6 +215,13 @@ def test_liquidity_stage_passes_frozen_inputs_and_promotes(run, monkeypatch, tmp
     assert backfill["end"] == DAY_2
     assert backfill["all_trading_dates"] == [DAY_1, DAY_2]
     assert backfill["lookback_weeks"] == 12
+    assert backfill["max_workers"] == 3
+    assert backfill["progress_path"] == Path(run.roots.building)
+    assert backfill["build_id"] == BUILD_ID
+    assert set(backfill["zip_paths_by_date"]) == {DAY_1, DAY_2}
+    assert all(
+        path.is_file() for path in backfill["zip_paths_by_date"].values()
+    )
     assert calls["classifier_path"] == tmp_path / "security_types.parquet"
     assert calls["classifier_kwargs"]["progress_path"] == Path(run.roots.building)
 
