@@ -8,7 +8,8 @@ Pipeline (Sprint 004 C4, plus security-type stage):
   N-week panel → liquid_tickers.csv
 
 Non-company securities (ETF / index / VIX-style, ORATS Core assetType 4-9)
-are removed from daily data before any weekly / panel / rank construction.
+and unknown types (assetType outside documented 0-9) are removed from daily
+data before any weekly / panel / rank construction.
 Each missing ticker is classified from one Core observation at its latest
 observed trade date (bounded valid-empty fallback to earlier observed dates);
 the persistent dictionary (see src/data/security_types.py) means Core is

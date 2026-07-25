@@ -17,11 +17,14 @@ Classification policy (version 2 — date-specific observation)
   dates are attempted, newest first — only dates on which the ticker actually
   appeared in daily observations. Exhausting the bounded attempts fails.
 * The accepted observation classifies the ticker:
-  ``assetType`` 0-3 → ``company_equity``; 4-9 → ``non_company_equity``.
+  ``assetType`` 0-3 → ``company_equity``; 4-9 → ``non_company_equity``;
+  any other integer ``assetType`` (undocumented by ORATS, e.g. 10) →
+  ``unknown``. Unknown is written to the dictionary and is never treated as
+  company equity.
 * Returned ticker and trade date are validated against the request.
   Identical duplicate rows are deduplicated; conflicting rows, unexpected
-  ticker/date values, malformed or out-of-domain ``assetType`` values, and
-  hard HTTP/parse failures fail the update.
+  ticker/date values, malformed/non-integer ``assetType`` values, and hard
+  HTTP/parse failures fail the update.
 * Core HTTP 404 for a ticker/date is treated like a valid-empty observation
   (fall back to earlier observed dates). If no observation is obtained after
   the bounded attempts, that ticker is **skipped**: it is not written to the
@@ -71,9 +74,11 @@ logger = logging.getLogger(__name__)
 
 CLASSIFICATION_COMPANY_EQUITY = "company_equity"
 CLASSIFICATION_NON_COMPANY_EQUITY = "non_company_equity"
+CLASSIFICATION_UNKNOWN = "unknown"
 _VALID_CLASSIFICATIONS = (
     CLASSIFICATION_COMPANY_EQUITY,
     CLASSIFICATION_NON_COMPANY_EQUITY,
+    CLASSIFICATION_UNKNOWN,
 )
 
 SOURCE_ORATS_CORE = "orats_core"
@@ -88,7 +93,6 @@ SECURITY_TYPES_CHECKPOINT_EVERY = 100
 
 COMPANY_EQUITY_ASSET_TYPES = frozenset({0, 1, 2, 3})
 NON_COMPANY_ASSET_TYPES = frozenset({4, 5, 6, 7, 8, 9})
-_VALID_ASSET_TYPES = COMPANY_EQUITY_ASSET_TYPES | NON_COMPANY_ASSET_TYPES
 
 SECURITY_TYPES_COLUMNS = (
     "ticker",
@@ -162,9 +166,11 @@ def _decode_observed_asset_types(encoded: object) -> set[int]:
 
 
 def _classification_for_type(asset_type: int) -> str:
+    if asset_type in COMPANY_EQUITY_ASSET_TYPES:
+        return CLASSIFICATION_COMPANY_EQUITY
     if asset_type in NON_COMPANY_ASSET_TYPES:
         return CLASSIFICATION_NON_COMPANY_EQUITY
-    return CLASSIFICATION_COMPANY_EQUITY
+    return CLASSIFICATION_UNKNOWN
 
 
 # ── per-observation validation and per-ticker classification ─────────────────
@@ -180,7 +186,9 @@ def accept_asset_type_observation(
     The response must be non-empty and consistent with the request: every row
     must carry the requested normalized ticker and the requested trade date.
     Identical duplicate rows are deduplicated; anything else (conflicting
-    rows, unexpected ticker/date, malformed or out-of-domain values) fails.
+    rows, unexpected ticker/date, malformed/non-integer values) fails.
+    Integer ``assetType`` values outside the documented 0-9 domain are
+    accepted here and classified as ``unknown`` by the caller.
     """
     expected = normalize_ticker(ticker)
     if frame is None or frame.empty:
@@ -235,13 +243,6 @@ def accept_asset_type_observation(
         )
     rows["assetType"] = asset_types.astype(int)
 
-    out_of_domain = sorted(set(rows["assetType"]) - _VALID_ASSET_TYPES)
-    if out_of_domain:
-        raise SecurityTypesError(
-            f"Core observation for ticker {expected} has assetType value(s) "
-            f"outside 0-9: {out_of_domain}."
-        )
-
     deduped = rows.drop_duplicates(subset=["ticker", "tradeDate", "assetType"])
     if len(deduped) > 1:
         examples = deduped[["tradeDate", "assetType"]].head(4).to_dict("records")
@@ -269,6 +270,7 @@ def classify_ticker_with_fallback(
     validation failures propagate immediately. Exhausting the bounded
     attempts without a row returns ``None`` so the caller can skip the
     ticker without writing a dictionary row (retry on a later run).
+    Integer ``assetType`` values outside 0-9 are stored as ``unknown``.
     """
     expected = normalize_ticker(ticker)
     dates = _normalize_observed_dates(observed_dates)
@@ -285,9 +287,19 @@ def classify_ticker_with_fallback(
             # Valid-empty / Core 404-as-empty: no usable row on this date — fall back.
             continue
         asset_type = accept_asset_type_observation(expected, trade_date, frame)
+        classification = _classification_for_type(asset_type)
+        if classification == CLASSIFICATION_UNKNOWN:
+            logger.warning(
+                "Classifying ticker %s as unknown: Core assetType %s on %s "
+                "is outside documented ORATS domain 0-9; not treated as "
+                "company equity.",
+                expected,
+                asset_type,
+                trade_date.isoformat(),
+            )
         return {
             "ticker": expected,
-            "classification": _classification_for_type(asset_type),
+            "classification": classification,
             "observed_asset_types": _encode_observed_asset_types([asset_type]),
             "source": SOURCE_ORATS_CORE,
             "source_date_min": trade_date.isoformat(),
@@ -364,16 +376,12 @@ def validate_security_types(df: pd.DataFrame) -> None:
             raise SecurityTypesError(
                 f"Ticker {row.ticker}: observed_asset_types "
                 f"{row.observed_asset_types!r} must contain exactly one "
-                "accepted assetType under classification version "
+                "assetType under classification version "
                 f"{CLASSIFICATION_VERSION}."
             )
         asset_type = next(iter(observed))
-        if asset_type not in _VALID_ASSET_TYPES:
-            raise SecurityTypesError(
-                f"Ticker {row.ticker}: observed_asset_types outside 0-9: "
-                f"{sorted(observed)}."
-            )
-        if row.classification != _classification_for_type(asset_type):
+        expected_class = _classification_for_type(asset_type)
+        if row.classification != expected_class:
             raise SecurityTypesError(
                 f"Ticker {row.ticker}: classification {row.classification!r} "
                 f"inconsistent with observed_asset_types "

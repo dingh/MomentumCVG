@@ -304,13 +304,22 @@ class TestCompanyEquityFilterInBuild:
             _run_build(tmp_path, FetchSpy(responses))
         assert security_path.read_bytes() == before
 
-    def test_malformed_core_record_fails_liquidity_build(self, tmp_path):
+    def test_out_of_domain_core_asset_type_is_unknown_and_excluded(self, tmp_path):
         responses = _core_responses()
         responses[(ETF_TICKER, LATEST_DAY.isoformat())] = _obs(
             ETF_TICKER, LATEST_DAY, 11
         )
-        with pytest.raises(SecurityTypesError, match="outside 0-9"):
-            _run_build(tmp_path, FetchSpy(responses))
+        result = _run_build(tmp_path, FetchSpy(responses))
+
+        dictionary = load_security_types(
+            tmp_path / "reference" / "orats_security_types.parquet"
+        )
+        row = dictionary[dictionary["ticker"] == ETF_TICKER].iloc[0]
+        assert row["classification"] == "unknown"
+        assert row["observed_asset_types"] == "11"
+        assert ETF_TICKER not in set(result.daily["ticker"])
+        assert ETF_TICKER not in set(result.weekly["ticker"])
+        assert ETF_TICKER not in set(result.panel["ticker"])
 
 
 class TestSnapshotLocalClassificationArtifact:

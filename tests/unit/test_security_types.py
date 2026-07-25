@@ -163,10 +163,12 @@ class TestClassificationPolicy:
             _classify("AAA", [D3], spy)
 
     @pytest.mark.parametrize("bad_type", [-1, 10, 42])
-    def test_out_of_domain_asset_type_fails(self, bad_type):
+    def test_out_of_domain_asset_type_is_unknown(self, bad_type):
         spy = FetchSpy({("AAA", D3.isoformat()): _obs("AAA", D3, bad_type)})
-        with pytest.raises(SecurityTypesError, match="outside 0-9"):
-            _classify("AAA", [D3], spy)
+        row = _classify("AAA", [D3], spy)
+        assert row["classification"] == "unknown"
+        assert row["observed_asset_types"] == str(bad_type)
+        assert "AAA" not in company_equity_tickers(pd.DataFrame([row]))
 
     def test_non_integer_asset_type_fails(self):
         spy = FetchSpy({("AAA", D3.isoformat()): _obs("AAA", D3, 2.5)})
@@ -586,6 +588,19 @@ class TestValidateSecurityTypes:
     def test_classification_inconsistent_with_observed_type_fails(self):
         df = pd.DataFrame(
             [self._row(classification="company_equity", observed_asset_types="5")]
+        )
+        with pytest.raises(SecurityTypesError, match="inconsistent"):
+            validate_security_types(df)
+
+    def test_unknown_classification_with_out_of_domain_type_passes(self):
+        df = pd.DataFrame(
+            [self._row(classification="unknown", observed_asset_types="10")]
+        )
+        validate_security_types(df)
+
+    def test_unknown_classification_with_in_domain_type_fails(self):
+        df = pd.DataFrame(
+            [self._row(classification="unknown", observed_asset_types="3")]
         )
         with pytest.raises(SecurityTypesError, match="inconsistent"):
             validate_security_types(df)
