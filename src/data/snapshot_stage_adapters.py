@@ -78,6 +78,15 @@ SPOT_SUMMARY_FILENAME = "spot_summary.json"
 # Production default is ``DEFAULT_SECURITY_TYPES_PATH`` (shared reference root).
 SECURITY_TYPES_FILENAME = "orats_security_types.parquet"
 
+# Required C4 candidate files for Liquidity reuse (must match write_artifacts).
+_LIQUIDITY_CANDIDATE_FILES = (
+    "ticker_liquidity_daily_observations.parquet",
+    "ticker_liquidity_weekly_observations.parquet",
+    "ticker_liquidity_panel.parquet",
+    "liquid_tickers.csv",
+    "security_classification.parquet",
+)
+
 
 class StageExecutionError(SnapshotOrchestratorError):
     """Raised when a stage producer or acceptance gate fails (CLI exit 1)."""
@@ -246,6 +255,112 @@ def _accepted_surface_warnings(
     return accepted
 
 
+def _liquidity_candidate_complete(candidate_dir: Path) -> bool:
+    """True when a prior Liquidity candidate has the full reusable artifact set."""
+    if not candidate_dir.is_dir():
+        return False
+    return all((candidate_dir / name).is_file() for name in _LIQUIDITY_CANDIDATE_FILES)
+
+
+def _liquidity_evidence_from_stable(
+    *,
+    stable_dir: Path,
+    report_path: Path,
+    promoted: list[str],
+    accepted_warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build Liquidity evidence from promoted stable artifacts (reuse or rebuild)."""
+    liquid = pd.read_csv(stable_dir / "liquid_tickers.csv")
+    if liquid.empty or "Ticker" not in liquid.columns:
+        raise StageExecutionError(
+            f"promoted liquid_tickers.csv is empty or missing Ticker: {stable_dir}"
+        )
+    classification = pd.read_parquet(stable_dir / "security_classification.parquet")
+    daily = pd.read_parquet(stable_dir / "ticker_liquidity_daily_observations.parquet")
+    weekly = pd.read_parquet(stable_dir / "ticker_liquidity_weekly_observations.parquet")
+    panel = pd.read_parquet(stable_dir / "ticker_liquidity_panel.parquet")
+    equity_universe = sorted(str(t).strip().upper() for t in liquid["Ticker"])
+    return {
+        "stage": "liquidity",
+        "status": "PASS",
+        "output_dir": str(stable_dir),
+        "report_path": str(report_path),
+        "artifacts": promoted,
+        "files_read": int(daily["trade_date"].nunique())
+        if "trade_date" in daily.columns
+        else len(daily),
+        "daily_row_count": len(daily),
+        "weekly_row_count": len(weekly),
+        "panel_row_count": len(panel),
+        "classified_ticker_count": len(classification),
+        "classification_digest": (
+            classification_digest(classification)
+            if not classification.empty
+            else None
+        ),
+        "liquid_ticker_count": len(equity_universe),
+        "equity_universe_digest": digest_json(equity_universe),
+        "accepted_warnings": list(accepted_warnings or []),
+    }
+
+
+def _try_reuse_liquidity_candidate(
+    building: Path,
+    *,
+    c4: Mapping[str, Any],
+    mod: Any,
+    build_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Promote a complete prior candidate after strict C7 PASS; else return None.
+
+    Incomplete candidates return ``None`` so the caller rebuilds. A complete
+    candidate that fails C7 raises (candidate preserved; no wipe).
+    """
+    candidate = building / "work" / "liquidity" / "candidate"
+    if not _liquidity_candidate_complete(candidate):
+        return None
+
+    from src.data.run_progress import write_run_progress
+
+    write_run_progress(
+        building,
+        stage="liquidity",
+        phase="reusing_candidate",
+        message="Liquidity stage: reusing existing candidate (strict C7)",
+        build_id=build_id,
+    )
+
+    report_path = building / "reports" / "liquidity" / "pit_universe_audit.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_code = _pit_audit_module().main(
+        [
+            "--panel-path", str(candidate / mod.PANEL_FILENAME),
+            "--weekly-path", str(candidate / mod.WEEKLY_FILENAME),
+            "--liquid-tickers-path", str(candidate / mod.LIQUID_TICKERS_FILENAME),
+            "--discover-samples",
+            "--strict",
+            "--dvol-top-pct", str(c4["dvol_top_pct"]),
+            "--spread-bottom-pct", str(c4["spread_bot_pct"]),
+            "--output-report", str(report_path),
+        ]
+    )
+    if audit_code != 0:
+        raise StageExecutionError(
+            "strict C7 PIT universe audit did not PASS for existing liquidity "
+            f"candidate (exit {audit_code}); report: {report_path}. "
+            "Candidate preserved; fix the gate or remove the candidate to rebuild."
+        )
+
+    stable_dir = building / "input" / "liquidity"
+    promoted = _promote_candidate(candidate, stable_dir)
+    return _liquidity_evidence_from_stable(
+        stable_dir=stable_dir,
+        report_path=report_path,
+        promoted=promoted,
+        accepted_warnings=[],
+    )
+
+
 # ── stage 1: liquidity ─────────────────────────────────────────────────────────
 
 
@@ -262,6 +377,11 @@ def run_liquidity_stage(
     resolved trading dates and the accepted equity-only Core classification,
     writes candidate artifacts under ``work/liquidity/candidate``, requires a
     strict C7 PASS, and promotes to ``input/liquidity``.
+
+    If a complete prior candidate already exists under
+    ``work/liquidity/candidate``, skips the producer rebuild, re-runs strict
+    C7 against it, and promotes on PASS (so a gate-only failure can resume
+    without re-paying the cold prepare).
 
     The Core security-types dictionary defaults to the durable shared
     reference file (:data:`DEFAULT_SECURITY_TYPES_PATH`). Existing tickers are
@@ -283,6 +403,18 @@ def run_liquidity_stage(
         build_id=config.get("build_id"),
     )
 
+    c4 = config["c4_params"]
+    mod = _liquidity_module()
+
+    reused = _try_reuse_liquidity_candidate(
+        building,
+        c4=c4,
+        mod=mod,
+        build_id=config.get("build_id"),
+    )
+    if reused is not None:
+        return reused
+
     if security_types_path is None:
         security_types_path = DEFAULT_SECURITY_TYPES_PATH
     security_types_path = Path(security_types_path)
@@ -291,9 +423,6 @@ def run_liquidity_stage(
     start = _config_date(config, "requested_output_start")
     end = _config_date(config, "as_of_resolved_trading_day")
     resolved_dates = _config_dates(config, "resolved_trading_dates")
-    c4 = config["c4_params"]
-
-    mod = _liquidity_module()
 
     raw_root = Path(inventory.raw_root)
     frozen_paths = {
@@ -373,28 +502,12 @@ def run_liquidity_stage(
 
     stable_dir = building / "input" / "liquidity"
     promoted = _promote_candidate(candidate, stable_dir)
-
-    equity_universe = sorted(str(t).strip().upper() for t in liquid["Ticker"])
-    return {
-        "stage": "liquidity",
-        "status": "PASS",
-        "output_dir": str(stable_dir),
-        "report_path": str(report_path),
-        "artifacts": promoted,
-        "files_read": result.files_read,
-        "daily_row_count": len(result.daily),
-        "weekly_row_count": len(result.weekly),
-        "panel_row_count": len(result.panel),
-        "classified_ticker_count": len(result.classification),
-        "classification_digest": (
-            classification_digest(result.classification)
-            if not result.classification.empty
-            else None
-        ),
-        "liquid_ticker_count": len(equity_universe),
-        "equity_universe_digest": digest_json(equity_universe),
-        "accepted_warnings": list(result.warnings),
-    }
+    return _liquidity_evidence_from_stable(
+        stable_dir=stable_dir,
+        report_path=report_path,
+        promoted=promoted,
+        accepted_warnings=list(result.warnings),
+    )
 
 
 # ── stage 2: adjusted ──────────────────────────────────────────────────────────

@@ -303,6 +303,113 @@ def test_liquidity_keyboard_interrupt_propagates(run, monkeypatch, tmp_path):
     assert _stage_files(Path(run.roots.building) / "input" / "liquidity") == []
 
 
+def _seed_liquidity_candidate(building: Path) -> Path:
+    candidate = building / "work" / "liquidity" / "candidate"
+    candidate.mkdir(parents=True, exist_ok=True)
+    daily = pd.DataFrame({"ticker": ["AAA", "BBB"], "trade_date": ["2024-04-05", "2024-04-05"]})
+    weekly = pd.DataFrame({"ticker": ["AAA", "BBB"]})
+    panel = pd.DataFrame({"ticker": ["AAA", "BBB"]})
+    classification = pd.DataFrame(
+        {
+            "ticker": ["AAA", "BBB"],
+            "classification": ["company_equity", "company_equity"],
+            "observed_asset_types": ["[0]", "[0]"],
+        }
+    )
+    liquid = pd.DataFrame(
+        {
+            "Ticker": ["AAA", "BBB"],
+            "snapshots_qualified": [3, 3],
+            "months_qualified": [3, 3],
+        }
+    )
+    daily.to_parquet(candidate / "ticker_liquidity_daily_observations.parquet", index=False)
+    weekly.to_parquet(candidate / "ticker_liquidity_weekly_observations.parquet", index=False)
+    panel.to_parquet(candidate / "ticker_liquidity_panel.parquet", index=False)
+    liquid.to_csv(candidate / "liquid_tickers.csv", index=False)
+    classification.to_parquet(candidate / "security_classification.parquet", index=False)
+    return candidate
+
+
+def test_liquidity_reuses_complete_candidate_without_rebuild(run, monkeypatch, tmp_path):
+    calls: dict = {}
+    building = Path(run.roots.building)
+    _seed_liquidity_candidate(building)
+    monkeypatch.setattr(
+        adapters, "_liquidity_module", lambda: _fake_liquidity_module(calls)
+    )
+    monkeypatch.setattr(adapters, "_pit_audit_module", lambda: _fake_pit_audit(calls))
+
+    evidence = run_liquidity_stage(
+        run,
+        security_types_path=tmp_path / "security_types.parquet",
+        fetch_observation_fn=lambda ticker, day: pd.DataFrame(),
+    )
+
+    assert "run_backfill" not in calls
+    assert "--strict" in calls["pit_audit_argv"]
+    stable = building / "input" / "liquidity"
+    assert _stage_files(stable) == [
+        "liquid_tickers.csv",
+        "security_classification.parquet",
+        "ticker_liquidity_daily_observations.parquet",
+        "ticker_liquidity_panel.parquet",
+        "ticker_liquidity_weekly_observations.parquet",
+    ]
+    assert not (building / "work" / "liquidity" / "candidate").exists()
+    assert evidence["status"] == "PASS"
+    assert evidence["liquid_ticker_count"] == 2
+    assert evidence["equity_universe_digest"] == digest_json(["AAA", "BBB"])
+    assert evidence["classification_digest"] is not None
+    assert evidence["accepted_warnings"] == []
+
+
+def test_liquidity_incomplete_candidate_falls_through_to_rebuild(run, monkeypatch, tmp_path):
+    calls: dict = {}
+    building = Path(run.roots.building)
+    candidate = building / "work" / "liquidity" / "candidate"
+    candidate.mkdir(parents=True, exist_ok=True)
+    (candidate / "liquid_tickers.csv").write_text("Ticker\nAAA\n", encoding="utf-8")
+    monkeypatch.setattr(
+        adapters, "_liquidity_module", lambda: _fake_liquidity_module(calls)
+    )
+    monkeypatch.setattr(adapters, "_pit_audit_module", lambda: _fake_pit_audit(calls))
+
+    evidence = run_liquidity_stage(
+        run,
+        security_types_path=tmp_path / "security_types.parquet",
+        fetch_observation_fn=lambda ticker, day: pd.DataFrame(),
+    )
+
+    assert "run_backfill" in calls
+    assert evidence["status"] == "PASS"
+    assert evidence["liquid_ticker_count"] == 2
+
+
+def test_liquidity_reuse_c7_fail_preserves_candidate(run, monkeypatch, tmp_path):
+    calls: dict = {}
+    building = Path(run.roots.building)
+    candidate = _seed_liquidity_candidate(building)
+    before = sorted(p.name for p in candidate.iterdir())
+    monkeypatch.setattr(
+        adapters, "_liquidity_module", lambda: _fake_liquidity_module(calls)
+    )
+    monkeypatch.setattr(
+        adapters, "_pit_audit_module", lambda: _fake_pit_audit(calls, exit_code=1)
+    )
+
+    with pytest.raises(StageExecutionError, match="existing liquidity candidate"):
+        run_liquidity_stage(
+            run,
+            security_types_path=tmp_path / "security_types.parquet",
+            fetch_observation_fn=lambda ticker, day: pd.DataFrame(),
+        )
+
+    assert "run_backfill" not in calls
+    assert sorted(p.name for p in candidate.iterdir()) == before
+    assert _stage_files(building / "input" / "liquidity") == []
+
+
 # ── adjusted stage ─────────────────────────────────────────────────────────────
 
 
