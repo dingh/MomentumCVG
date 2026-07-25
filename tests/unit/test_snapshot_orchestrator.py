@@ -1052,6 +1052,69 @@ def test_output_without_marker_is_cleaned_and_stage_reruns(snapshots_root, raw_r
     assert progress["pct"] == 100.0
 
 
+def test_liquidity_reset_preserves_complete_candidate(snapshots_root, raw_root):
+    """Gate-only resume: complete work/liquidity/candidate survives stage reset."""
+    import pandas as pd
+
+    from src.data.snapshot_orchestrator import (
+        _LIQUIDITY_CANDIDATE_FILES,
+        _reset_stage_owned_dirs,
+    )
+
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+    building = prepared.roots.building
+    candidate = building / "work" / "liquidity" / "candidate"
+    candidate.mkdir(parents=True, exist_ok=True)
+    for name in _LIQUIDITY_CANDIDATE_FILES:
+        if name.endswith(".csv"):
+            pd.DataFrame({"Ticker": ["AAA"]}).to_csv(candidate / name, index=False)
+        else:
+            pd.DataFrame({"ticker": ["AAA"]}).to_parquet(candidate / name, index=False)
+    sentinel = candidate / "liquid_tickers.csv"
+    before = sentinel.read_bytes()
+    stale_input = building / "input" / "liquidity" / "stale.txt"
+    stale_input.parent.mkdir(parents=True, exist_ok=True)
+    stale_input.write_text("stale", encoding="utf-8")
+    stale_report = building / "reports" / "liquidity" / "old.md"
+    stale_report.parent.mkdir(parents=True, exist_ok=True)
+    stale_report.write_text("old", encoding="utf-8")
+    extra = building / "work" / "liquidity" / "scratch.tmp"
+    extra.write_text("x", encoding="utf-8")
+
+    seen_candidate = {"ok": False}
+
+    def runner(stage: str):
+        if stage == "liquidity":
+            assert sentinel.is_file()
+            assert sentinel.read_bytes() == before
+            assert not extra.exists()
+            assert not stale_input.exists()
+            seen_candidate["ok"] = True
+            return _write_liquidity_artifacts(building)
+        if stage == "adjusted":
+            return _write_adjusted_artifacts(building, [MON, TUE, WED, THU, FRI])
+        if stage == "spot":
+            return _write_spot_artifacts(building)
+        return _write_surface_artifacts(building)
+
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        execute_backfill_stages(
+            prepared, lock, producer_repo_sha="b" * 40, stage_runner=runner
+        )
+
+    assert seen_candidate["ok"] is True
+    # Incomplete candidate is still wiped (direct unit check).
+    incomplete = building / "work" / "liquidity" / "candidate"
+    if incomplete.exists():
+        shutil.rmtree(incomplete)
+    incomplete.mkdir(parents=True, exist_ok=True)
+    (incomplete / "liquid_tickers.csv").write_text("Ticker\nAAA\n", encoding="utf-8")
+    _reset_stage_owned_dirs(building, "liquidity")
+    assert not (building / "work" / "liquidity" / "candidate").exists()
+    assert (building / "work" / "liquidity").is_dir()
+
+
 def test_accepted_predecessor_output_not_modified(snapshots_root, raw_root):
     _seed_week(raw_root)
     prepared = _prepare(snapshots_root, raw_root)

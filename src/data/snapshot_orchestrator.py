@@ -1502,8 +1502,47 @@ def inspect_stage_markers(
     )
 
 
+# Keep in sync with snapshot_stage_adapters._LIQUIDITY_CANDIDATE_FILES.
+_LIQUIDITY_CANDIDATE_FILES = (
+    "ticker_liquidity_daily_observations.parquet",
+    "ticker_liquidity_weekly_observations.parquet",
+    "ticker_liquidity_panel.parquet",
+    "liquid_tickers.csv",
+    "security_classification.parquet",
+)
+
+
+def _liquidity_candidate_complete(candidate_dir: Path) -> bool:
+    """True when work/liquidity/candidate has the full reusable artifact set."""
+    if not candidate_dir.is_dir():
+        return False
+    return all((candidate_dir / name).is_file() for name in _LIQUIDITY_CANDIDATE_FILES)
+
+
 def _reset_stage_owned_dirs(building: Path, stage: str) -> None:
+    """Reset owned dirs for ``stage`` before a producer re-run.
+
+    For Liquidity, a *complete* prior ``work/liquidity/candidate`` is preserved
+    so :func:`snapshot_stage_adapters.run_liquidity_stage` can reuse it after a
+    gate-only failure. ``input/liquidity`` and ``reports/liquidity`` are still
+    wiped so promotion starts from a clean stable tree.
+    """
+    preserve_work = (
+        stage == "liquidity"
+        and _liquidity_candidate_complete(building / "work" / "liquidity" / "candidate")
+    )
     for rel in STAGE_OWNED_DIRS[stage]:
+        if preserve_work and rel == "work/liquidity":
+            work = building / rel
+            work.mkdir(parents=True, exist_ok=True)
+            for child in list(work.iterdir()):
+                if child.name == "candidate":
+                    continue
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            continue
         path = building / rel
         if path.exists():
             shutil.rmtree(path)
