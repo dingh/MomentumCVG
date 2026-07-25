@@ -443,12 +443,13 @@ def _coverage_panel() -> pd.DataFrame:
 
 def test_t21_full_history_coverage_pass():
     panel = _coverage_panel()
-    # dvol_top=0.20 keeps rank_pct >= 0.8 → top two tickers per snapshot (T4_*, T5_*).
-    liquid = ["T4_5", "T4_12", "T5_5", "T5_12"]
+    # dvol_top=0.20 → builder quantile(0.8) on values 1..5 * 1e6 selects only T5_*.
+    liquid = ["T5_5", "T5_12"]
     res = check_full_history_superset_coverage(panel, liquid)
     assert res.status == "PASS"
     assert res.missing_ticker_count == 0
     assert res.snapshots_checked == 2
+    assert res.unique_selected_tickers == 2
     assert res.canonical_params == (0.20, 1.0)
 
 
@@ -458,11 +459,31 @@ def test_t21_full_history_coverage_pass():
 
 def test_t22_full_history_coverage_catches_missing():
     panel = _coverage_panel()
-    liquid = ["T4_5", "T4_12", "T5_5"]  # missing terminal-snapshot selection T5_12
+    liquid = ["T5_5"]  # missing terminal-snapshot selection T5_12
     res = check_full_history_superset_coverage(panel, liquid)
     assert res.status == "FAIL"
     assert res.missing_ticker_count >= 1
     assert "T5_12" in res.sample_missing_tickers
+
+
+def test_full_history_matches_builder_quantile_not_rank_edge():
+    """Knife-edge case: percentile rank includes EPC; builder quantile excludes it."""
+    # 5 eligible rows so the builder floor does not skip the snapshot.
+    # Values chosen so quantile(0.8) sits strictly above EPC while average-rank
+    # percentile for EPC is exactly 0.8.
+    rows = [
+        dict(month_date=SNAP1, ticker="A", atm_straddle_dollar_vol=100.0, atm_spread_pct=0.01, has_valid_atm_pair=True),
+        dict(month_date=SNAP1, ticker="B", atm_straddle_dollar_vol=200.0, atm_spread_pct=0.01, has_valid_atm_pair=True),
+        dict(month_date=SNAP1, ticker="C", atm_straddle_dollar_vol=300.0, atm_spread_pct=0.01, has_valid_atm_pair=True),
+        dict(month_date=SNAP1, ticker="EPC", atm_straddle_dollar_vol=400.0, atm_spread_pct=0.01, has_valid_atm_pair=True),
+        dict(month_date=SNAP1, ticker="E", atm_straddle_dollar_vol=500.0, atm_spread_pct=0.01, has_valid_atm_pair=True),
+    ]
+    panel = _full_panel(rows, dvol_top_pct=0.20, spread_bot_pct=1.0)
+    # Builder quantile(0.8) on [100..500] = 420 → only E (>=500).
+    res = check_full_history_superset_coverage(panel, ["E"], dvol_top_pct=0.20)
+    assert res.status == "PASS"
+    assert res.unique_selected_tickers == 1
+    assert res.missing_ticker_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1071,17 +1092,23 @@ def test_t49_reference_matches_s1_clean():
 
 def test_t50_full_history_numeric_ranking():
     # Object-dtype numeric strings where lexicographic order ("9" > "100" > "10")
-    # disagrees with numeric order (100 > 10 > 9).
+    # disagrees with numeric order (100 > 50 > 20 > 10 > 9). Need ≥5 eligible
+    # rows so the builder quantile floor does not skip the snapshot.
     rows = [
         dict(month_date=SNAP1, ticker="LOW", atm_straddle_dollar_vol="9", atm_spread_pct="0.01", has_valid_atm_pair=True),
-        dict(month_date=SNAP1, ticker="MID", atm_straddle_dollar_vol="10", atm_spread_pct="0.01", has_valid_atm_pair=True),
+        dict(month_date=SNAP1, ticker="MID_LO", atm_straddle_dollar_vol="10", atm_spread_pct="0.01", has_valid_atm_pair=True),
+        dict(month_date=SNAP1, ticker="MID", atm_straddle_dollar_vol="20", atm_spread_pct="0.01", has_valid_atm_pair=True),
+        dict(month_date=SNAP1, ticker="MID_HI", atm_straddle_dollar_vol="50", atm_spread_pct="0.01", has_valid_atm_pair=True),
         dict(month_date=SNAP1, ticker="HIGH", atm_straddle_dollar_vol="100", atm_spread_pct="0.01", has_valid_atm_pair=True),
     ]
     panel = _full_panel(rows, dvol_top_pct=0.30, spread_bot_pct=1.0)
-    # Numeric top ~1/3 → HIGH only. Lexicographic ranking would pick LOW ("9").
-    res = check_full_history_superset_coverage(panel, ["HIGH"], dvol_top_pct=0.30)
+    # Numeric quantile(0.7) on [9,10,20,50,100] → ~44; selects MID_HI + HIGH.
+    # Lexicographic ranking would prefer LOW ("9").
+    res = check_full_history_superset_coverage(
+        panel, ["HIGH", "MID_HI"], dvol_top_pct=0.30
+    )
     assert res.status == "PASS"
-    assert res.unique_selected_tickers == 1
+    assert res.unique_selected_tickers == 2
 
 
 # ---------------------------------------------------------------------------

@@ -1658,32 +1658,38 @@ def check_full_history_superset_coverage(
     dvol_top_pct: Optional[float] = None,
     spread_bottom_pct: float = 1.0,
 ) -> FullHistorySupersetCoverageResult:
-    """Artifact-level coverage for the canonical supported configuration.
+    """Artifact-level coverage for the C4 liquid-ticker builder rule.
 
-    For every panel snapshot ``S`` independently computes S1 membership directly
-    on that snapshot (grouped/vectorized), then asserts every selected ticker is
-    present in ``liquid_tickers``. Includes the terminal snapshot (no later trade
-    date required).
+    For every panel snapshot ``S``, independently recomputes the same quantile
+    selection used by ``build_liquid_tickers`` (dollar-vol ≥ quantile
+    ``1 - dvol_top_pct``; spread ≤ quantile ``spread_bot_pct``; skip snapshots
+    with fewer than 5 eligible rows), then asserts every selected ticker is
+    present in ``liquid_tickers``. Includes the terminal snapshot (no later
+    trade date required).
+
+    This check intentionally mirrors the C4 builder rather than S1 percentile-
+    rank membership. PIT sample checks still use :func:`compute_reference_universe`
+    for S1 parity.
     """
     if dvol_top_pct is None:
         dvol_top_pct, _stamped_spread = read_superset_build_params(panel)
     dvol_top = float(dvol_top_pct)
     spread_bottom = float(spread_bottom_pct)
-    dvol_threshold = 1.0 - dvol_top
-    spread_threshold = 1.0 - spread_bottom
 
     liquid = extract_liquid_ticker_set(liquid_tickers)
 
     work = panel.copy()
     work[COL_MONTH_DATE] = normalize_date_column(work, COL_MONTH_DATE).values
-    # Assign coerced numeric values back so ranking is numeric, never
-    # lexicographic on object/string columns. Non-numeric values become NaN and
-    # are excluded (finite check below).
+    # Coerce metrics to numeric so quantile thresholds are never lexicographic
+    # on object/string columns. Non-numeric values become NaN and are excluded.
     work[COL_DVOL] = pd.to_numeric(work[COL_DVOL], errors="coerce")
     work[COL_SPREAD] = pd.to_numeric(work[COL_SPREAD], errors="coerce")
-    dvol = work[COL_DVOL]
-    spread = work[COL_SPREAD]
-    eligible = (work[COL_HAS_VALID] == True) & np.isfinite(dvol) & np.isfinite(spread)  # noqa: E712
+    # Match build_liquid_tickers eligibility: valid ATM pair + non-null metrics.
+    eligible = (
+        (work[COL_HAS_VALID] == True)  # noqa: E712
+        & work[COL_DVOL].notna()
+        & work[COL_SPREAD].notna()
+    )
     elig = work.loc[eligible].copy()
 
     snapshots_checked = int(work[COL_MONTH_DATE].nunique())
@@ -1698,14 +1704,19 @@ def check_full_history_superset_coverage(
             status=PASS,
         )
 
-    grouped = elig.groupby(COL_MONTH_DATE, sort=False)
-    elig["dvol_rank_pct"] = grouped[COL_DVOL].rank(ascending=True, method="average", pct=True)
-    elig["spread_rank_pct"] = grouped[COL_SPREAD].rank(ascending=False, method="average", pct=True)
+    selected_tickers: set[str] = set()
+    for _, grp in elig.groupby(COL_MONTH_DATE, sort=False):
+        # Same floor as build_liquid_tickers: too-thin snapshots contribute nothing.
+        if len(grp) < 5:
+            continue
+        dvol_thresh = grp[COL_DVOL].quantile(1.0 - dvol_top)
+        spread_thresh = grp[COL_SPREAD].quantile(spread_bottom)
+        quals = grp.loc[
+            (grp[COL_DVOL] >= dvol_thresh) & (grp[COL_SPREAD] <= spread_thresh),
+            COL_TICKER,
+        ]
+        selected_tickers.update(str(t) for t in quals)
 
-    selected = elig.loc[
-        (elig["dvol_rank_pct"] >= dvol_threshold) & (elig["spread_rank_pct"] >= spread_threshold)
-    ]
-    selected_tickers = set(selected[COL_TICKER].astype(str))
     missing = sorted(t for t in selected_tickers if t not in liquid)
 
     return FullHistorySupersetCoverageResult(
