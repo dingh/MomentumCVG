@@ -538,6 +538,58 @@ class TestEnsureSecurityTypes:
                 now_fn=_now_fn,
             )
 
+    def test_dictionary_only_makes_no_api_calls_and_no_rewrite(self, tmp_path):
+        # Seed AAA as company; BBB is a candidate absent from the dictionary.
+        path = self._seed(tmp_path, {"AAA": 0})
+        before = path.read_bytes()
+
+        spy = FetchSpy({})  # any fetch would KeyError
+        result = ensure_security_types(
+            {"AAA": [D3], "BBB": [D3]},
+            path,
+            fetch_observation_fn=spy,
+            now_fn=_now_fn,
+            dictionary_only=True,
+        )
+        assert spy.calls == []
+        assert path.read_bytes() == before
+        # BBB is left uncovered; only the seeded AAA is present.
+        assert set(result["ticker"]) == {"AAA"}
+        assert company_equity_tickers(result) == {"AAA"}
+
+    def test_dictionary_only_absent_dictionary_raises(self, tmp_path):
+        path = self._dict_path(tmp_path)
+        with pytest.raises(SecurityTypesError, match="dictionary_only"):
+            ensure_security_types(
+                {"AAA": [D3]},
+                path,
+                fetch_observation_fn=FetchSpy({}),
+                now_fn=_now_fn,
+                dictionary_only=True,
+            )
+
+    def test_dictionary_only_writes_progress(self, tmp_path):
+        import json
+
+        path = self._seed(tmp_path, {"AAA": 0})
+        building = tmp_path / "run.building"
+        ensure_security_types(
+            {"AAA": [D3], "BBB": [D3]},
+            path,
+            fetch_observation_fn=FetchSpy({}),
+            now_fn=_now_fn,
+            progress_path=building,
+            dictionary_only=True,
+        )
+        progress = json.loads(
+            (building / "run_progress.json").read_text(encoding="utf-8")
+        )
+        assert progress["stage"] == "liquidity"
+        assert progress["phase"] == "core_classification"
+        assert progress["current"] == 2
+        assert progress["total"] == 2
+        assert "dictionary_only" in progress["message"]
+
 
 # ── dictionary schema validation ──────────────────────────────────────────────
 

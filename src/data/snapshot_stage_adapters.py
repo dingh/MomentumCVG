@@ -371,6 +371,7 @@ def run_liquidity_stage(
     fetch_observation_fn: Callable[[str, date], pd.DataFrame] | None = None,
     show_progress: bool = False,
     max_workers: int | None = None,
+    dictionary_only: bool = False,
 ) -> dict[str, Any]:
     """Rebuild the C4 liquidity artifacts from the frozen raw inventory.
 
@@ -448,6 +449,7 @@ def run_liquidity_stage(
         security_types_path,
         fetch_observation_fn=fetch_observation_fn,
         progress_path=building,
+        dictionary_only=dictionary_only,
     )
 
     try:

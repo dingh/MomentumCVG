@@ -224,6 +224,7 @@ def test_liquidity_stage_passes_frozen_inputs_and_promotes(run, monkeypatch, tmp
     )
     assert calls["classifier_path"] == tmp_path / "security_types.parquet"
     assert calls["classifier_kwargs"]["progress_path"] == Path(run.roots.building)
+    assert calls["classifier_kwargs"]["dictionary_only"] is False
 
     # The loader is constrained to the frozen inventory.
     loader = backfill["load_day_fn"]
@@ -256,6 +257,23 @@ def test_liquidity_stage_passes_frozen_inputs_and_promotes(run, monkeypatch, tmp
     assert evidence["classification_digest"] is not None
     # No completion marker is written by any adapter.
     assert _stage_files(building / "markers") == []
+
+
+def test_liquidity_stage_forwards_dictionary_only(run, monkeypatch, tmp_path):
+    calls: dict = {}
+    monkeypatch.setattr(
+        adapters, "_liquidity_module", lambda: _fake_liquidity_module(calls)
+    )
+    monkeypatch.setattr(adapters, "_pit_audit_module", lambda: _fake_pit_audit(calls))
+
+    run_liquidity_stage(
+        run,
+        security_types_path=tmp_path / "security_types.parquet",
+        fetch_observation_fn=lambda ticker, day: pd.DataFrame(),
+        dictionary_only=True,
+    )
+
+    assert calls["classifier_kwargs"]["dictionary_only"] is True
 
 
 def test_liquidity_default_security_types_path_is_durable_reference(run, monkeypatch):

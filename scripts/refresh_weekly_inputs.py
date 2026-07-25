@@ -162,6 +162,16 @@ def _add_refresh_like_args(parser: argparse.ArgumentParser) -> None:
             "(C8.4 evidence-only; rejected on resume)"
         ),
     )
+    parser.add_argument(
+        "--dictionary-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Liquidity Core classification reuses the existing security-type "
+            "dictionary as authoritative: no Core API calls; candidates absent "
+            "from the dictionary are excluded. Runtime knob (accepted on resume)"
+        ),
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -222,6 +232,7 @@ def render_plan(args: argparse.Namespace) -> str:
         f"start_date:      {args.start_date.isoformat() if args.start_date else '(required for a new run)'}",
         f"as_of:           {args.as_of.isoformat() if args.as_of else '(required for a new run)'}",
         f"workers:         {args.workers if args.workers is not None else 1}",
+        f"dictionary_only: {str(getattr(args, 'dictionary_only', False)).lower()}",
         f"resume:          {args.resume if args.resume else '(new run)'}",
         "",
         "Source: fresh raw ORATS ZIPs only (no copy of existing C4/C5 outputs).",
@@ -279,6 +290,7 @@ def _execute_locked_backfill(
     build_id: str,
     workers: int | None,
     prepare_or_open,
+    dictionary_only: bool = False,
 ) -> tuple[str, Path, str]:
     """Acquire lock, run stages/finalize/publish, release lock after rename attempt."""
     effective_workers = workers if workers is not None else 1
@@ -291,6 +303,7 @@ def _execute_locked_backfill(
             lock,
             max_workers=effective_workers,
             surface_workers=effective_workers,
+            dictionary_only=dictionary_only,
         )
         manifest, _manifest_path = finalize_candidate_snapshot(run, lock)
         final_root = publish_candidate_snapshot(run, lock)
@@ -319,6 +332,7 @@ def _run_new_backfill(args: argparse.Namespace) -> int:
         build_id=build_id,
         workers=args.workers,
         prepare_or_open=_prepare,
+        dictionary_only=args.dictionary_only,
     )
     _print_publish_summary(
         build_id=build_id_out, final_root=final_root, snapshot_id=snapshot_id
@@ -340,6 +354,7 @@ def _run_resume_backfill(args: argparse.Namespace) -> int:
         build_id=build_id,
         workers=args.workers,
         prepare_or_open=_open,
+        dictionary_only=args.dictionary_only,
     )
     _print_publish_summary(
         build_id=build_id_out, final_root=final_root, snapshot_id=snapshot_id
@@ -374,8 +389,8 @@ def cmd_refresh(args: argparse.Namespace) -> int:
             print(
                 "--resume rejects identity-defining flags "
                 f"({', '.join(supplied)}); the frozen run_config.json of "
-                f"{args.resume} is authoritative. Only --snapshots-root and "
-                "--workers are accepted on resume.",
+                f"{args.resume} is authoritative. Only --snapshots-root, "
+                "--workers, and --dictionary-only are accepted on resume.",
                 file=sys.stderr,
             )
             return EXIT_USAGE

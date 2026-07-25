@@ -1156,6 +1156,34 @@ def test_failed_stage_writes_no_marker(snapshots_root, raw_root):
     assert not stage_marker_path(prepared.roots.building, "liquidity").exists()
 
 
+def test_default_runner_forwards_dictionary_only(snapshots_root, raw_root, monkeypatch):
+    _seed_week(raw_root)
+    prepared = _prepare(snapshots_root, raw_root)
+
+    from src.data import snapshot_stage_adapters as adapters
+
+    captured: dict = {}
+
+    def fake_liquidity(run, *, max_workers=None, dictionary_only=False):
+        captured["max_workers"] = max_workers
+        captured["dictionary_only"] = dictionary_only
+        raise RuntimeError("stop after capture")
+
+    monkeypatch.setattr(adapters, "run_liquidity_stage", fake_liquidity)
+
+    with SiblingBuildLock(snapshots_root, BUILD_ID_A) as lock:
+        with pytest.raises(RuntimeError, match="stop after capture"):
+            execute_backfill_stages(
+                prepared,
+                lock,
+                producer_repo_sha="b" * 40,
+                max_workers=4,
+                dictionary_only=True,
+            )
+
+    assert captured == {"max_workers": 4, "dictionary_only": True}
+
+
 def test_keyboard_interrupt_writes_no_marker_preserves_prefix(snapshots_root, raw_root):
     _seed_week(raw_root)
     prepared = _prepare(snapshots_root, raw_root)

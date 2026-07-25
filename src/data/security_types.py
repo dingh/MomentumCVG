@@ -594,6 +594,7 @@ def ensure_security_types(
     checkpoint_every: int = SECURITY_TYPES_CHECKPOINT_EVERY,
     progress_path: Path | None = None,
     progress_every: int = 25,
+    dictionary_only: bool = False,
 ) -> pd.DataFrame:
     """Ensure the dictionary covers every candidate ticker; return it.
 
@@ -605,6 +606,12 @@ def ensure_security_types(
     run can retry. Newly classified rows are checkpointed to ``path`` every
     ``checkpoint_every`` successes. Optional ``progress_path`` (building root)
     receives ``run_progress.json`` updates during classification.
+
+    When ``dictionary_only`` is set, the existing dictionary is treated as the
+    complete, authoritative classification: no Core API request is made and the
+    file is never rewritten. Candidates absent from the dictionary are simply
+    left uncovered (the caller excludes them, exactly like unresolved tickers).
+    This requires the dictionary to already exist on disk.
     """
     if now_fn is None:
         now_fn = lambda: datetime.now(timezone.utc)  # noqa: E731
@@ -612,6 +619,37 @@ def ensure_security_types(
     normalized = _normalize_candidates(candidates)
 
     file_path = Path(path)
+
+    if dictionary_only:
+        if not file_path.is_file():
+            raise SecurityTypesError(
+                "dictionary_only requested but no security-type dictionary "
+                f"exists at {file_path}; cannot classify without the Core API."
+            )
+        existing = load_security_types(file_path)
+        covered = len(set(normalized) & set(existing["ticker"]))
+        missing = len(normalized) - covered
+        logger.info(
+            "dictionary_only: reusing existing dictionary (%d row(s)); "
+            "%d of %d candidate(s) covered, %d left uncovered (no Core fetch).",
+            len(existing), covered, len(normalized), missing,
+        )
+        if progress_path is not None:
+            from src.data.run_progress import write_run_progress
+
+            write_run_progress(
+                progress_path,
+                stage="liquidity",
+                phase="core_classification",
+                current=len(normalized),
+                total=len(normalized),
+                message=(
+                    f"dictionary_only: {covered}/{len(normalized)} candidate(s) "
+                    f"covered by existing dictionary, {missing} excluded "
+                    "(no Core API calls)"
+                ),
+            )
+        return existing
     if not file_path.is_file():
         logger.info(
             "Security-type dictionary absent at %s — classifying %d candidate ticker(s).",

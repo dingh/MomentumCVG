@@ -457,3 +457,39 @@ class TestIncrementalEquityFilter:
         assert set(result.weekly["ticker"]) == {"AL1"}
         assert set(result.panel["ticker"]) == {"AL1"}
         assert set(result.classification["ticker"]) == {"AL1", ETF_TICKER}
+
+
+def test_dictionary_only_classifier_skips_api_and_excludes_uncovered(tmp_path):
+    """dictionary_only reuses the seeded dictionary: no Core calls, and a
+    candidate absent from the dictionary is excluded from the equity set."""
+    path = tmp_path / "reference" / "orats_security_types.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Seed only AL1 (company) and SPY (non-company) via a normal classify pass.
+    seed_spy = FetchSpy(
+        {
+            ("AL1", LATEST_DAY.isoformat()): _obs("AL1", LATEST_DAY, 0),
+            (ETF_TICKER, LATEST_DAY.isoformat()): _obs(ETF_TICKER, LATEST_DAY, 5),
+        }
+    )
+    ensure_security_types(
+        {"AL1": [LATEST_DAY], ETF_TICKER: [LATEST_DAY]},
+        path,
+        fetch_observation_fn=seed_spy,
+    )
+    before = path.read_bytes()
+
+    fetch = FetchSpy({})  # any call would KeyError
+    classify_fn = blp.make_core_classifier(
+        path, fetch_observation_fn=fetch, dictionary_only=True
+    )
+    # AL2 is a brand-new candidate absent from the dictionary.
+    classification = classify_fn(
+        {"AL1": [LATEST_DAY], ETF_TICKER: [LATEST_DAY], "AL2": [LATEST_DAY]}
+    )
+
+    assert fetch.calls == []
+    assert path.read_bytes() == before
+    from src.data.security_types import company_equity_tickers
+
+    assert company_equity_tickers(classification) == {"AL1"}
+    assert "AL2" not in set(classification["ticker"])

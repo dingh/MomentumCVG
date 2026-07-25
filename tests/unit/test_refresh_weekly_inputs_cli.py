@@ -356,6 +356,44 @@ class TestRefreshExecution:
         assert seen["max_workers"] == 4
         assert seen["surface_workers"] == 4
 
+    def test_dictionary_only_reaches_orchestrator(
+        self, cli_module, snapshots_root, raw_root, monkeypatch, capsys
+    ):
+        calls: list[str] = []
+        self._install_success_mocks(cli_module, monkeypatch, snapshots_root, calls)
+        seen = {}
+
+        def execute(run, lock, **kwargs):
+            seen.update(kwargs)
+            return {}
+
+        monkeypatch.setattr(cli_module, "execute_backfill_stages", execute)
+        code, _out, _err = _run_main(
+            cli_module,
+            _new_run_argv(snapshots_root, raw_root, extra=["--dictionary-only"]),
+            capsys=capsys,
+        )
+        assert code == 0
+        assert seen["dictionary_only"] is True
+
+    def test_dictionary_only_defaults_false(
+        self, cli_module, snapshots_root, raw_root, monkeypatch, capsys
+    ):
+        calls: list[str] = []
+        self._install_success_mocks(cli_module, monkeypatch, snapshots_root, calls)
+        seen = {}
+
+        def execute(run, lock, **kwargs):
+            seen.update(kwargs)
+            return {}
+
+        monkeypatch.setattr(cli_module, "execute_backfill_stages", execute)
+        code, _out, _err = _run_main(
+            cli_module, _new_run_argv(snapshots_root, raw_root), capsys=capsys
+        )
+        assert code == 0
+        assert seen["dictionary_only"] is False
+
     def test_omitted_workers_defaults_to_one_for_both_stages(
         self, cli_module, snapshots_root, raw_root, monkeypatch, capsys
     ):
@@ -730,6 +768,49 @@ class TestRefreshResumeContract:
         )
         assert code == 0
         assert "identity-defining" not in err
+
+    def test_resume_allows_dictionary_only(
+        self, cli_module, snapshots_root, monkeypatch, capsys
+    ):
+        _RecordingLock.instances = []
+        monkeypatch.setattr(cli_module, "SiblingBuildLock", _RecordingLock)
+        monkeypatch.setattr(
+            cli_module,
+            "open_resume_run",
+            lambda *a, **k: _fake_run(snapshots_root),
+        )
+        seen = {}
+
+        def execute(run, lock, **kwargs):
+            seen.update(kwargs)
+            return {}
+
+        monkeypatch.setattr(cli_module, "execute_backfill_stages", execute)
+        monkeypatch.setattr(
+            cli_module,
+            "finalize_candidate_snapshot",
+            lambda *a, **k: (_fake_manifest(), Path("m.json")),
+        )
+        monkeypatch.setattr(
+            cli_module,
+            "publish_candidate_snapshot",
+            lambda *a, **k: snapshots_root / BUILD_ID,
+        )
+        code, _out, err = _run_main(
+            cli_module,
+            [
+                "refresh",
+                "--resume",
+                BUILD_ID,
+                "--snapshots-root",
+                str(snapshots_root),
+                "--dictionary-only",
+            ],
+            capsys=capsys,
+        )
+        assert code == 0
+        assert "identity-defining" not in err
+        assert seen["dictionary_only"] is True
 
     def test_resume_requires_snapshots_root(self, cli_module, capsys):
         code, _out, err = _run_main(

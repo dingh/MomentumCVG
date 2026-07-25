@@ -1556,6 +1556,7 @@ def execute_backfill_stages(
     producer_repo_sha: str | None = None,
     max_workers: int | None = None,
     surface_workers: int | None = None,
+    dictionary_only: bool = False,
     stage_runner: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Run incomplete producer stages under an already-held sibling lock.
@@ -1583,7 +1584,9 @@ def execute_backfill_stages(
         from src.data import snapshot_stage_adapters as adapters
 
         if stage == "liquidity":
-            return adapters.run_liquidity_stage(run, max_workers=max_workers)
+            return adapters.run_liquidity_stage(
+                run, max_workers=max_workers, dictionary_only=dictionary_only
+            )
         if stage == "adjusted":
             return adapters.run_adjusted_stage(run, max_workers=max_workers)
         if stage == "spot":

@@ -390,6 +390,7 @@ def make_core_classifier(
     fetch_observation_fn: Callable[[str, date], pd.DataFrame] | None = None,
     *,
     progress_path: Path | None = None,
+    dictionary_only: bool = False,
 ) -> Callable[[dict[str, list[date]]], pd.DataFrame]:
     """Return a classify_fn backed by the persistent security-type dictionary.
 
@@ -402,8 +403,13 @@ def make_core_classifier(
     missing on a later run). Existing dictionary tickers make no API request.
     Optional ``progress_path`` is the snapshot building root for
     ``run_progress.json`` updates during Core classification.
+
+    When ``dictionary_only`` is set, the existing dictionary is treated as
+    authoritative: no Core API request is made and candidates absent from the
+    dictionary are excluded (identical downstream handling to unresolved
+    tickers). Requires the dictionary file to already exist.
     """
-    if fetch_observation_fn is None:
+    if fetch_observation_fn is None and not dictionary_only:
         fetch_observation_fn = OratsCoreClient().fetch_asset_type_at_date
 
     def _classify(candidates: dict[str, list[date]]) -> pd.DataFrame:
@@ -412,6 +418,7 @@ def make_core_classifier(
             security_types_path,
             fetch_observation_fn=fetch_observation_fn,
             progress_path=progress_path,
+            dictionary_only=dictionary_only,
         )
         covered = set(dictionary["ticker"])
         classified_keys = [
@@ -1136,12 +1143,15 @@ def build_panel(
     security_types_path: Path = DEFAULT_SECURITY_TYPES_PATH,
     fetch_observation_fn: Callable[[str, date], pd.DataFrame] | None = None,
     max_workers: int = 1,
+    dictionary_only: bool = False,
 ) -> BuildResult:
     using_default_loader = load_day_fn is None
     if load_day_fn is None:
         load_day_fn = make_raw_zip_loader(data_root)
     classify_fn = make_core_classifier(
-        Path(security_types_path), fetch_observation_fn=fetch_observation_fn
+        Path(security_types_path),
+        fetch_observation_fn=fetch_observation_fn,
+        dictionary_only=dictionary_only,
     )
 
     hist_start = start_date - timedelta(weeks=lookback_weeks + 2)
@@ -1240,6 +1250,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--build-id", type=str, default=None)
     p.add_argument(
+        "--dictionary-only",
+        action="store_true",
+        help=(
+            "Reuse the existing security-type dictionary as authoritative: "
+            "make no Core API calls and exclude any candidate ticker absent "
+            "from the dictionary (requires the dictionary file to exist)"
+        ),
+    )
+    p.add_argument(
         "--no-progress",
         action="store_true",
         help="Disable tqdm progress bar on daily ZIP processing",
@@ -1279,6 +1298,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             show_progress=not args.no_progress,
             security_types_path=args.security_types_path,
             max_workers=args.workers,
+            dictionary_only=args.dictionary_only,
         )
     except (LiquidityPanelError, SecurityTypesError, OratsCoreError) as exc:
         logger.error("%s", exc)
