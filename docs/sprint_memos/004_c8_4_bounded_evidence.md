@@ -3,7 +3,7 @@
 **Status:** Closed — **C8.4 accepted with limitations**
 **Closed:** 2026-07-22
 **Superseded for production by:** [004_closeout.md](004_closeout.md) (full C8.5 snapshot)
-**Note:** Temporary C8.4 evidence drafts under `docs/tmp/` were removed at Sprint 004 closeout; facts below remain authoritative for the bounded evidence window.
+**Note:** Temporary C8.4 evidence drafts were removed at Sprint 004 closeout; facts below remain authoritative for the bounded evidence window.
 
 ---
 
@@ -96,7 +96,7 @@ Product decision locked for this evidence: **classification-v2** (date-specific 
 | Item | Status |
 |------|--------|
 | **C8.5** full production snapshot evidence / Sprint 004 closeout | **Closed** — see [004_closeout.md](004_closeout.md) |
-| **C3** umbrella `validate` | Still deferred until C4–C8 complete |
-| **C9** runbook + plan cleanup | Open |
+| **C3** umbrella `validate` | Deferred / optional later polish |
+| **C9** runbook + plan cleanup | Deferred / optional later polish |
 
-Canonical human audit index for this closeout: [c8_4_bounded_backfill_evidence.md](../tmp/c8_4_bounded_backfill_evidence.md).
+Canonical human evidence for the bounded C8.4 window is retained in this memo. Production acceptance is recorded in [004_closeout.md](004_closeout.md).

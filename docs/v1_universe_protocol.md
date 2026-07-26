@@ -39,7 +39,7 @@ Panel fields (built by C4 rolling window):
 
 **Panel build (Sprint 004 C4):** reads **ORATS raw** ZIPs (`ORATS_Data`); no split adjustment in liquidity stage. Default `lookback_weeks=12`, `min_valid_quote_weeks=3`, `dte_min=5`, `dte_max=60`, `dvol_top_pct=0.20`, `spread_bot_pct=1.0`.
 
-**Adjusted chains (Sprint 004 C5):** surface/backtest economics read split-adjusted parquets from `C:/MomentumCVG_env/input/adjusted_liquid` (C4 liquid-universe filter). See [sprint_memos/004_c5_adjusted_liquid.md](sprint_memos/004_c5_adjusted_liquid.md).
+**Adjusted chains (Sprint 004 C5):** surface/backtest economics read split-adjusted parquets from the **published snapshot** (manifest-resolved paths under `…/snapshots/20260724T045049097520Z_40b16886`). The mutable producer root `C:/MomentumCVG_env/input/adjusted_liquid` is for rebuild/repair only. See [sprint_memos/004_closeout.md](sprint_memos/004_closeout.md) and [sprint_memos/004_c5_adjusted_liquid.md](sprint_memos/004_c5_adjusted_liquid.md).
 
 **Precompute superset vs trading universe:**
 
@@ -64,18 +64,18 @@ Never use `liquid_tickers.csv` alone as the trading universe.
 
 This document covers **who is eligible** each rebalance, not the full weekly sequence (universe → signal → structure → size → log).
 
-After the **liquidity panel review** (Sprint 002), add [v1_weekly_runbook.md](v1_weekly_runbook.md) with the step-by-step weekly flow. C4 rolling panel builder shipped Sprint 004 — see runbook § Liquidity panel.
+Producer and repair notes: [v1_weekly_runbook.md](v1_weekly_runbook.md). Accepted production handoff remains the published snapshot in [sprint_memos/004_closeout.md](sprint_memos/004_closeout.md). Incremental weekly refresh design is deferred.
 
 ---
 
 ## Data dependencies
 
-| Artifact | Path (default) | Script |
-|----------|----------------|--------|
-| Liquidity panel | `C:/MomentumCVG_env/cache/ticker_liquidity_panel.parquet` (or `input/liquidity/`) | `scripts/build_liquidity_panel.py` |
-| ORATS raw chains | `C:/ORATS/data/ORATS_Data` | `build_liquidity_panel.py` input |
-| Features (momentum/CVG) | `C:/MomentumCVG_env/cache/features_*.parquet` | `scripts/build_features.py` |
-| Option surface | `C:/MomentumCVG_env/cache/option_surface/` | `scripts/precompute_option_surface.py` |
+| Artifact | Trusted path | Notes |
+|----------|--------------|-------|
+| Accepted snapshot | `C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886` | Resolve liquidity, adjusted chains, spot, surface via manifest `e2c1f8fd44d72176` |
+| ORATS raw chains | `C:/ORATS/data/ORATS_Data` | Producer input for liquidity panel rebuilds |
+| Producer liquidity / adjusted / cache | `C:/MomentumCVG_env/input/…`, `C:/MomentumCVG_env/cache/…` | Mutable working locations — not interchangeable with a published snapshot |
+| Features (momentum/CVG) | Not yet produced for Sprint 005 | Scope under review |
 
 ---
 

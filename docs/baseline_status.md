@@ -31,7 +31,7 @@
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_fetch_splits_cli.py tests/unit/test_apply_split_adjustment_cli.py tests/unit/test_split_adjuster.py tests/unit/test_split_adjuster_filtered_zip.py tests/unit/test_ticker_universe.py tests/unit/test_audit_adjusted_liquid.py tests/unit/test_adjusted_liquid_paths.py -q
 ```
 
-Production adjusted chains: `C:/MomentumCVG_env/input/adjusted_liquid` (see [sprint_memos/004_c5_adjusted_liquid.md](sprint_memos/004_c5_adjusted_liquid.md)).
+Accepted production snapshot (C8.5): `C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886` — see [sprint_memos/004_closeout.md](sprint_memos/004_closeout.md). Mutable producer root `C:/MomentumCVG_env/input/adjusted_liquid` is for rebuild/repair only ([sprint_memos/004_c5_adjusted_liquid.md](sprint_memos/004_c5_adjusted_liquid.md)).
 
 No integration or end-to-end backtest smoke test in CI yet.
 

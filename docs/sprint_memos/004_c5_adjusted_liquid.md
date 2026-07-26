@@ -42,17 +42,17 @@ liquid_tickers.csv (C4 superset, 2783 names)
 
 | Phase | Result | Evidence |
 |-------|--------|----------|
-| C5.2 domain audit | PASS WITH WARNINGS | [c5_split_domain_audit.md](../tmp/c5_split_domain_audit.md) |
+| C5.2 domain audit | PASS WITH WARNINGS | Temporary draft removed at Sprint 004 closeout (git history) |
 | C5.3 `load_ticker_universe` | PASS | `tests/unit/test_ticker_universe.py` |
 | C5.4 golden split math | PASS | `tests/unit/test_split_adjuster.py` |
 | C5.5 filtered ZIP→parquet | PASS | `tests/unit/test_split_adjuster_filtered_zip.py` |
-| C5.6B real-data smoke (2020) | PASS | [c5_6b_smoke_report.md](../tmp/c5_6b_smoke_report.md) |
-| C5.7 scoped split fetch | PASS | [c5_7_scoped_split_fetch_report.md](../tmp/c5_7_scoped_split_fetch_report.md) |
-| C5.8B audit on real sample | PASS | [c5_8b_real_data_audit_run_report.md](../tmp/c5_8b_real_data_audit_run_report.md) |
-| C5.9 downstream input contract | PASS | [c5_9_downstream_input_contract_smoke_report.md](../tmp/c5_9_downstream_input_contract_smoke_report.md) |
-| C5.10B full backfill | PASS (exit 0, 2299 files) | [c5_10b_full_backfill_run_log.txt](../tmp/c5_10b_full_backfill_run_log.txt) |
-| C5.10D post-patch audit | **PASS** | [c5_10d_full_backfill_audit_report.md](../tmp/c5_10d_full_backfill_audit_report.md) |
-| C5.11A downstream defaults | PASS | [c5_11a_downstream_path_wiring_report.md](../tmp/c5_11a_downstream_path_wiring_report.md) |
+| C5.6B real-data smoke (2020) | PASS | Temporary draft removed at Sprint 004 closeout (git history) |
+| C5.7 scoped split fetch | PASS | Temporary draft removed at Sprint 004 closeout (git history) |
+| C5.8B audit on real sample | PASS | Temporary draft removed at Sprint 004 closeout (git history) |
+| C5.9 downstream input contract | PASS | Temporary draft removed at Sprint 004 closeout (git history) |
+| C5.10B full backfill | PASS (exit 0, 2299 files) | Temporary run log removed at Sprint 004 closeout (git history) |
+| C5.10D post-patch audit | **PASS** | Temporary draft removed at Sprint 004 closeout (git history) |
+| C5.11A downstream defaults | PASS | Temporary draft removed at Sprint 004 closeout (git history) |
 
 **C5.10C triage:** initial audit FAIL was an **audit join bug** (SPX/SPXW OPRA keys), not a backfill defect — fixed in C5.10D.
 
@@ -123,7 +123,7 @@ Active readers default to `DEFAULT_ADJUSTED_LIQUID_ROOT` (`src/data/paths.py`):
 
 ## Remaining before Sprint 004 full closeout
 
-C5 only. Sprint 004 still open for **C6–C9** (surface audit, PIT harness, `refresh` wiring, `validate` umbrella, runbook/CLI cleanup).
+C5 only. Later Sprint 004 work (C6–C8.5) is closed in [004_closeout.md](004_closeout.md).
 
 ---
 
@@ -131,10 +131,9 @@ C5 only. Sprint 004 still open for **C6–C9** (surface audit, PIT harness, `ref
 
 | Report | Topic |
 |--------|-------|
-| [c5_split_domain_audit.md](../tmp/c5_split_domain_audit.md) | C5.2 code audit |
-| [c5_10c_audit_failure_triage_report.md](../tmp/c5_10c_audit_failure_triage_report.md) | SPX/SPXW join triage |
-| [c5_10d_audit_patch_report.md](../tmp/c5_10d_audit_patch_report.md) | Audit script patch |
+| Temporary C5.2 / C5.10C / C5.10D drafts | Removed at Sprint 004 closeout (git history) |
 | [004_c4_liquidity_panel.md](004_c4_liquidity_panel.md) | Upstream C4 panel |
+| [004_closeout.md](004_closeout.md) | Sprint 004 final closeout |
 
 ---
 
@@ -144,10 +143,9 @@ C5 only. Sprint 004 still open for **C6–C9** (surface audit, PIT harness, `ref
 |-----|---------------------|
 | [AGENTS.md](../../AGENTS.md) | Production root `input/adjusted_liquid`; legacy mirror note |
 | [repo_map.md](../repo_map.md) | External paths + data flow |
-| [v1_weekly_runbook.md](../v1_weekly_runbook.md) | Pipeline order, audit/repair commands |
+| [v1_weekly_runbook.md](../v1_weekly_runbook.md) | Producer / repair notes (historical sections marked) |
 | [v1_universe_protocol.md](../v1_universe_protocol.md) | Raw liquidity vs adjusted chains |
-| [current_sprint.md](../agenda/current_sprint.md) | C5 ✓ (historical); Sprint 004 later closed in [004_closeout.md](004_closeout.md) |
-| [c5_split_adjustment_design_plan.md](../tmp/c5_split_adjustment_design_plan.md) | Design (status: closed) |
-| [c5_11a_downstream_path_wiring_report.md](../tmp/c5_11a_downstream_path_wiring_report.md) | Default path wiring evidence |
+| [current_sprint.md](../agenda/current_sprint.md) | Sprint 005 scope under review |
+| [004_closeout.md](004_closeout.md) | Accepted production snapshot |
 
-**Historical C5 run reports** under `docs/tmp/` were removed at Sprint 004 closeout (available in git history); superseded items (e.g. C5.9 path-default gap) were bannered, not rewritten.
+Temporary C5 design/run reports were removed at Sprint 004 closeout (available in git history).

@@ -1,7 +1,7 @@
 # Repository map
 
 **Status:** Active  
-**Last updated:** 2026-07-04 (C5 adjusted-liquid closeout)
+**Last updated:** 2026-07-26 (Sprint 004 closeout — snapshot-first handoff)
 
 ---
 
@@ -24,12 +24,15 @@ MomentumCVG/
 
 | Path | Purpose |
 |------|---------|
-| `C:/ORATS/data/ORATS_Data` | ORATS raw daily ZIPs (C4 liquidity panel input) |
-| `C:/MomentumCVG_env/input/adjusted_liquid` | **Production** split-adjusted chains for C4 liquid universe (C5) |
-| `C:/MomentumCVG_env/input/liquidity` | C4 rolling liquidity panel artifacts |
+| `C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886` | **Accepted production snapshot** (`e2c1f8fd44d72176`) — resolve Stage A via its manifest |
+| `C:/ORATS/data/ORATS_Data` | ORATS raw daily ZIPs (liquidity panel producer input) |
+| `C:/MomentumCVG_env/input/adjusted_liquid` | Producer / legacy working root for split-adjusted chains (C5) — **not** interchangeable with a published snapshot |
+| `C:/MomentumCVG_env/input/liquidity` | Producer liquidity panel artifacts |
 | `C:/ORATS/data/ORATS_Adjusted` | Legacy full-universe adjusted mirror (maintenance only; not active default) |
-| `C:/MomentumCVG_env/cache/` | Spot DB, surfaces, features, manifests |
+| `C:/MomentumCVG_env/cache/` | Mutable producer cache (spot, surfaces, features) — not the accepted handoff |
 | `C:/MomentumCVG_env/venv/` | Python virtual environment |
+
+Trusted downstream consumption uses the immutable published snapshot + manifest ([sprint_memos/004_closeout.md](sprint_memos/004_closeout.md)). Mutable `input/` and `cache/` roots remain valid **producer** locations only.
 
 Activate venv:
 
@@ -81,12 +84,13 @@ See [decisions/001_canonical_backtest_path.md](decisions/001_canonical_backtest_
 
 ```
 ORATS raw ZIPs (ORATS_Data)
-    → build_liquidity_panel.py → ticker_liquidity_panel.parquet (C4)
-    → apply_split_adjustment.py (filtered) → input/adjusted_liquid/*.parquet (C5)
+    → build_liquidity_panel.py → ticker_liquidity_panel.parquet (C4 producer)
+    → apply_split_adjustment.py (filtered) → input/adjusted_liquid/*.parquet (C5 producer)
+    → extract_spot_prices / precompute_option_surface → mutable cache (producer)
+    → publish immutable snapshot + manifest  → accepted Stage A handoff (Sprint 004)
 
-adjusted_liquid parquets
-    → ORATSDataProvider / extract_spot_prices / precompute_option_surface → spot + surface cache
-    → build_features.py        → momentum + CVG features (Sprint 005)
+Published snapshot (manifest-resolved paths)
+    → build_features.py        → momentum + CVG features (Sprint 005 — scope under review)
 
 At rebalance date t:
     step1_get_universe (liquidity panel, PIT)
@@ -103,7 +107,7 @@ At rebalance date t:
 | Script | Output |
 |--------|--------|
 | `fetch_splits.py` | Scoped split history (`splits_hist_liquid.parquet`) |
-| `apply_split_adjustment.py` | Filtered adjusted chains → `input/adjusted_liquid` |
+| `apply_split_adjustment.py` | Filtered adjusted chains → producer `input/adjusted_liquid` |
 | `audit_adjusted_liquid.py` | PASS/WARN/FAIL audit report |
 | `extract_spot_prices.py` | Spot DB |
 | `build_liquidity_panel.py` | Liquidity panel (raw ORATS only) |

@@ -1,7 +1,7 @@
 # Development workflow
 
 **Status:** Active  
-**Last updated:** 2026-07-26 (Sprint 004 closed; Sprint 005 open)
+**Last updated:** 2026-07-26 (Sprint 004 closed; Sprint 005 scope under review)
 
 ---
 
@@ -96,17 +96,17 @@ Aligned with [agenda/current_sprint.md](agenda/current_sprint.md). Sprints 000�
 
 | Sprint | Status | Theme | Delivers | Explicitly not |
 |--------|--------|-------|----------|----------------|
-| **004** | **Active** | Input snapshot + split/PIT + **liquidity panel (C4 ✓)** + **adjusted-liquid (C5 ✓)** + surface precompute audit | CLI, rolling panel, scoped adjust + audit, **A1/A2** tests/audit, PIT harness, runbook | Mom/CVG, straddle history, backtest smoke |
-| **005** | Planned | **All feature pipeline** (straddle history, features, mom/CVG, A4, paths, trade-date calendar) | May absorb earnings/pipeline gaps from 004 | L4 backtest smoke |
-| **006** | Planned | Real-data **backtest** smoke + `run_surface_search` wiring | L4 S1→S8 | Start only after **004 input + 005 features** trustworthy |
+| **004** | `CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS` | Input snapshot + split/PIT + liquidity + adjusted-liquid + surface precompute | Published snapshot `e2c1f8fd44d72176` — see [sprint_memos/004_closeout.md](sprint_memos/004_closeout.md) | Mom/CVG, straddle history, backtest smoke |
+| **005** | `SCOPE UNDER REVIEW` | Feature pipeline (scope not frozen) | TBD after scope acceptance | Do not treat draft themes as commitments |
+| **006** | Planned | Real-data **backtest** smoke + `run_surface_search` wiring | L4 S1→S8 | Start only after **004 input + accepted 005 features** trustworthy |
 | **007** | Planned | Tier B conservative baseline | 2020→latest canonical run; conservative fills; metrics table in [backtest_evaluation_protocol.md](backtest_evaluation_protocol.md); SurfaceRunner `run_manifest` | Sensitivity matrix, paper trading |
 | **008** | Planned | Decision sprint (conditional on 007) | Go/no-go memo; pass/fail thresholds or documented waiver; triage KB-001 and remaining precompute gaps | Live execution |
 
-**Real-data split:** Sprint 004 validates **input/precompute** on real cache (splits, liquidity, option surface A1/A2). Sprint 006 runs **backtest** smoke (SurfaceRunner). Stale wording in older docs → update when that sprint starts.
+**Real-data split:** Sprint 004 delivered trusted **input/precompute** via an immutable published snapshot. Sprint 006 runs **backtest** smoke (SurfaceRunner) only after Sprint 005 scope is accepted and features are trustworthy.
 
-**006 gate:** Do not start Sprint 006 until Sprint 004 input snapshot and Sprint 005 feature pipeline are trustworthy.
+**006 gate:** Do not start Sprint 006 until the Sprint 004 snapshot and an accepted Sprint 005 feature pipeline are trustworthy.
 
-**004 vs 005:** 004 = splits, spot, rolling liquidity, **option surface precompute audit**. 005 = **entire feature branch** (straddle history, features, mom/CVG).
+**004 vs 005:** 004 = closed Stage A snapshot. 005 = feature branch (scope under review; not finalized here).
 
 **Evaluation levels** ([surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md)):
 
@@ -124,7 +124,7 @@ Aligned with [agenda/current_sprint.md](agenda/current_sprint.md). Sprints 000�
 |-------|--------|
 | 0–1 | Workflow, repo audit, first verification test ✅ |
 | 2–4 | Data contracts; S5/S8 build; portfolio caps ✅ |
-| 5–6 | **Sprint 004–005:** build input pipeline + feature/mom/CVG audit |
+| 5–6 | **Sprint 004 closed;** Sprint 005 scope under review (features) |
 | 7 | **Sprint 006:** real-data structural smoke (L4) |
 | 8–9 | **Sprint 007:** conservative baseline; iron fly vs condor comparison deferred to post-baseline sensitivity |
 | 9–10 | Shadow runner; ops model from measured trade counts |

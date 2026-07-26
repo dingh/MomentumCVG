@@ -167,7 +167,7 @@ These are accepted defensive hardening, not unresolved design drift.
 
 ## 6. Production evidence
 
-**Canonical evidence report:** [c7_pit_universe_audit.md](../tmp/c7_pit_universe_audit.md) (C7.4R, accepted 2026-07-13 UTC execution on implementation head `e0cf020`).
+**Canonical evidence report:** temporary C7.4R draft removed at Sprint 004 closeout (git history; accepted 2026-07-13 UTC on implementation head `e0cf020`). Key counts and hashes remain in this memo.
 
 ### Input artifacts and hashes
 
@@ -275,7 +275,7 @@ Tests were **not** rerun for this C7.6 documentation-only task.
 | Automatic sample mapping passed | C7.4R — 3 distinct cases; `target == resolved` for all | ✓ |
 | Missing liquidity explicit | Exclusion counts per sample; never silent PASS | ✓ |
 | Focused unit/contract/CLI tests passed | 127 passed, 1 skipped in 6.26s | ✓ |
-| Substantive production report archived | [c7_pit_universe_audit.md](../tmp/c7_pit_universe_audit.md) | ✓ |
+| Substantive production report archived | Temporary C7.4R draft removed at Sprint 004 closeout (git history); facts retained in this memo | ✓ |
 | No S2–S8/A4/backtest/Sharpe/portfolio changes | Scope preserved across C7 commits | ✓ |
 | Sprint blocker #6 closed | PIT universe validation — CLOSED (C7, 2026-07-12) | ✓ |
 | Sprint 004 remains active; C3 deferred until after C8 | This closeout does not close Sprint 004 | ✓ |
@@ -343,9 +343,9 @@ C8, C3, C9, and C10 are **not** marked complete by this memo.
 | [004_closeout.md](004_closeout.md) | Sprint 004 final closeout (C8.5) |
 | Temporary C7.0/C7.1/C7.4R drafts | Removed at Sprint 004 closeout (see git history) |
 | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | A3 + S1 data contract |
-| [current_sprint.md](../agenda/current_sprint.md) | Active sprint agenda |
+| [current_sprint.md](../agenda/current_sprint.md) | Sprint 005 scope under review |
 | [004_c4_liquidity_panel.md](004_c4_liquidity_panel.md) | Upstream C4 liquidity panel closeout |
 | [004_c5_adjusted_liquid.md](004_c5_adjusted_liquid.md) | Upstream C5 adjusted-liquid closeout |
 | [004_c6_option_surface.md](004_c6_option_surface.md) | Upstream C6 option-surface closeout |
 
-C7 temporary evidence drafts under `docs/tmp/` were removed at Sprint 004 closeout; facts in this memo remain authoritative.
+Temporary C7 evidence drafts were removed at Sprint 004 closeout (available in git history); facts in this memo remain authoritative.

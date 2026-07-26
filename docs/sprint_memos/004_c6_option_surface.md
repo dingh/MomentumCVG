@@ -58,14 +58,14 @@ surface_valid
 
 | Phase | Result | Commit / evidence | Summary |
 |-------|--------|-------------------|---------|
-| **C6.0 — reality map** | Accepted | [c6_0_option_surface_reality_map.md](../tmp/c6_0_option_surface_reality_map.md) | Mapped producer, cache, consumers, and tests; separated schema validity from assembly-readiness; identified risks (path defaults, overwrite risk, chain-scanned weekly expiry vs calendar target, duplicate grain ambiguity, stale lineage) without overstating defects later disproven by C6.1B/C6.4 |
-| **C6.1 — design** | Accepted | [c6_1_option_surface_design_memo.md](../tmp/c6_1_option_surface_design_memo.md) | Locked three-layer design, PASS/WARN/FAIL policy, subtask sequence C6.1A→C6.6, and pytest vs audit-gate responsibilities |
-| **C6.1A — producer safety** | PASS | `9017a6b` · [c6_1a_producer_safety_report.md](../tmp/c6_1a_producer_safety_report.md) | Bounded ticker/date flags, `--dry-run`, `--output-root` isolation, overwrite protection, central path defaults, shared weekly entry-date schedule (`weekly_trade_dates_in_range`), Jan 1–Dec 31 year bounds. **C6.1A changed weekly entry scheduling and producer safety, but did not change expiry selection.** |
-| **C6.1B — weekly-expiry diagnostic** | PASS (policy) | `7049037` · [c6_1b_weekly_expiry_diagnostic.md](../tmp/c6_1b_weekly_expiry_diagnostic.md) | See policy conclusion below |
-| **C6.1C — strict weekly expiry** | PASS | `af9d9a0` · [c6_1c_calendar_paired_weekly_expiry_report.md](../tmp/c6_1c_calendar_paired_weekly_expiry_report.md) | Calendar-paired weekly expiry; monthly path unchanged |
-| **C6.2 — A1/A2 contract** | PASS | `8d776e6` · [c6_2_surface_artifact_contract_report.md](../tmp/c6_2_surface_artifact_contract_report.md) | Contract + read-only audit foundation |
-| **C6.3 — assembly-readiness** | PASS | `e2ffc2b` · [c6_3_surface_assembly_readiness_report.md](../tmp/c6_3_surface_assembly_readiness_report.md) | Straddle / wing / iron-fly / iron-condor candidate metrics |
-| **C6.4 — real-artifact evidence** | Pass 1 WARN · Pass 2 PASS | `c75417d` (audit) · `70527ca` (evidence) · [c6_4_surface_audit_summary.md](../tmp/c6_4_surface_audit_summary.md) | Bounded 5×13 real-cache and fresh-smoke audits |
+| **C6.0 — reality map** | Accepted | Temporary draft removed at Sprint 004 closeout (git history) | Mapped producer, cache, consumers, and tests; separated schema validity from assembly-readiness; identified risks (path defaults, overwrite risk, chain-scanned weekly expiry vs calendar target, duplicate grain ambiguity, stale lineage) without overstating defects later disproven by C6.1B/C6.4 |
+| **C6.1 — design** | Accepted | Temporary draft removed at Sprint 004 closeout (git history) | Locked three-layer design, PASS/WARN/FAIL policy, subtask sequence C6.1A→C6.6, and pytest vs audit-gate responsibilities |
+| **C6.1A — producer safety** | PASS | `9017a6b` · temporary report removed (git history) | Bounded ticker/date flags, `--dry-run`, `--output-root` isolation, overwrite protection, central path defaults, shared weekly entry-date schedule (`weekly_trade_dates_in_range`), Jan 1–Dec 31 year bounds. **C6.1A changed weekly entry scheduling and producer safety, but did not change expiry selection.** |
+| **C6.1B — weekly-expiry diagnostic** | PASS (policy) | `7049037` · temporary report removed (git history) | See policy conclusion below |
+| **C6.1C — strict weekly expiry** | PASS | `af9d9a0` · temporary report removed (git history) | Calendar-paired weekly expiry; monthly path unchanged |
+| **C6.2 — A1/A2 contract** | PASS | `8d776e6` · temporary report removed (git history) | Contract + read-only audit foundation |
+| **C6.3 — assembly-readiness** | PASS | `e2ffc2b` · temporary report removed (git history) | Straddle / wing / iron-fly / iron-condor candidate metrics |
+| **C6.4 — real-artifact evidence** | Pass 1 WARN · Pass 2 PASS | `c75417d` (audit) · `70527ca` (evidence) · temporary summary removed (git history) | Bounded 5×13 real-cache and fresh-smoke audits |
 
 ### C6.0 — reality map (risks)
 
@@ -150,7 +150,7 @@ Module: `src/features/option_surface_readiness.py`.
 | **Pass 1 — existing historical cache** | Read-only audit of `option_surface_meta_weekly_2018_2026.parquet` + quotes pair; bounded filter 5 tickers × Q1 2024 | **WARN** — bounded integrity checks pass; historical producer/upstream lineage unknown |
 | **Pass 2 — fresh bounded C6 smoke** | Producer run to `c6_4_surface_smoke/` then audit with known lineage | **PASS** |
 
-Reports: [c6_4_real_cache_surface_audit.md](../tmp/c6_4_real_cache_surface_audit.md) · [c6_4_smoke_surface_audit.md](../tmp/c6_4_smoke_surface_audit.md) · [c6_4_surface_audit_summary.md](../tmp/c6_4_surface_audit_summary.md).
+Reports: temporary C6.4 drafts removed at Sprint 004 closeout (available in git history).
 
 C6.4 helpers: `src/features/option_surface_c64_audit.py` (duplicate triage, weekly-expiry classification, legacy-lineage WARN policy).
 
@@ -160,13 +160,13 @@ C6.4 helpers: `src/features/option_surface_c64_audit.py` (duplicate triage, week
 
 | Phase | Result | Commit / evidence | Key conclusion |
 |-------|--------|-------------------|----------------|
-| C6.1A | PASS | `9017a6b` · [c6_1a](../tmp/c6_1a_producer_safety_report.md) | Safe bounded producer; shared entry schedule; expiry unchanged |
-| C6.1B | PASS (policy) | `7049037` · [c6_1b](../tmp/c6_1b_weekly_expiry_diagnostic.md) | Known-weekly 60/60; strict exact-next-week policy approved |
-| C6.1C | PASS | `af9d9a0` · [c6_1c](../tmp/c6_1c_calendar_paired_weekly_expiry_report.md) | Strict calendar-paired weekly expiry in producer |
-| C6.2 | PASS | `8d776e6` · [c6_2](../tmp/c6_2_surface_artifact_contract_report.md) | A1/A2 contract checks + audit CLI foundation |
-| C6.3 | PASS | `e2ffc2b` · [c6_3](../tmp/c6_3_surface_assembly_readiness_report.md) | Assembly-readiness metrics aligned with S3 builders |
-| C6.4 Pass 1 | **WARN** | `70527ca` · [real cache](../tmp/c6_4_real_cache_surface_audit.md) | Bounded sample integrity OK; legacy lineage unknown |
-| C6.4 Pass 2 | **PASS** | `70527ca` · [smoke](../tmp/c6_4_smoke_surface_audit.md) | Fresh smoke with known producer lineage passes all blocking checks |
+| C6.1A | PASS | `9017a6b` · temporary report removed (git history) | Safe bounded producer; shared entry schedule; expiry unchanged |
+| C6.1B | PASS (policy) | `7049037` · temporary report removed (git history) | Known-weekly 60/60; strict exact-next-week policy approved |
+| C6.1C | PASS | `af9d9a0` · temporary report removed (git history) | Strict calendar-paired weekly expiry in producer |
+| C6.2 | PASS | `8d776e6` · temporary report removed (git history) | A1/A2 contract checks + audit CLI foundation |
+| C6.3 | PASS | `e2ffc2b` · temporary report removed (git history) | Assembly-readiness metrics aligned with S3 builders |
+| C6.4 Pass 1 | **WARN** | `70527ca` · temporary report removed (git history) | Bounded sample integrity OK; legacy lineage unknown |
+| C6.4 Pass 2 | **PASS** | `70527ca` · temporary report removed (git history) | Fresh smoke with known producer lineage passes all blocking checks |
 
 ---
 
@@ -373,7 +373,7 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/audit_option_surface_artifact
   --output-report surface_audit_pass1.md
 ```
 
-Full Pass 1 / Pass 2 command lines: [c6_4_real_cache_surface_audit.md](../tmp/c6_4_real_cache_surface_audit.md) · [c6_4_smoke_surface_audit.md](../tmp/c6_4_smoke_surface_audit.md).
+Full Pass 1 / Pass 2 command lines: temporary C6.4 drafts removed at Sprint 004 closeout (available in git history).
 
 ---
 
@@ -381,11 +381,10 @@ Full Pass 1 / Pass 2 command lines: [c6_4_real_cache_surface_audit.md](../tmp/c6
 
 | Item | Sprint / task |
 |------|----------------|
-| `refresh_weekly_inputs surface-audit` wiring | **C8** (historically numbered C6.5; not a C6 closeout blocker) |
-| PIT universe validation | C7 |
-| Weekly refresh orchestration | C8 |
-| Runbook and CLI cleanup | C9 |
-| A4 features, straddle history, incremental append/watermarks | Sprint 005 |
+| `refresh_weekly_inputs surface-audit` wiring | Historically C8 (not a C6 closeout blocker) |
+| PIT universe validation | Closed in C7 |
+| Weekly refresh orchestration | Closed in C8.5 / [004_closeout.md](004_closeout.md) |
+| A4 features, straddle history, incremental append/watermarks | Sprint 005 (scope under review) |
 | SurfaceRunner real-data evaluation and trade logs | Sprint 006 |
 | Tier B / Sharpe go-no-go | Sprint 007 |
 
@@ -393,9 +392,7 @@ Full Pass 1 / Pass 2 command lines: [c6_4_real_cache_surface_audit.md](../tmp/c6
 
 ## 12. Remaining Sprint 004 work
 
-**C6 is closed.**
-
-Sprint 004 remains **active** for **C7–C9** and the later **C3** validation umbrella.
+**C6 is closed.** Sprint 004 later closed fully in [004_closeout.md](004_closeout.md).
 
 ---
 
@@ -403,19 +400,11 @@ Sprint 004 remains **active** for **C7–C9** and the later **C3** validation um
 
 | Report / doc | Topic |
 |--------------|-------|
-| [c6_0_option_surface_reality_map.md](../tmp/c6_0_option_surface_reality_map.md) | C6.0 reconnaissance |
-| [c6_1_option_surface_design_memo.md](../tmp/c6_1_option_surface_design_memo.md) | C6.1 design (canonical) |
-| [c6_1a_producer_safety_report.md](../tmp/c6_1a_producer_safety_report.md) | C6.1A producer safety |
-| [c6_1b_weekly_expiry_diagnostic.md](../tmp/c6_1b_weekly_expiry_diagnostic.md) | C6.1B expiry policy diagnostic |
-| [c6_1c_calendar_paired_weekly_expiry_report.md](../tmp/c6_1c_calendar_paired_weekly_expiry_report.md) | C6.1C strict weekly expiry |
-| [c6_2_surface_artifact_contract_report.md](../tmp/c6_2_surface_artifact_contract_report.md) | C6.2 contract |
-| [c6_3_surface_assembly_readiness_report.md](../tmp/c6_3_surface_assembly_readiness_report.md) | C6.3 readiness |
-| [c6_4_surface_audit_summary.md](../tmp/c6_4_surface_audit_summary.md) | C6.4 summary |
+| Temporary C6.0–C6.4 drafts | Removed at Sprint 004 closeout (git history) |
 | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | A1/A2 data contract |
-| [current_sprint.md](../agenda/current_sprint.md) | Active sprint agenda |
+| [current_sprint.md](../agenda/current_sprint.md) | Sprint 005 scope under review |
 | [004_c5_adjusted_liquid.md](004_c5_adjusted_liquid.md) | Upstream C5 adjusted-liquid closeout |
-
-Historical C6 evidence drafts under `docs/tmp/` were removed at Sprint 004 closeout (available in git history) — not rewritten for consistency.
+| [004_closeout.md](004_closeout.md) | Sprint 004 final closeout |
 
 ---
 

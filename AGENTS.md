@@ -47,10 +47,11 @@ Python venv (Windows):
 
 External data (not in repo):
 
+- Accepted production snapshot: `C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886` (manifest `e2c1f8fd44d72176`; see [docs/sprint_memos/004_closeout.md](docs/sprint_memos/004_closeout.md))
 - Raw ORATS: `C:/ORATS/data/ORATS_Data`
-- Production adjusted chains (C5): `C:/MomentumCVG_env/input/adjusted_liquid`
+- Producer adjusted chains (C5): `C:/MomentumCVG_env/input/adjusted_liquid` (mutable; not the accepted handoff)
 - Legacy full-universe mirror: `C:/ORATS/data/ORATS_Adjusted` (maintenance only)
-- Cache: `C:/MomentumCVG_env/cache/`
+- Mutable producer cache: `C:/MomentumCVG_env/cache/`
 
 ## Definition of done
 
