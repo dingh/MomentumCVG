@@ -1,10 +1,10 @@
 # Sprint 004 — C7 point-in-time universe closeout
 
-**Status:** Closed — **C7 accepted**  
-**Closed:** 2026-07-12  
-**Reality map:** [c7_0_pit_universe_reality_map.md](../tmp/c7_0_pit_universe_reality_map.md)  
-**Design memo:** [c7_1_pit_universe_design_memo.md](../tmp/c7_1_pit_universe_design_memo.md)  
-**Accepted production evidence:** [c7_pit_universe_audit.md](../tmp/c7_pit_universe_audit.md) (C7.4R)
+**Status:** Closed — **C7 accepted**
+**Closed:** 2026-07-12
+**Reality map / design / C7.4R drafts:** removed at Sprint 004 closeout (see git history)
+**Canonical closeout:** [004_closeout.md](004_closeout.md)
+**Note:** Statements below that say “Sprint 004 remains active” are historical to the C7 closeout date.
 
 ---
 
@@ -18,10 +18,10 @@
 | **Accepted corrected production-evidence head** | `e92ceb23e8ebd0eaf36f10757e01b1abd0fa4d1a` | C7.4R evidence-only commit; supersedes initial C7.4 evidence |
 | **Superseded initial production-evidence head** | `47060d56a74885a5aca37413aebc541ccbbd000d` | Initial C7.4 production audit — superseded by C7.4R after C7.5A repair |
 
-**Accepted implementation head:** `e0cf020430465c9f5a033017d5736dc819e681ff`  
+**Accepted implementation head:** `e0cf020430465c9f5a033017d5736dc819e681ff`
 **Accepted production-evidence head:** `e92ceb23e8ebd0eaf36f10757e01b1abd0fa4d1a`
 
-`47060d56a74885a5aca37413aebc541ccbbd000d` is **superseded evidence**.  
+`47060d56a74885a5aca37413aebc541ccbbd000d` is **superseded evidence**.
 `e92ceb23e8ebd0eaf36f10757e01b1abd0fa4d1a` is the **accepted C7.4R evidence**.
 
 The evidence-only commit did **not** change accepted implementation code.
@@ -253,8 +253,8 @@ tests/unit/test_audit_pit_universe_cli.py
 tests/contract/test_step1_universe_contract.py
 ```
 
-This is **local recorded test evidence**.  
-**No GitHub Actions run is claimed for C7.**  
+This is **local recorded test evidence**.
+**No GitHub Actions run is claimed for C7.**
 The full repository pytest suite remains Sprint 004 blocker #11 and is **not** claimed as completed by C7.
 
 Tests were **not** rerun for this C7.6 documentation-only task.
@@ -340,13 +340,12 @@ C8, C3, C9, and C10 are **not** marked complete by this memo.
 
 | Document | Topic |
 |----------|-------|
-| [c7_0_pit_universe_reality_map.md](../tmp/c7_0_pit_universe_reality_map.md) | C7.0 reconnaissance |
-| [c7_1_pit_universe_design_memo.md](../tmp/c7_1_pit_universe_design_memo.md) | C7.1 design (canonical) |
-| [c7_pit_universe_audit.md](../tmp/c7_pit_universe_audit.md) | C7.4R accepted production evidence |
+| [004_closeout.md](004_closeout.md) | Sprint 004 final closeout (C8.5) |
+| Temporary C7.0/C7.1/C7.4R drafts | Removed at Sprint 004 closeout (see git history) |
 | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | A3 + S1 data contract |
-| [current_sprint.md](../agenda/current_sprint.md) | Sprint 004 active agenda |
+| [current_sprint.md](../agenda/current_sprint.md) | Active sprint agenda |
 | [004_c4_liquidity_panel.md](004_c4_liquidity_panel.md) | Upstream C4 liquidity panel closeout |
 | [004_c5_adjusted_liquid.md](004_c5_adjusted_liquid.md) | Upstream C5 adjusted-liquid closeout |
 | [004_c6_option_surface.md](004_c6_option_surface.md) | Upstream C6 option-surface closeout |
 
-The C7 `docs/tmp` files are **retained evidence** and should not be rewritten merely for closeout consistency.
+C7 temporary evidence drafts under `docs/tmp/` were removed at Sprint 004 closeout; facts in this memo remain authoritative.

@@ -2,7 +2,7 @@
 
 **Status:** Closed — **C4 accepted**  
 **Closed:** 2026-06-29  
-**Design:** [docs/tmp/c4_liquidity_panel_design_plan.md](../tmp/c4_liquidity_panel_design_plan.md)
+**Design:** temporary C4 design draft removed at Sprint 004 closeout (see git history); canonical closeout [004_closeout.md](004_closeout.md)
 
 ---
 

@@ -20,7 +20,7 @@ Reads ORATS **raw** daily ZIPs from ORATS_Data (no split-adjusted cache required
 Liquidity uses raw bid/ask/volume columns only; downstream surface/backtest still
 uses ORATS_Adjusted after scoped split adjustment on liquid names.
 
-See docs/tmp/c4_liquidity_panel_design_plan.md.
+See docs/sprint_memos/004_c4_liquidity_panel.md and docs/sprint_memos/004_closeout.md.
 """
 
 from __future__ import annotations

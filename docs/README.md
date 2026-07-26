@@ -35,7 +35,7 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) | S5/S8 portfolio & metrics design (Accepted; built Sprint 003) | 2026-06-20 |
 | [development_workflow.md](development_workflow.md) | Human + agent sprint workflow; roadmap 004–008 | 2026-07-04 |
 | [baseline_status.md](baseline_status.md) | Test and smoke-command baseline | 2026-07-04 |
-| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 004 — C4–C7 + C8.4 closed; C8.5 + C9 remaining | 2026-07-22 |
+| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 005 — feature pipeline on snapshot `e2c1f8fd44d72176` | 2026-07-26 |
 | [v1_weekly_runbook.md](v1_weekly_runbook.md) | Weekly Stage A refresh procedure | 2026-07-04 |
 | [repo_map.md](repo_map.md) | Repository layout and data flow | 2026-07-04 |
 | [known_bugs.md](known_bugs.md) | Open bugs and spec drift (fix deferred) | 2026-06-14 |
@@ -61,6 +61,7 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | 004 (C6) | [Option-surface layer closeout](sprint_memos/004_c6_option_surface.md) _(C6 closed 2026-07-11)_ |
 | 004 (C7) | [PIT universe closeout](sprint_memos/004_c7_pit_universe.md) _(C7 closed 2026-07-12)_ |
 | 004 (C8.4) | [Bounded snapshot evidence closeout](sprint_memos/004_c8_4_bounded_evidence.md) _(C8.4 closed 2026-07-22)_ |
+| 004 | [Sprint 004 closeout](sprint_memos/004_closeout.md) _(CLOSED 2026-07-26 — accepted with documented limitations)_ |
 | — | [Week 0 review notes](sprint_memos/week0_review_notes.md) _(archived from agenda)_ |
 
 ## Related (repo root)

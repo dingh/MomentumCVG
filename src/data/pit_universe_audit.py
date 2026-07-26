@@ -10,8 +10,8 @@ of the production S1 code path:
     liquidity?
 
 Design references:
-    docs/tmp/c7_0_pit_universe_reality_map.md
-    docs/tmp/c7_1_pit_universe_design_memo.md
+    docs/sprint_memos/004_c7_pit_universe.md
+    docs/sprint_memos/004_closeout.md
 
 Scope guardrails (C7.2):
     * No CLI parsing, no file writes, no printing, no artifact mutation.

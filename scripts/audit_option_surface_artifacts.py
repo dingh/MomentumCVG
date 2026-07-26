@@ -9,13 +9,13 @@ Usage (C6.2 contract only):
         --data-root C:/MomentumCVG_env/input/adjusted_liquid \\
         --start-date 2024-01-01 \\
         --end-date 2024-01-31 \\
-        --output-report docs/tmp/c6_2_surface_artifact_contract_report.md
+        --output-report surface_artifact_contract_report.md
 
 Usage (C6.3 assembly-readiness phase after contract gate):
     python scripts/audit_option_surface_artifacts.py \\
         ... \\
         --include-assembly-readiness \\
-        --output-report docs/tmp/c6_3_surface_assembly_readiness_report.md
+        --output-report surface_assembly_readiness_report.md
 """
 
 from __future__ import annotations
@@ -1296,7 +1296,7 @@ def main(argv: list[str] | None = None) -> int:
             "scripts/audit_option_surface_artifacts.py",
             "tests/unit/test_option_surface_readiness.py",
             "tests/unit/test_audit_option_surface_artifacts.py",
-            "docs/tmp/c6_3_surface_assembly_readiness_report.md",
+            "docs/sprint_memos/004_c6_option_surface.md",
         ]
         write_c63_markdown_report(
             args.output_report,
@@ -1314,7 +1314,7 @@ def main(argv: list[str] | None = None) -> int:
             "src/features/option_surface_contract.py",
             "scripts/audit_option_surface_artifacts.py",
             "tests/unit/test_option_surface_contract.py",
-            "docs/tmp/c6_2_surface_artifact_contract_report.md",
+            "docs/sprint_memos/004_c6_option_surface.md",
         ]
         write_markdown_report(
             args.output_report,

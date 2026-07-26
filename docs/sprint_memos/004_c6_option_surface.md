@@ -1,8 +1,9 @@
 # Sprint 004 — C6 option-surface layer closeout
 
-**Status:** Closed — **C6 accepted**  
-**Closed:** 2026-07-11  
-**Design memo:** [docs/tmp/c6_1_option_surface_design_memo.md](../tmp/c6_1_option_surface_design_memo.md)
+**Status:** Closed — **C6 accepted**
+**Closed:** 2026-07-11
+**Design memo:** temporary C6 design draft removed at Sprint 004 closeout (see git history); canonical closeout [004_closeout.md](004_closeout.md)
+**Note:** Sprint 004 is now fully closed; statements below that say “Sprint 004 remains active” are historical to the C6 closeout date.
 
 ### Lineage
 
@@ -369,7 +370,7 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/audit_option_surface_artifact
   --report-format c6.4 `
   --legacy-cache `
   --include-assembly-readiness `
-  --output-report docs/tmp/surface_audit_pass1.md
+  --output-report surface_audit_pass1.md
 ```
 
 Full Pass 1 / Pass 2 command lines: [c6_4_real_cache_surface_audit.md](../tmp/c6_4_real_cache_surface_audit.md) · [c6_4_smoke_surface_audit.md](../tmp/c6_4_smoke_surface_audit.md).
@@ -411,10 +412,10 @@ Sprint 004 remains **active** for **C7–C9** and the later **C3** validation um
 | [c6_3_surface_assembly_readiness_report.md](../tmp/c6_3_surface_assembly_readiness_report.md) | C6.3 readiness |
 | [c6_4_surface_audit_summary.md](../tmp/c6_4_surface_audit_summary.md) | C6.4 summary |
 | [surface_engine_data_contract.md](../surface_engine_data_contract.md) | A1/A2 data contract |
-| [current_sprint.md](../agenda/current_sprint.md) | Sprint 004 active agenda |
+| [current_sprint.md](../agenda/current_sprint.md) | Active sprint agenda |
 | [004_c5_adjusted_liquid.md](004_c5_adjusted_liquid.md) | Upstream C5 adjusted-liquid closeout |
 
-Historical `docs/tmp/c6_*` evidence files are **retained evidence** — not rewritten for closeout consistency.
+Historical C6 evidence drafts under `docs/tmp/` were removed at Sprint 004 closeout (available in git history) — not rewritten for consistency.
 
 ---
 
@@ -424,5 +425,5 @@ Historical `docs/tmp/c6_*` evidence files are **retained evidence** — not rewr
 |-----|---------------------|
 | [AGENTS.md](../../AGENTS.md) | Canonical backtest path; cache paths |
 | [repo_map.md](../repo_map.md) | Stage A data flow |
-| [current_sprint.md](../agenda/current_sprint.md) | C6 ✓; C7–C9 remaining |
+| [current_sprint.md](../agenda/current_sprint.md) | C6 ✓ (historical); Sprint 004 later closed in [004_closeout.md](004_closeout.md) |
 | [known_bugs.md](../known_bugs.md) | KB-001 not in C6 scope |

@@ -1,10 +1,9 @@
 # Sprint 004 — C8.4 bounded snapshot evidence closeout
 
-**Status:** Closed — **C8.4 accepted with limitations**  
-**Closed:** 2026-07-22  
-**Completion evidence:** [c8_4_bounded_backfill_evidence.md](../tmp/c8_4_bounded_backfill_evidence.md)  
-**Plan:** [c8_4_bounded_evidence_plan.md](../tmp/c8_4_bounded_evidence_plan.md)  
-**Run log:** [c8_4_bounded_evidence_record.md](../tmp/c8_4_bounded_evidence_record.md)
+**Status:** Closed — **C8.4 accepted with limitations**
+**Closed:** 2026-07-22
+**Superseded for production by:** [004_closeout.md](004_closeout.md) (full C8.5 snapshot)
+**Note:** Temporary C8.4 evidence drafts under `docs/tmp/` were removed at Sprint 004 closeout; facts below remain authoritative for the bounded evidence window.
 
 ---
 
@@ -96,7 +95,7 @@ Product decision locked for this evidence: **classification-v2** (date-specific 
 
 | Item | Status |
 |------|--------|
-| **C8.5** full production snapshot evidence / C8 closeout | Open |
+| **C8.5** full production snapshot evidence / Sprint 004 closeout | **Closed** — see [004_closeout.md](004_closeout.md) |
 | **C3** umbrella `validate` | Still deferred until C4–C8 complete |
 | **C9** runbook + plan cleanup | Open |
 

@@ -1,7 +1,7 @@
 # Development workflow
 
 **Status:** Active  
-**Last updated:** 2026-07-04 (C5 adjusted-liquid closed)
+**Last updated:** 2026-07-26 (Sprint 004 closed; Sprint 005 open)
 
 ---
 

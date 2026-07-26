@@ -1,4 +1,4 @@
-Mode: Sprint004 execution guardrail.
+Mode: Sprint004 execution guardrail (**historical** — Sprint 004 is closed; see [sprint_memos/004_closeout.md](../sprint_memos/004_closeout.md)).
 
 Before starting implementation, follow this execution protocol for every commit C1–C10.
 
@@ -64,7 +64,7 @@ Documentation hygiene:
 * `docs/v1_weekly_runbook.md` is the operator runbook, created/updated when implementation makes the runbook concrete.
 * `docs/sprint_memos/004_*.md` should be created only at closeout.
 * Avoid creating separate design docs for every commit.
-* If a temporary design note is useful during work, use `docs/tmp/` only if needed, and delete it or archive it before closing the sprint.
+* If a temporary design note is useful during work, keep it outside the permanent doc tree (or delete it before closing the sprint). Do not leave active links to disposable scratch paths.
 * Any stale or redundant information should be removed, not duplicated.
 * If a doc becomes obsolete, move it to `docs/archive/` and update `docs/README.md`.
 

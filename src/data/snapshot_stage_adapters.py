@@ -23,7 +23,7 @@ Failure behavior: any producer or gate failure raises
 always propagates. An adapter cleans or replaces only its own candidate
 and stable paths.
 
-Design: docs/tmp/c8_3b_resumable_cold_backfill_design.md
+Design: docs/sprint_memos/004_closeout.md (C8.3B design drafts removed at Sprint 004 closeout).
 """
 
 from __future__ import annotations

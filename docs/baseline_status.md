@@ -1,7 +1,7 @@
 # Baseline status
 
 **Status:** Active  
-**Last recorded:** 2026-07-04 (C5 adjusted-liquid closeout)
+**Last recorded:** 2026-07-26 (Sprint 004 closeout gate)
 
 ---
 
@@ -19,10 +19,11 @@
 
 | Item | Value |
 |------|-------|
-| Command | `python -m pytest tests/ -q` |
-| Result | **335 passed** |
-| Duration | ~4.0s |
-| Date | 2026-07-04 (C5 subset; full suite count varies) |
+| Command | `& C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest` |
+| Result | **1321 passed**, 1 skipped |
+| Duration | ~31.7s |
+| Exit code | 0 |
+| Date | 2026-07-26 (Sprint 004 closeout) |
 
 ### C5 adjusted-liquid regression (no ORATS cache required)
 

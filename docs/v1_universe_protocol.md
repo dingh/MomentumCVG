@@ -1,7 +1,10 @@
 # V1 universe protocol
 
-**Status:** Active  
-**Last updated:** 2026-07-04 (C5 adjusted-liquid root referenced)
+**Status:** Active
+**Last updated:** 2026-07-26 (Sprint 004 closeout — production snapshot pointer)
+
+Accepted production input snapshot: **`e2c1f8fd44d72176`**
+(`C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886`; see [sprint_memos/004_closeout.md](sprint_memos/004_closeout.md)).
 
 ---
 

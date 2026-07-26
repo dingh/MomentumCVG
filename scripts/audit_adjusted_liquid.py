@@ -11,7 +11,7 @@ Usage:
         --splits C:/MomentumCVG_env/input/adjusted_liquid/splits_hist_liquid.parquet \\
         --ticker-universe C:/MomentumCVG_env/input/liquidity/liquid_tickers.csv \\
         --years 2020 \\
-        --report-path docs/tmp/c5_8_adjusted_liquid_audit_report.md
+        --report-path adjusted_liquid_audit_report.md
 """
 
 from __future__ import annotations

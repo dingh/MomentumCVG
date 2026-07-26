@@ -20,7 +20,7 @@ CLI argument parsing and lock acquisition/release remain in
 ``scripts/refresh_weekly_inputs.py``. There is no framework, DAG, plugin,
 receipt, or state-machine abstraction here — and no ``.failed`` lifecycle.
 
-Design: docs/tmp/c8_3b_resumable_cold_backfill_design.md
+Design: docs/sprint_memos/004_closeout.md (C8.3B design drafts removed at Sprint 004 closeout).
 """
 
 from __future__ import annotations

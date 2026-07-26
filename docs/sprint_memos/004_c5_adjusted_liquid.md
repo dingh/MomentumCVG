@@ -1,8 +1,8 @@
 # Sprint 004 — C5 adjusted-liquid split layer (closeout)
 
-**Status:** Closed — **C5 accepted**  
-**Closed:** 2026-07-04  
-**Design:** [docs/tmp/c5_split_adjustment_design_plan.md](../tmp/c5_split_adjustment_design_plan.md)  
+**Status:** Closed — **C5 accepted**
+**Closed:** 2026-07-04
+**Design:** temporary C5 design draft removed at Sprint 004 closeout (see git history); canonical closeout [004_closeout.md](004_closeout.md)
 **Repo commit (path wiring):** `0d2357381e373f217e21ef2213749a5880f195a9`
 
 ---
@@ -18,7 +18,7 @@ Scoped **split-adjusted option chains** for the C4 liquidity precompute universe
 | Split checkpoint | `.../splits_hist_liquid.checkpoint.parquet` | Sidecar from scoped fetch |
 | Central path constants | `src/data/paths.py` | `DEFAULT_ADJUSTED_LIQUID_ROOT`, legacy/raw aliases |
 | Output audit CLI | `scripts/audit_adjusted_liquid.py` | Full inventory + sampled math checks |
-| Downstream wiring report | `docs/tmp/c5_11a_downstream_path_wiring_report.md` | C5.11A |
+| Downstream wiring report | C5.11A (temporary report removed at Sprint 004 closeout; see git history) | C5.11A |
 
 **Not modified:** `C:/ORATS/data/ORATS_Adjusted` (legacy full-universe mirror), raw `ORATS_Data` ZIPs.
 
@@ -146,8 +146,8 @@ C5 only. Sprint 004 still open for **C6–C9** (surface audit, PIT harness, `ref
 | [repo_map.md](../repo_map.md) | External paths + data flow |
 | [v1_weekly_runbook.md](../v1_weekly_runbook.md) | Pipeline order, audit/repair commands |
 | [v1_universe_protocol.md](../v1_universe_protocol.md) | Raw liquidity vs adjusted chains |
-| [current_sprint.md](../agenda/current_sprint.md) | C5 ✓; C6–C9 remaining |
+| [current_sprint.md](../agenda/current_sprint.md) | C5 ✓ (historical); Sprint 004 later closed in [004_closeout.md](004_closeout.md) |
 | [c5_split_adjustment_design_plan.md](../tmp/c5_split_adjustment_design_plan.md) | Design (status: closed) |
 | [c5_11a_downstream_path_wiring_report.md](../tmp/c5_11a_downstream_path_wiring_report.md) | Default path wiring evidence |
 
-**Historical `docs/tmp/c5_*` run reports** are retained as evidence; superseded items (e.g. C5.9 path-default gap) are bannered, not rewritten.
+**Historical C5 run reports** under `docs/tmp/` were removed at Sprint 004 closeout (available in git history); superseded items (e.g. C5.9 path-default gap) were bannered, not rewritten.
