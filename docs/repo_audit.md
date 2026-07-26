@@ -1,6 +1,8 @@
 # Repo audit — Sprint 001
 
-**Status:** Reviewed by HD  
+> **Superseded PIT semantics:** Any `month_date <= trade_date` or per-ticker snapshot wording below reflects Sprint 001-era understanding. The accepted production rule is Sprint 004 C7: one global snapshot with `month_date < trade_date`. See [v1_universe_protocol.md](v1_universe_protocol.md) and [sprint_memos/004_c7_pit_universe.md](sprint_memos/004_c7_pit_universe.md).
+
+**Status:** Historical (Sprint 001) — PIT snapshot rule superseded by Sprint 004 C7
 **Date:** 2026-05-24  
 **Mode:** Audit  
 **Scope:** Surface-first v1 backtest path, especially precompute surface store + `SurfaceRunner` scaffold.

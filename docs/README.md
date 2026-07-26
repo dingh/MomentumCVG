@@ -21,14 +21,10 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | Document | Purpose | Last updated |
 |----------|---------|--------------|
 | [v1_spec_pins.md](v1_spec_pins.md) | Frozen v1 parameters and deferred decisions | 2026-05-23 |
-| [v1_universe_protocol.md](v1_universe_protocol.md) | Point-in-time liquidity universe rule (12-week rolling panel) | 2026-07-26 |
+| [v1_universe_protocol.md](v1_universe_protocol.md) | Point-in-time liquidity universe rule (global strict-prior snapshot; C7) | 2026-07-26 |
 | [v1_ops_model.md](v1_ops_model.md) | Trade volume and broker/manual threshold | 2026-05-23 |
 | [backtest_evaluation_protocol.md](backtest_evaluation_protocol.md) | Go/no-go windows, Sharpe, evaluation tiers | 2026-05-23 |
 | [repo_map.md](repo_map.md) | Repository layout and data flow | 2026-07-26 |
-| [repo_audit.md](repo_audit.md) | Sprint 001 surface pipeline gap audit | 2026-05-24 |
-| [correctness_audit.md](correctness_audit.md) | Sprint 001 test inventory and correctness gaps | 2026-05-24 |
-| [surface_runner_data_flow.md](surface_runner_data_flow.md) | Sprint 001 Session A.1 SurfaceRunner data-flow map | 2026-05-25 |
-| [surface_runner_reading_guide.md](surface_runner_reading_guide.md) | Guided code read-through (Sprint 001) | 2026-05-27 |
 | [surface_engine_data_contract.md](surface_engine_data_contract.md) | Sprint 002 per-component I/O contracts (canonical) | 2026-06-20 |
 | [surface_engine_data_flow.md](surface_engine_data_flow.md) | Sprint 002 flow diagram + box status | 2026-06-20 |
 | [surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md) | Sprint 002 component verification plan | 2026-06-20 |
@@ -38,6 +34,17 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 005 — `SCOPE UNDER REVIEW` | 2026-07-26 |
 | [v1_weekly_runbook.md](v1_weekly_runbook.md) | Stage A producer / repair notes (snapshot-first handoff) | 2026-07-26 |
 | [known_bugs.md](known_bugs.md) | Open bugs and spec drift (fix deferred) | 2026-06-14 |
+
+## Historical / superseded (Sprint 001)
+
+These remain useful for Sprint 001 gap history. They are **not** active specifications. PIT snapshot wording (`month_date <= trade_date`) inside them is superseded by Sprint 004 C7 — use [v1_universe_protocol.md](v1_universe_protocol.md).
+
+| Document | Purpose | Date |
+|----------|---------|------|
+| [repo_audit.md](repo_audit.md) | Sprint 001 surface pipeline gap audit | 2026-05-24 |
+| [correctness_audit.md](correctness_audit.md) | Sprint 001 test inventory and correctness gaps | 2026-05-24 |
+| [surface_runner_data_flow.md](surface_runner_data_flow.md) | Sprint 001 Session A.1 SurfaceRunner data-flow map | 2026-05-25 |
+| [surface_runner_reading_guide.md](surface_runner_reading_guide.md) | Guided code read-through (Sprint 001) | 2026-05-27 |
 
 ## Decisions
 

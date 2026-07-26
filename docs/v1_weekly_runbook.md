@@ -126,7 +126,7 @@ Prefer the published snapshot + manifest over a mutable cache:
 - [ ] Manifest `snapshot_id` matches the intended handoff (`e2c1f8fd44d72176` for current production)
 - [ ] `production_accepted=true` and `params.scope=full` for production use
 - [ ] Surface consumers filter `surface_valid=True`
-- [ ] PIT universe uses panel rows with `month_date <= t` only
+- [ ] PIT universe uses one global snapshot with `month_date < t` (same snapshot for all tickers; never `<= t`)
 - [ ] No A4/feature validation expected until Sprint 005 scope is accepted
 
 ---

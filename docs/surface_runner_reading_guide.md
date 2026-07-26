@@ -1,6 +1,8 @@
 # SurfaceRunner reading guide
 
-**Status:** Active  
+> **Superseded PIT semantics:** Any `month_date <= trade_date` wording below reflects Sprint 001-era understanding. The accepted production rule is Sprint 004 C7: one global snapshot with `month_date < trade_date`. See [v1_universe_protocol.md](v1_universe_protocol.md) and [sprint_memos/004_c7_pit_universe.md](sprint_memos/004_c7_pit_universe.md).
+
+**Status:** Historical (Sprint 001) — PIT snapshot rule superseded by Sprint 004 C7
 **Created:** Sprint 001 closeout (2026-05-27)  
 **Audience:** HD — read before closing Sprint 001 or starting Sprint 002 build  
 **Estimated time:** 2–3 hours (focused); can split across two sessions

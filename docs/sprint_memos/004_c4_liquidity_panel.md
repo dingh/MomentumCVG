@@ -93,7 +93,9 @@ Do **not** pass `--spread-bot-pct` unless intentionally changing universe params
 
 ## Remaining before Sprint 004 full closeout
 
-C4 only. Sprint 004 still open for **C6–C9** (surface audit, PIT harness, `validate`, runbook finalization, CLI plan cleanup).
+*(Status at C4 acceptance, 2026-06-29 — not current sprint status. Sprint 004 is now closed; see [004_closeout.md](004_closeout.md).)*
+
+C4 only. At that time Sprint 004 remained open for **C6–C9** (surface audit, PIT harness, `validate`, runbook finalization, CLI plan cleanup).
 
 ---
 

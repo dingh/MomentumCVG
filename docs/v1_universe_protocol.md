@@ -1,10 +1,12 @@
 # V1 universe protocol
 
 **Status:** Active
-**Last updated:** 2026-07-26 (Sprint 004 closeout — production snapshot pointer)
+**Last updated:** 2026-07-26 (PIT snapshot semantics aligned to Sprint 004 C7)
 
 Accepted production input snapshot: **`e2c1f8fd44d72176`**
 (`C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886`; see [sprint_memos/004_closeout.md](sprint_memos/004_closeout.md)).
+
+Canonical PIT closeout: [sprint_memos/004_c7_pit_universe.md](sprint_memos/004_c7_pit_universe.md).
 
 ---
 
@@ -16,14 +18,22 @@ Build a **point-in-time tradable universe** each rebalance week from a broad ORA
 
 ## Rule (v1)
 
-At each **weekly rebalance date** `t`:
+At each **weekly rebalance / trade date** `t`:
 
 1. **Load liquidity panel** (`ticker_liquidity_panel.parquet`) built by `scripts/build_liquidity_panel.py`.
-2. **Point-in-time lookup:** use the most recent `month_date <= t` for each ticker (`month_date` is the **week-end snapshot date**; legacy column name retained for step1 compatibility).
-3. **Eligible pool:** tickers with `has_valid_atm_pair == True` on that snapshot (≥3 of last 12 weeks with at least one valid daily ATM quote week).
-4. **Rank** eligible tickers on `atm_straddle_dollar_vol` (12-week rolling average straddle bid×volume).
-5. **Select top 20%** of eligible tickers → **tradable universe for week t**.
-6. **Signals and ranking** for momentum/CVG run **only within** this tradable universe.
+2. **Select one global snapshot strictly before `t`:**
+
+   ```text
+   snapshot_date = max(month_date where month_date < t)
+   ```
+
+   (`month_date` is the week-end snapshot date; legacy column name retained for step1 compatibility.)
+   Same-day and future snapshots are prohibited. If no prior snapshot exists, the universe is empty.
+3. **Read ticker membership from that snapshot only** — every ticker evaluated on trade date `t` uses the same `snapshot_date`. Do **not** resolve a different snapshot independently per ticker.
+4. **Eligible pool:** tickers with `has_valid_atm_pair == True` on that snapshot (≥3 of last 12 weeks with at least one valid daily ATM quote week).
+5. **Rank** eligible tickers on `atm_straddle_dollar_vol` (12-week rolling average straddle bid×volume) on that cross-section.
+6. **Select top 20%** of eligible tickers → **tradable universe for week t**.
+7. **Signals and ranking** for momentum/CVG run **only within** this tradable universe.
 
 ---
 
@@ -81,8 +91,8 @@ Producer and repair notes: [v1_weekly_runbook.md](v1_weekly_runbook.md). Accepte
 
 ## Verification requirements (before trusting backtest)
 
-- [ ] Universe at date `t` uses only panel rows with `month_date <= t`
-- [ ] Top 20% is computed on cross-section at `t`, not global future data
+- [ ] Universe at date `t` uses one global snapshot with `month_date < t` (never `<= t`, never per-ticker)
+- [ ] Top 20% is computed on that prior snapshot's cross-section, not future panel rows
 - [ ] Signal features at `t` use only data available at `t`
 - [ ] Integration smoke: same `t` reproduces same universe from saved inputs
 
