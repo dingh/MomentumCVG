@@ -29,9 +29,10 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [surface_engine_data_flow.md](surface_engine_data_flow.md) | Sprint 002 flow diagram + box status | 2026-06-20 |
 | [surface_engine_evaluation_plan.md](surface_engine_evaluation_plan.md) | Sprint 002 component verification plan | 2026-06-20 |
 | [surface_engine_portfolio_metrics_design.md](surface_engine_portfolio_metrics_design.md) | S5/S8 portfolio & metrics design (Accepted; built Sprint 003) | 2026-06-20 |
+| [surface_straddle_observation_transform_design.md](surface_straddle_observation_transform_design.md) | Sprint 005 D2 surface → straddle observation transform (design of record) | 2026-08-01 |
 | [development_workflow.md](development_workflow.md) | Human + agent sprint workflow; roadmap 004–008 | 2026-07-26 |
 | [baseline_status.md](baseline_status.md) | Test and smoke-command baseline | 2026-07-04 |
-| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 005 — `SCOPE UNDER REVIEW` | 2026-07-26 |
+| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 005 — `ACCEPTED`, Build mode | 2026-08-01 |
 | [v1_weekly_runbook.md](v1_weekly_runbook.md) | Stage A producer / repair notes (snapshot-first handoff) | 2026-07-26 |
 | [known_bugs.md](known_bugs.md) | Open bugs and spec drift (fix deferred) | 2026-06-14 |
 
