@@ -45,11 +45,12 @@ Defer unless the answer involves incorrect feature values, leakage, broken linea
 **Areas:** `src/features/momentum_calculator.py`, `cvg_calculator.py`, existing unit tests; short audit note.  
 **Accept when:** Those decisions are explicit and settled; focused production-path cases pass on D2 observations; paper differences from weekly/project windows are not treated as defects.
 
-### D2 — Canonical surface → straddle observation transform
+### D2 — Canonical surface → straddle observation transform — `ACCEPTED`
 **Produces:** One full-history weekly straddle observation table that preserves exactly the complete accepted A1 `(ticker, entry_date)` key grid (no duplicates, no drop/filter of keys). Populate economics from valid A1/A2 rows; retain unavailable/invalid keys as rows with null economic fields and a missingness reason. Do not substitute another week or strike. Simple surface-to-straddle builder only—Momentum windows and CVG rules do not affect D2. Preserve `realized_volatility` and `entry_iv`; define `vol_gap = realized_volatility - entry_iv`. Also carry `return_pct` (and related economics) when available.  
 **Why / 004→006:** Closeout path is Surface → straddle → features; chain history would diverge from the trusted surface. Full key grid keeps missingness explicit for D1/D4.  
 **Areas:** Thin transform via `build_straddle_from_surface` / surface settlement—not a `refresh_weekly_inputs.py` stage.  
-**Accept when:** One reproducible, snapshot-lineaged straddle history matches the A1 key grid 1:1; coverage/missingness is measurable without collapsing invalid keys.
+**Accept when:** One reproducible, snapshot-lineaged straddle history matches the A1 key grid 1:1; coverage/missingness is measurable without collapsing invalid keys.  
+**Status:** Accepted 2026-08-01. Artifact at `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/` (lineage `repo_sha` `6f0d570`); design § 11.2 checks A1–A10 all pass. Code: `d0c8e9d` + publication safeguards `6f0d570`.
 
 ### D3 — Standalone full-history feature backfill script
 **Produces:** `scripts/backfill_features.py` that reads the accepted snapshot, uses D2, applies the explicit versioned config from D1, and emits the frozen 281-window set.  
@@ -73,8 +74,8 @@ Defer unless the answer involves incorrect feature values, leakage, broken linea
 
 ## 4. Rough dependency-aware execution order
 
-1. **D2** — Surface→straddle transform (blocks all feature work; audit needs real observations)  
-2. **D1** — Spec + bounded Momentum/CVG audit; settle decisions before full emit  
+1. ~~**D2** — Surface→straddle transform~~ **done**  
+2. **D1** — Spec + bounded Momentum/CVG audit; settle decisions before full emit *(next)*  
 3. **D3** — Standalone backfill wired to D2 + versioned config + calculators  
 4. **D4** — Full 281-window emit + coverage/lineage  
 5. **D5** — Consumer smoke + acceptance evidence  
@@ -86,7 +87,8 @@ Prefer small literal tests and one successful full emit over repeated infrastruc
 ## 5. Definition of done
 
 - [ ] D1–D5 done under the blocker test  
-- [ ] Straddle history preserves the full accepted A1 key grid; features lineaged to the accepted snapshot (not mutable `cache/` / `input/` stand-ins)  
+- [x] Straddle history preserves the full accepted A1 key grid; features lineaged to the accepted snapshot (not mutable `cache/` / `input/` stand-ins) — D2 done; feature lineage still pending D3/D4  
+
 - [ ] Frozen 281-window grid in `SurfaceRunner`-consumable form with `momentum_count` and `cvg_count`  
 - [ ] D1 decisions settled; focused production-path Momentum/CVG cases pass (no second implementation)  
 - [ ] PIT: contributing straddles expire before the feature date  
@@ -112,3 +114,4 @@ Prefer small literal tests and one successful full emit over repeated infrastruc
 | 2026-07-26 | Execution order: D2 (surface→straddle) before D1 (feature audit) |
 | 2026-07-26 | Surgical corrections: full A1 key grid; D2 economics/`vol_gap`; versioned backfill config; D1 settle list; counts + PIT expiry |
 | 2026-08-01 | Sprint 005 scope accepted; mode set to Build. D2 implementation authorized against the reviewed design [`surface_straddle_observation_transform_design.md`](../surface_straddle_observation_transform_design.md) (rev 3) |
+| 2026-08-01 | **D2 accepted.** Canonical straddle observations published under `derived/e2c1f8fd44d72176/`; receipt `repo_sha` `6f0d570`; design § 11.2 A1–A10 pass. Next: D1 (feature spec + bounded Momentum/CVG audit) |
