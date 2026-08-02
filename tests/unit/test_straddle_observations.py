@@ -20,8 +20,10 @@ self-contained.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -66,6 +68,8 @@ EXPECTED_ENTRY_IV = 0.20
 EXPECTED_VOL_GAP = REALIZED_VOL - EXPECTED_ENTRY_IV
 
 TOLERANCE = 1e-12
+FAKE_REPO_SHA = "a1b2c3d4" + "0" * 32
+CLI_PATH = Path(__file__).resolve().parents[2] / "scripts" / "build_straddle_observations.py"
 
 
 # =============================================================================
@@ -541,12 +545,10 @@ def test_frozen_rules_are_not_overridable():
     """T24: the builder takes no economic-policy argument and the CLI has no flag."""
     import inspect
     import re
-    from pathlib import Path
 
     assert set(inspect.signature(build_observations).parameters) == {"joined"}
 
-    cli_path = Path(__file__).resolve().parents[2] / "scripts" / "build_straddle_observations.py"
-    cli_flags = set(re.findall(r'add_argument\(\s*"(--[a-z-]+)"', cli_path.read_text(encoding="utf-8")))
+    cli_flags = set(re.findall(r'add_argument\(\s*"(--[a-z-]+)"', CLI_PATH.read_text(encoding="utf-8")))
     assert cli_flags == {"--snapshot-root", "--output-root", "--dry-run"}
 
     assert so.SPREAD_INELIGIBLE_VOLATILITY_RULE == "preserve"
@@ -647,6 +649,26 @@ def snapshot_root(tmp_path):
     return root
 
 
+@pytest.fixture(autouse=True)
+def committed_repo(monkeypatch):
+    """Publication demands a clean, committed tree; mock that git state.
+
+    Only the git plumbing is mocked, so every publishing test still runs the
+    real ``resolve_publication_repo_sha`` guard.
+    """
+    monkeypatch.setattr(so, "_git_output", _fake_git(FAKE_REPO_SHA, ""))
+    return FAKE_REPO_SHA
+
+
+def _fake_git(head: str, pending: str):
+    """Return a ``_git_output`` stand-in reporting one HEAD and tree state."""
+
+    def run(*args: str) -> str:
+        return {("rev-parse", "HEAD"): head, ("status", "--porcelain"): pending}[args]
+
+    return run
+
+
 def _run_pipeline(root, destination):
     """Resolve, load, transform, and publish — the CLI's production path."""
     inputs = resolve_surface_inputs(root)
@@ -658,7 +680,6 @@ def _run_pipeline(root, destination):
         destination_dir=destination,
         meta_row_count=len(meta_df),
         quote_row_count=len(quotes_df),
-        repo_sha="0" * 40,
     )
 
 
@@ -812,7 +833,6 @@ def test_refuses_to_overwrite_divergent_artifact(snapshot_root, tmp_path):
             destination_dir=destination,
             meta_row_count=8,
             quote_row_count=12,
-            repo_sha="0" * 40,
         )
 
     divergent = observations.copy()
@@ -847,13 +867,13 @@ def test_refuses_rerun_when_published_artifact_is_corrupt(snapshot_root, tmp_pat
             destination_dir=destination,
             meta_row_count=8,
             quote_row_count=12,
-            repo_sha="0" * 40,
         )
 
 
 def test_publication_is_atomic_and_receipt_last(snapshot_root, tmp_path, monkeypatch):
     """T26: a failure before the receipt leaves no receipt at the canonical path."""
     destination = tmp_path / "derived" / SNAPSHOT_ID
+    write_receipt = so._write_json_atomic
 
     def explode(payload, target):
         raise OSError("simulated crash before the receipt is published")
@@ -871,12 +891,105 @@ def test_publication_is_atomic_and_receipt_last(snapshot_root, tmp_path, monkeyp
     assert not list(destination.glob("*.tmp-*"))
 
     # With the receipt missing, the next run republishes rather than no-opping.
-    monkeypatch.undo()
+    # Only the receipt writer is restored; undoing every patch would also drop
+    # the mocked git state that publication requires.
+    monkeypatch.setattr(so, "_write_json_atomic", write_receipt)
     _, result = _run_pipeline(snapshot_root, destination)
     assert result.written is True
     assert result.receipt["transform_config"]["transform_config_version"] == (
         TRANSFORM_CONFIG_VERSION
     )
+
+
+# =============================================================================
+# Publication safety — repository identity and snapshot immutability
+# =============================================================================
+
+
+def _unavailable_git(*args: str) -> str:
+    raise OSError("git executable not found")
+
+
+def test_receipt_records_the_committed_revision(snapshot_root, tmp_path):
+    """A published receipt names the one commit its artifact came from."""
+    _, result = _run_pipeline(snapshot_root, tmp_path / "derived" / SNAPSHOT_ID)
+    assert result.receipt["repo_sha"] == FAKE_REPO_SHA
+
+
+@pytest.mark.parametrize(
+    ("git_state", "expected_fragment"),
+    [
+        (_fake_git(FAKE_REPO_SHA, " M src/features/straddle_observations.py"), "uncommitted"),
+        (_fake_git(FAKE_REPO_SHA, "?? scripts/unstaged_change.py"), "uncommitted"),
+        (_fake_git("abc123", ""), "not a 40-character"),
+        (_fake_git(FAKE_REPO_SHA.upper(), ""), "not a 40-character"),
+        (_fake_git("", ""), "not a 40-character"),
+        (_unavailable_git, "cannot determine"),
+    ],
+)
+def test_publication_requires_a_committed_repository(
+    snapshot_root, tmp_path, monkeypatch, git_state, expected_fragment
+):
+    """An artifact that cannot be attributed to one commit is never written."""
+    monkeypatch.setattr(so, "_git_output", git_state)
+    destination = tmp_path / "derived" / SNAPSHOT_ID
+
+    with pytest.raises(StraddleObservationStructuralError, match=expected_fragment):
+        _run_pipeline(snapshot_root, destination)
+
+    # The guard runs before the destination is created, so nothing exists to
+    # half-publish.
+    assert not destination.exists()
+
+
+def test_dry_run_is_allowed_from_a_dirty_tree(snapshot_root, tmp_path, monkeypatch):
+    """--dry-run writes nothing, so it does not need a committed revision."""
+    spec = importlib.util.spec_from_file_location("build_straddle_observations", CLI_PATH)
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
+    monkeypatch.setattr(
+        so, "_git_output", _fake_git(FAKE_REPO_SHA, " M src/features/straddle_observations.py")
+    )
+    output_root = tmp_path / "derived"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "build_straddle_observations.py",
+            "--snapshot-root",
+            str(snapshot_root),
+            "--output-root",
+            str(output_root),
+            "--dry-run",
+        ],
+    )
+
+    assert cli.main() == 0
+    assert not output_root.exists()
+
+
+@pytest.mark.parametrize("relative_destination", [None, "derived", "cache/surface/derived"])
+def test_rejects_destination_inside_the_snapshot(snapshot_root, relative_destination):
+    """Sprint 004's snapshot is immutable: nothing may be written into it."""
+    destination = (
+        snapshot_root if relative_destination is None else snapshot_root / relative_destination
+    )
+
+    with pytest.raises(StraddleObservationStructuralError, match="inside the accepted snapshot"):
+        _run_pipeline(snapshot_root, destination)
+
+    assert not (destination / OBSERVATIONS_FILENAME).exists()
+    assert not (destination / LINEAGE_FILENAME).exists()
+
+
+def test_accepts_a_destination_outside_the_snapshot(snapshot_root, tmp_path):
+    """A sibling derived root is the normal case and stays allowed."""
+    destination = snapshot_root.parent / "derived" / SNAPSHOT_ID
+    _, result = _run_pipeline(snapshot_root, destination)
+
+    assert result.written is True
+    assert result.observations_path.is_file()
+    assert tmp_path in result.observations_path.parents
 
 
 def test_join_ignores_non_body_quotes():

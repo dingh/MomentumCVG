@@ -1,8 +1,8 @@
 # Surface → straddle observation transform — implementation design (Sprint 005 D2)
 
-**Status:** `REVIEWED — implementation-ready; Build remains blocked until the Sprint 005 agenda is committed as accepted`
+**Status:** `REVIEWED — implementation-ready; Sprint 005 accepted in Build mode on 2026-08-01, so implementation is authorized`
 **Author role:** design for a later implementation task
-**Sprint:** 005, proposed deliverable D2 (the reviewed agenda update must be committed before Build mode)
+**Sprint:** 005, deliverable D2
 **Repository commit reviewed:** `236c7991912d45d3125bd32428ec8ace8dd78535`
 **Input reviewed:** accepted snapshot `e2c1f8fd44d72176` / build `20260724T045049097520Z_40b16886`
 **Downstream consumers:** `MomentumCalculator`, `CVGCalculator` (Sprint 005 D1/D3/D4), `SurfaceRunner` (D5, indirectly)

@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import uuid
 from dataclasses import dataclass
@@ -176,6 +177,9 @@ _FLOAT_COLUMNS = (
 DEFAULT_DERIVED_ROOT = Path("C:/MomentumCVG_env/derived")
 OBSERVATIONS_FILENAME = "straddle_observations_weekly.parquet"
 LINEAGE_FILENAME = "straddle_observations_weekly.lineage.json"
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_COMMIT_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 
 _META_COLUMNS = [
     "ticker",
@@ -825,18 +829,46 @@ def content_digest(observations: pd.DataFrame) -> str:
     return hashlib.sha256(hashed.to_numpy().tobytes()).hexdigest()
 
 
-def _current_repo_sha() -> str | None:
+def _git_output(*args: str) -> str:
+    """Run a read-only git command in the repository root and return its output."""
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.strip()
+
+
+def resolve_publication_repo_sha() -> str:
+    """Return the single committed revision a published artifact belongs to.
+
+    The receipt's ``repo_sha`` is only lineage if the code that produced the
+    artifact is exactly one commit. A modified or untracked working tree can
+    produce output that no revision reproduces, so publication refuses to run
+    from one; ``--dry-run`` is unaffected because it writes nothing.
+    """
     try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=Path(__file__).resolve().parents[2],
-            capture_output=True,
-            text=True,
-            check=True,
+        head = _git_output("rev-parse", "HEAD")
+        pending = _git_output("status", "--porcelain")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise StraddleObservationStructuralError(
+            "cannot determine the repository revision, so a published artifact "
+            f"could not be attributed to one commit: {exc}"
+        ) from exc
+
+    if not _COMMIT_SHA_PATTERN.fullmatch(head):
+        raise StraddleObservationStructuralError(
+            f"git HEAD resolved to {head!r}, which is not a 40-character commit "
+            "sha; refusing to publish an artifact that cannot be attributed."
         )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return completed.stdout.strip() or None
+    if pending:
+        raise StraddleObservationStructuralError(
+            "refusing to publish from a working tree with uncommitted changes; "
+            f"commit or stash them first (HEAD {head}):\n{pending}"
+        )
+    return head
 
 
 def build_lineage_receipt(
@@ -847,7 +879,7 @@ def build_lineage_receipt(
     quote_row_count: int,
     observations_digest: str,
     file_sha256: str,
-    repo_sha: str | None,
+    repo_sha: str,
     created_at_utc: datetime | None = None,
 ) -> dict[str, Any]:
     """Assemble the lineage receipt, modeled on the snapshot manifest idiom."""
@@ -902,6 +934,27 @@ def derived_dir_for_snapshot(snapshot_id: str, output_root: Path | str | None = 
     """Return ``<output_root>/<snapshot_id>``, defaulting to the derived root."""
     root = Path(output_root) if output_root is not None else DEFAULT_DERIVED_ROOT
     return root / snapshot_id
+
+
+def _reject_destination_inside_snapshot(snapshot_root: Path, destination: Path) -> None:
+    """Keep the derived artifact out of the immutable accepted snapshot.
+
+    ``--output-root`` is operator-supplied, so the accepted snapshot is one
+    mistyped path away from being written into. Both paths are resolved first
+    because a relative root or a ``..`` segment can name the snapshot without
+    looking like it.
+    """
+    resolved_snapshot = Path(snapshot_root).resolve()
+    resolved_destination = Path(destination).resolve()
+    if (
+        resolved_destination == resolved_snapshot
+        or resolved_snapshot in resolved_destination.parents
+    ):
+        raise StraddleObservationStructuralError(
+            f"refusing to write inside the accepted snapshot: destination "
+            f"{resolved_destination} is at or below {resolved_snapshot}. "
+            "Choose an output root outside the snapshot."
+        )
 
 
 def _write_parquet_atomic(observations: pd.DataFrame, target: Path) -> str:
@@ -978,7 +1031,6 @@ def publish_observations(
     destination_dir: Path,
     meta_row_count: int,
     quote_row_count: int,
-    repo_sha: str | None = None,
 ) -> PublicationResult:
     """Publish the Parquet atomically, then the lineage receipt last.
 
@@ -986,8 +1038,14 @@ def publish_observations(
     receipt at the canonical path always implies a complete artifact beside it.
     A killed run can leave a stray temp file but never a truncated Parquet or a
     receipt describing an artifact that was not fully written.
+
+    Both safety guards run here rather than in the CLI, before the destination
+    directory is even created, so no caller can reach a write without them.
     """
     destination = Path(destination_dir)
+    _reject_destination_inside_snapshot(inputs.snapshot_root, destination)
+    repo_sha = resolve_publication_repo_sha()
+
     destination.mkdir(parents=True, exist_ok=True)
     observations_path = destination / OBSERVATIONS_FILENAME
     lineage_path = destination / LINEAGE_FILENAME
@@ -1010,7 +1068,7 @@ def publish_observations(
         quote_row_count=quote_row_count,
         observations_digest=observations_digest,
         file_sha256=file_sha256,
-        repo_sha=repo_sha if repo_sha is not None else _current_repo_sha(),
+        repo_sha=repo_sha,
     )
     _write_json_atomic(receipt, lineage_path)
     return PublicationResult(
