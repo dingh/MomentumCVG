@@ -1,0 +1,64 @@
+{
+  "spec_version": "feature_backfill_v1",
+  "spec_id": "sprint005_d1",
+  "description": "Weekly Momentum/CVG feature semantics for Sprint 005 D3/D4",
+  "input_schema": {
+    "artifact_name": "straddle_observations_weekly",
+    "required_columns": [
+      "ticker",
+      "entry_date",
+      "return_pct",
+      "entry_iv",
+      "realized_volatility",
+      "vol_gap",
+      "expiry_date"
+    ]
+  },
+  "windows": {
+    "min_lag_start": 2,
+    "min_lag_end": 24,
+    "max_lag_start": 6,
+    "max_lag_end": 60,
+    "step": 2,
+    "require_max_gt_min": true,
+    "order": "max_lag_outer_min_lag_inner",
+    "expected_count": 281
+  },
+  "baseline_window": {
+    "max_lag": 42,
+    "min_lag": 8
+  },
+  "momentum": {
+    "min_periods": 1,
+    "statistic": "simple_mean_return_pct",
+    "return_units": "percentage_points"
+  },
+  "cvg": {
+    "min_periods": 1,
+    "vol_gap_rule": "realized_volatility_minus_entry_iv",
+    "volatility_units": "annualized_decimal",
+    "first_cross_section": "all_finite_vol_gap_on_observation_date_complete_reference_panel",
+    "cumulative_gap": "sum_raw_vol_gap_over_inclusive_window",
+    "second_cross_section": "all_finite_raw_cumulative_gaps_on_feature_date_complete_reference_panel",
+    "adjusted_gaps_used_for": "positive_negative_proportions_only",
+    "zero_adjusted_gap": "neutral",
+    "zero_cgap": {
+      "dvg": 0.0,
+      "cvg": 1.0
+    },
+    "cross_section_timing": "calculate_before_any_eligibility_or_liquidity_filter"
+  },
+  "output_columns_per_window": [
+    "ticker",
+    "date",
+    "mom_{max}_{min}_mean",
+    "mom_{max}_{min}_count",
+    "cvg_{max}_{min}",
+    "cvg_count_{max}_{min}"
+  ],
+  "notes": {
+    "calculator_may_emit_diagnostics": "sum/std/dvg/cgap/pct_* allowed upstream; D3/D4 required publish set is output_columns_per_window",
+    "no_feature_eligibility_in_sprint005": true,
+    "lineage_not_in_this_file": "D3 runtime args and publication receipts record observation path, snapshot_id, digests, and repo SHA"
+  }
+}
