@@ -187,25 +187,20 @@ def test_g2_spec_is_sole_authority_for_windows_min_periods_baseline_and_columns(
 
 
 def test_g2_grid_generation_uses_explicit_spec_bounds_not_function_defaults():
-    """All bounds come from the spec; helper defaults are non-authoritative."""
+    """All bounds come from the versioned spec; helper defaults are not consulted."""
     spec = _load_spec()
     windows_cfg = spec["windows"]
     generate = _load_generate_momentum_windows()
 
-    # Explicit call matching the frozen contract.
+    # Every bound is supplied explicitly from the frozen contract.
     from_spec = generate(
         short_range=(windows_cfg["min_lag_start"], windows_cfg["min_lag_end"]),
         long_range=(windows_cfg["max_lag_start"], windows_cfg["max_lag_end"]),
         step=windows_cfg["step"],
     )
     assert len(from_spec) == windows_cfg["expected_count"] == 281
-
-    # Function defaults (long_range starts at 12) yield a different grid.
-    from_defaults = generate()
-    assert len(from_defaults) != 281
-    assert len(from_defaults) == 272
-
-    # Spec authority must not silently inherit the non-281 default grid.
-    assert from_spec != from_defaults
+    assert len(set(from_spec)) == 281
     assert from_spec[0] == (6, 2)
-    assert from_defaults[0] == (12, 2)
+    assert from_spec[-1] == (60, 24)
+    assert (42, 8) in from_spec
+    assert all(max_lag > min_lag for max_lag, min_lag in from_spec)
