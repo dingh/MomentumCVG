@@ -32,7 +32,7 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [surface_straddle_observation_transform_design.md](surface_straddle_observation_transform_design.md) | Sprint 005 D2 surface → straddle observation transform (design of record) | 2026-08-01 |
 | [development_workflow.md](development_workflow.md) | Human + agent sprint workflow; roadmap 004–008 | 2026-07-26 |
 | [baseline_status.md](baseline_status.md) | Test and smoke-command baseline | 2026-07-04 |
-| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 005 — `ACCEPTED`, Build mode | 2026-08-01 |
+| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 005 — `ACCEPTED`, Build mode; D1 accepted, D3 next | 2026-08-03 |
 | [v1_weekly_runbook.md](v1_weekly_runbook.md) | Stage A producer / repair notes (snapshot-first handoff) | 2026-07-26 |
 | [known_bugs.md](known_bugs.md) | Open bugs and spec drift (fix deferred) | 2026-06-14 |
 
@@ -69,6 +69,7 @@ These remain useful for Sprint 001 gap history. They are **not** active specific
 | 004 (C7) | [PIT universe closeout](sprint_memos/004_c7_pit_universe.md) _(C7 closed 2026-07-12)_ |
 | 004 (C8.4) | [Bounded snapshot evidence closeout](sprint_memos/004_c8_4_bounded_evidence.md) _(C8.4 closed 2026-07-22)_ |
 | 004 | [Sprint 004 closeout](sprint_memos/004_closeout.md) _(CLOSED 2026-07-26 — accepted with documented limitations)_ |
+| 005 (D1) | [Feature correctness audit](sprint_memos/005_feature_correctness_audit.md) _(D1 accepted 2026-08-03)_ |
 | — | [Week 0 review notes](sprint_memos/week0_review_notes.md) _(archived from agenda)_ |
 
 ## Related (repo root)
