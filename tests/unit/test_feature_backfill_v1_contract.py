@@ -1,15 +1,15 @@
 """
 Sprint 005 D1 — feature_backfill_v1 contract tests
-(G1–G6, G8–G10, G12–G18 unit portion, G16–G17).
+(G1–G18 unit portion).
 
 G1–G2 freeze the versioned window/config contract.
 G3–G6 lock weekly Momentum inclusive-lag, null-slot, and partial-history semantics.
+G7 / G11 freeze zero-adjusted CVG gaps as neutral (in count, in neither sign numerator).
 G8–G10 / G12–G15 lock CVG cross-sectional cumulative, sign-branch, sparse,
 and independent-count semantics (G18 unit range asserts included).
 G16–G17 prove synthetic PIT expiry-before-feature-date for min_lag=2 and baseline 42:8.
 
-G7/G11 (zero-neutral) are intentionally deferred. Configuration- and synthetic-panel
-only: no D2 artifact, no Windows data paths.
+Configuration- and synthetic-panel only: no D2 artifact, no Windows data paths.
 """
 
 from __future__ import annotations
@@ -382,6 +382,107 @@ def test_g4_g17_baseline_42_8_inclusive_endpoints_and_pit():
 
     contributing = history.iloc[contributing_positions]
     assert (contributing["expiry_date"] < feature_date).all()
+
+
+# ---------------------------------------------------------------------------
+# G7 — First cross-sectional median; zero adjusted gap is neutral
+# ---------------------------------------------------------------------------
+
+
+def test_g7_first_cross_section_median_and_neutral_zero():
+    """Test-only window (4, 0) — not part of the production 281-window grid."""
+    spec = _load_spec()
+    min_periods = _cvg_min_periods(spec)
+    assert min_periods == 1
+    assert spec["cvg"]["zero_adjusted_gap"] == "neutral"
+
+    d1 = pd.Timestamp("2020-01-03")
+    d2 = pd.Timestamp("2020-01-10")
+    d3 = pd.Timestamp("2020-01-17")
+    rows = []
+    for dt in (d1, d2, d3):
+        rows.extend(
+            [
+                {"ticker": "AAPL", "entry_date": dt, "vol_gap": 2.0},
+                {"ticker": "TSLA", "entry_date": dt, "vol_gap": 6.0},
+                {"ticker": "ADP", "entry_date": dt, "vol_gap": 10.0},
+            ]
+        )
+    history = pd.DataFrame(rows)
+    # Date median = 6 → adjusted gaps AAPL=-4, TSLA=0, ADP=+4.
+    assert float(np.median([2.0, 6.0, 10.0])) == 6.0
+
+    calc = CVGCalculator(windows=[(4, 0)], min_periods=min_periods)
+    result = calc.calculate_bulk(
+        FeatureDataContext(straddle_history=history),
+        start_date=d1,
+        end_date=d3,
+    )
+    aapl = result.loc[(result["ticker"] == "AAPL") & (result["date"] == d3)].iloc[0]
+    tsla = result.loc[(result["ticker"] == "TSLA") & (result["date"] == d3)].iloc[0]
+    adp = result.loc[(result["ticker"] == "ADP") & (result["date"] == d3)].iloc[0]
+
+    assert aapl["cvg_count_4_0"] == 3
+    assert aapl["pct_pos_4_0"] == pytest.approx(0.0)
+    assert aapl["pct_neg_4_0"] == pytest.approx(1.0)
+
+    assert adp["cvg_count_4_0"] == 3
+    assert adp["pct_pos_4_0"] == pytest.approx(1.0)
+    assert adp["pct_neg_4_0"] == pytest.approx(0.0)
+
+    # Zero remains in count but enters neither sign numerator.
+    assert tsla["cvg_count_4_0"] == 3
+    assert tsla["pct_pos_4_0"] == pytest.approx(0.0)
+    assert tsla["pct_neg_4_0"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# G11 — Mixed negative, zero, and positive adjusted gaps
+# ---------------------------------------------------------------------------
+
+
+def test_g11_zero_adjusted_gap_is_neutral_in_mixed_window():
+    """Test-only window (3, 0) — not part of the production 281-window grid."""
+    spec = _load_spec()
+    min_periods = _cvg_min_periods(spec)
+    assert min_periods == 1
+    assert spec["cvg"]["zero_adjusted_gap"] == "neutral"
+
+    d1 = pd.Timestamp("2020-01-03")
+    d2 = pd.Timestamp("2020-01-10")
+    d3 = pd.Timestamp("2020-01-17")
+    history = pd.DataFrame(
+        [
+            {"ticker": "target", "entry_date": d1, "vol_gap": 5.0},
+            {"ticker": "low", "entry_date": d1, "vol_gap": 4.0},
+            {"ticker": "high", "entry_date": d1, "vol_gap": 6.0},
+            {"ticker": "target", "entry_date": d2, "vol_gap": 6.0},
+            {"ticker": "low", "entry_date": d2, "vol_gap": 4.0},
+            {"ticker": "high", "entry_date": d2, "vol_gap": 5.0},
+            {"ticker": "target", "entry_date": d3, "vol_gap": 4.0},
+            {"ticker": "low", "entry_date": d3, "vol_gap": 5.0},
+            {"ticker": "high", "entry_date": d3, "vol_gap": 6.0},
+        ]
+    )
+    # Per-date medians are 5 → target adjusted gaps [0, +1, -1].
+    assert float(np.median([5.0, 4.0, 6.0])) == 5.0
+    assert float(np.median([6.0, 4.0, 5.0])) == 5.0
+    assert float(np.median([4.0, 5.0, 6.0])) == 5.0
+
+    calc = CVGCalculator(windows=[(3, 0)], min_periods=min_periods)
+    result = calc.calculate_bulk(
+        FeatureDataContext(straddle_history=history),
+        start_date=d1,
+        end_date=d3,
+    )
+    target = result.loc[
+        (result["ticker"] == "target") & (result["date"] == d3)
+    ].iloc[0]
+
+    assert target["cvg_count_3_0"] == 3
+    assert target["pct_pos_3_0"] == pytest.approx(1 / 3)
+    assert target["pct_neg_3_0"] == pytest.approx(1 / 3)
+    assert target["pct_pos_3_0"] + target["pct_neg_3_0"] == pytest.approx(2 / 3)
 
 
 # ---------------------------------------------------------------------------

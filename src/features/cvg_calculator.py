@@ -402,7 +402,7 @@ class CVGCalculator:
         if count < self.min_periods:
             return features
 
-        pos_count = np.sum(adjusted_gaps >= 0)
+        pos_count = np.sum(adjusted_gaps > 0)
         neg_count = np.sum(adjusted_gaps < 0)
         pct_pos = pos_count / count
         pct_neg = neg_count / count
@@ -512,7 +512,7 @@ class CVGCalculator:
             history[f'_pos_count_{suffix}'] = (
                 grouped_adjusted
                 .rolling(window=window_size, min_periods=1)
-                .apply(lambda x: (x >= 0).sum(), raw=True)
+                .apply(lambda x: (x > 0).sum(), raw=True)
                 .groupby(level=0).shift(min_lag)           # Fix #3
                 .reset_index(level=0, drop=True)
             )

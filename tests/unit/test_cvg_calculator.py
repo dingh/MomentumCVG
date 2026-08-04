@@ -326,8 +326,8 @@ class TestCrossMedianAdjustment:
         With window (4, 0) and min_periods=1 at date d3 (first window date is d1):
         - AAPL: all adjusted gaps negative → pct_pos=0, pct_neg=1
         - ADP:  all adjusted gaps positive → pct_pos=1, pct_neg=0
-        - TSLA: all adjusted gaps zero → pct_pos=1, pct_neg=0
-          (zero counts as non-negative: x >= 0)
+        - TSLA: all adjusted gaps zero → pct_pos=0, pct_neg=0
+          (zero is neutral: counted in cvg_count, in neither sign numerator)
 
         Expected: assert these pct values match the above analysis.
         """
@@ -360,8 +360,8 @@ class TestCrossMedianAdjustment:
         assert result.loc['ADP', 'pct_pos_4_0'] == pytest.approx(1.0)
         assert result.loc['ADP', 'pct_neg_4_0'] == pytest.approx(0.0)
 
-        # TSLA: adjusted gaps are all 0 (zero counts as non-negative) → pct_pos=1
-        assert result.loc['TSLA', 'pct_pos_4_0'] == pytest.approx(1.0)
+        # TSLA: adjusted gaps are all 0 (neutral) → pct_pos=0, pct_neg=0
+        assert result.loc['TSLA', 'pct_pos_4_0'] == pytest.approx(0.0)
         assert result.loc['TSLA', 'pct_neg_4_0'] == pytest.approx(0.0)
 
         # volgap_mean should also reflect the Stage 1 adjusted values
