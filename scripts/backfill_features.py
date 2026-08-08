@@ -17,6 +17,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 import pandas as pd
 
 from src.data.snapshot_foundation import sha256_file
@@ -25,7 +29,6 @@ from src.features.cvg_calculator import CVGCalculator
 from src.features.momentum_calculator import MomentumCalculator
 from src.features.straddle_observations import a1_key_digest
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
 _COMMIT_SHA_PATTERN_LEN = 40
 _MUTABLE_CACHE_ROOT = Path(r"C:/MomentumCVG_env/cache")
 

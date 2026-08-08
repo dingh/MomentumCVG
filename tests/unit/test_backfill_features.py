@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -260,6 +261,22 @@ def test_script_does_not_import_build_features(bf):
     source = SCRIPT_PATH.read_text(encoding="utf-8")
     assert "build_features" not in source
     assert "generate_momentum_windows" not in source
+
+
+def test_script_cli_imports_without_pythonpath():
+    """Production `python scripts/backfill_features.py` must resolve `src` itself."""
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--help"],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "--observations" in completed.stdout
 
 
 # ---------------------------------------------------------------------------
