@@ -1,4 +1,4 @@
-"""Sprint 005 D3 — feature backfill helpers (Block 1 input validation + Block 2 compute)."""
+"""Sprint 005 D3 — feature backfill helpers (Blocks 1–3)."""
 
 from __future__ import annotations
 
@@ -869,3 +869,416 @@ def test_write_staging_requires_existing_directory(bf, tmp_path):
     missing = tmp_path / "does_not_exist"
     with pytest.raises(ValueError, match="staging directory does not exist"):
         bf.write_staging_feature_file(frame, missing, (6, 2))
+
+
+# ---------------------------------------------------------------------------
+# Block 3 — orchestration, staging validation, publication, receipt, CLI
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_feature_frame(
+    bf, observations: pd.DataFrame, window: tuple[int, int], config
+) -> pd.DataFrame:
+    max_lag, min_lag = window
+    cols = bf.render_output_columns(config.output_columns_per_window, max_lag, min_lag)
+    n = len(observations)
+    frame = pd.DataFrame(
+        {
+            "ticker": observations["ticker"].astype(str).to_numpy(),
+            "date": pd.to_datetime(observations["entry_date"]).dt.normalize().to_numpy(),
+            cols[2]: [1.0] * n,
+            cols[3]: [1] * n,
+            cols[4]: [0.5] * n,
+            cols[5]: [1] * n,
+        }
+    )
+    frame.loc[0, cols[2]] = pd.NA
+    return frame.sort_values(["ticker", "date"], kind="mergesort").reset_index(drop=True)
+
+
+def _write_valid_staging_set(
+    bf,
+    staging: Path,
+    observations: pd.DataFrame,
+    windows: list[tuple[int, int]],
+    config,
+) -> None:
+    staging.mkdir(parents=True, exist_ok=True)
+    for window in windows:
+        frame = _synthetic_feature_frame(bf, observations, window, config)
+        bf.write_staging_feature_file(frame, staging, window)
+
+
+@pytest.mark.parametrize(
+    "existing",
+    ["features", "features.building", "features_backfill_v1.lineage.json"],
+)
+def test_refuse_existing_output_paths(bf, tmp_path, existing):
+    output_root = tmp_path / "out"
+    output_root.mkdir()
+    target = output_root / existing
+    if existing.endswith(".json"):
+        target.write_text("{}\n", encoding="utf-8")
+    else:
+        target.mkdir()
+    with pytest.raises(ValueError, match="already exist"):
+        bf.refuse_existing_outputs(output_root)
+
+
+def test_run_refuses_existing_empty_staging_before_mutation(bf, tmp_path, monkeypatch):
+    cfg = bf.load_feature_backfill_config(SPEC_PATH)
+    df = _synthetic_observations()
+    obs_path, lineage_path = _write_d2_pair(tmp_path, df)
+    output_root = tmp_path / "out"
+    output_root.mkdir()
+    (output_root / "features.building").mkdir()
+    monkeypatch.setattr(bf, "require_clean_repo_sha", lambda: "a" * 40)
+    counts = {"config": 0, "d2": 0, "git": 0}
+
+    orig_config = bf.load_feature_backfill_config
+    orig_d2 = bf.validate_d2_input
+    orig_git = bf.require_clean_repo_sha
+
+    def count_config(path):
+        counts["config"] += 1
+        return orig_config(path)
+
+    def count_d2(**kwargs):
+        counts["d2"] += 1
+        return orig_d2(**kwargs)
+
+    def count_git():
+        counts["git"] += 1
+        return orig_git()
+
+    monkeypatch.setattr(bf, "load_feature_backfill_config", count_config)
+    monkeypatch.setattr(bf, "validate_d2_input", count_d2)
+    monkeypatch.setattr(bf, "require_clean_repo_sha", count_git)
+
+    with pytest.raises(ValueError, match="already exist"):
+        bf.run_feature_backfill(
+            observations_path=obs_path,
+            d2_lineage_path=lineage_path,
+            config_path=SPEC_PATH,
+            output_root=output_root,
+            expected_snapshot_id="snaptest01",
+            expected_build_id="buildtest01",
+        )
+    assert counts == {"config": 1, "d2": 1, "git": 1}
+    assert not (output_root / "features").exists()
+    assert not (output_root / "features_backfill_v1.lineage.json").exists()
+    assert list((output_root / "features.building").iterdir()) == []
+    assert cfg.windows[0] == (6, 2)
+
+
+def test_orchestration_reuses_inputs_and_runs_all_windows_in_order(
+    bf, tmp_path, monkeypatch
+):
+    cfg = bf.load_feature_backfill_config(SPEC_PATH)
+    df = _synthetic_observations()
+    obs_path, lineage_path = _write_d2_pair(tmp_path, df)
+    output_root = tmp_path / "out"
+    output_root.mkdir()
+    repo_sha = "b" * 40
+
+    counts = {"config": 0, "d2": 0, "git": 0, "canonical": 0}
+    orig_config = bf.load_feature_backfill_config
+    orig_d2 = bf.validate_d2_input
+    orig_canonical = bf.build_canonical_key_index
+
+    def count_config(path):
+        counts["config"] += 1
+        return orig_config(path)
+
+    def count_d2(**kwargs):
+        counts["d2"] += 1
+        return orig_d2(**kwargs)
+
+    def count_git():
+        counts["git"] += 1
+        return repo_sha
+
+    def count_canonical(observations):
+        counts["canonical"] += 1
+        return orig_canonical(observations)
+
+    monkeypatch.setattr(bf, "load_feature_backfill_config", count_config)
+    monkeypatch.setattr(bf, "validate_d2_input", count_d2)
+    monkeypatch.setattr(bf, "require_clean_repo_sha", count_git)
+    monkeypatch.setattr(bf, "build_canonical_key_index", count_canonical)
+
+    tracker: dict = {}
+
+    def fake_compute(obs, window, config, canonical_key_index):
+        tracker.setdefault("windows", []).append(window)
+        tracker.setdefault("obs_ids", []).append(id(obs))
+        tracker.setdefault("key_ids", []).append(id(canonical_key_index))
+        return _synthetic_feature_frame(bf, obs, window, config)
+
+    monkeypatch.setattr(bf, "compute_one_window_features", fake_compute)
+
+    receipt_path = bf.run_feature_backfill(
+        observations_path=obs_path,
+        d2_lineage_path=lineage_path,
+        config_path=SPEC_PATH,
+        output_root=output_root,
+        expected_snapshot_id="snaptest01",
+        expected_build_id="buildtest01",
+    )
+
+    assert counts == {"config": 1, "d2": 1, "git": 1, "canonical": 1}
+    assert tracker["windows"] == cfg.windows
+    assert len(tracker["windows"]) == 281
+    assert len(set(tracker["obs_ids"])) == 1
+    assert len(set(tracker["key_ids"])) == 1
+    assert receipt_path.is_file()
+    assert (output_root / "features").is_dir()
+    assert not (output_root / "features.building").exists()
+    assert len(list((output_root / "features").glob("features_*.parquet"))) == 281
+
+
+def test_validate_staging_accepts_valid_directory_with_na_features(bf, tmp_path):
+    cfg = bf.load_feature_backfill_config(SPEC_PATH)
+    observations = _synthetic_observations()
+    canonical = bf.build_canonical_key_index(observations)
+    windows = [(6, 2), (6, 4)]
+    staging = tmp_path / "features.building"
+    _write_valid_staging_set(bf, staging, observations, windows, cfg)
+
+    records = bf.validate_staging_directory(
+        staging,
+        windows=windows,
+        output_columns_per_window=cfg.output_columns_per_window,
+        canonical_key_index=canonical,
+        expected_row_count=len(observations),
+    )
+    assert len(records) == 2
+    assert records[0]["filename"] == "features_6_2.parquet"
+    assert records[1]["filename"] == "features_6_4.parquet"
+    assert all(len(r["file_sha256"]) == 64 for r in records)
+    frame = pd.read_parquet(staging / "features_6_2.parquet")
+    assert frame["mom_6_2_mean"].isna().any()
+
+
+@pytest.mark.parametrize(
+    "defect, match",
+    [
+        ("missing", "filenames do not match"),
+        ("extra", "filenames do not match"),
+        ("unreadable", "not a readable Parquet"),
+        ("wrong_schema", "columns"),
+        ("wrong_row_count", "row count"),
+        ("null_key", "null"),
+        ("duplicate_key", "duplicate"),
+        ("key_mismatch", "keys are not exactly equal"),
+        ("unsorted", "not deterministically sorted"),
+    ],
+)
+def test_validate_staging_rejects_defects(bf, tmp_path, defect, match):
+    cfg = bf.load_feature_backfill_config(SPEC_PATH)
+    observations = _synthetic_observations()
+    canonical = bf.build_canonical_key_index(observations)
+    windows = [(6, 2), (6, 4)]
+    staging = tmp_path / "features.building"
+    _write_valid_staging_set(bf, staging, observations, windows, cfg)
+    target = staging / "features_6_2.parquet"
+
+    if defect == "missing":
+        target.unlink()
+    elif defect == "extra":
+        (staging / "features_999_1.parquet").write_bytes(target.read_bytes())
+    elif defect == "unreadable":
+        target.write_text("not-parquet", encoding="utf-8")
+    elif defect == "wrong_schema":
+        bad = pd.read_parquet(target).rename(columns={"date": "entry_date"})
+        bad.to_parquet(target, index=False)
+    elif defect == "wrong_row_count":
+        bad = pd.read_parquet(target).iloc[:-1]
+        bad.to_parquet(target, index=False)
+    elif defect == "null_key":
+        bad = pd.read_parquet(target)
+        bad.loc[0, "ticker"] = None
+        bad.to_parquet(target, index=False)
+    elif defect == "duplicate_key":
+        bad = pd.read_parquet(target)
+        bad = pd.concat([bad, bad.iloc[[0]]], ignore_index=True)
+        bad.to_parquet(target, index=False)
+    elif defect == "key_mismatch":
+        bad = pd.read_parquet(target)
+        bad.loc[0, "ticker"] = "ZZZ"
+        bad.to_parquet(target, index=False)
+    elif defect == "unsorted":
+        bad = pd.read_parquet(target).sort_values(
+            ["ticker", "date"], ascending=[False, False]
+        )
+        bad.to_parquet(target, index=False)
+
+    with pytest.raises(ValueError, match=match):
+        bf.validate_staging_directory(
+            staging,
+            windows=windows,
+            output_columns_per_window=cfg.output_columns_per_window,
+            canonical_key_index=canonical,
+            expected_row_count=len(observations),
+        )
+
+
+def test_pre_rename_failure_leaves_staging_only(bf, tmp_path, monkeypatch):
+    df = _synthetic_observations()
+    obs_path, lineage_path = _write_d2_pair(tmp_path, df)
+    output_root = tmp_path / "out"
+    output_root.mkdir()
+    monkeypatch.setattr(bf, "require_clean_repo_sha", lambda: "c" * 40)
+
+    calls = {"n": 0}
+
+    def fail_midway(obs, window, config, canonical_key_index):
+        calls["n"] += 1
+        if calls["n"] > 3:
+            raise RuntimeError("boom before rename")
+        return _synthetic_feature_frame(bf, obs, window, config)
+
+    monkeypatch.setattr(bf, "compute_one_window_features", fail_midway)
+
+    with pytest.raises(RuntimeError, match="boom before rename"):
+        bf.run_feature_backfill(
+            observations_path=obs_path,
+            d2_lineage_path=lineage_path,
+            config_path=SPEC_PATH,
+            output_root=output_root,
+            expected_snapshot_id="snaptest01",
+            expected_build_id="buildtest01",
+        )
+
+    staging = output_root / "features.building"
+    assert staging.is_dir()
+    assert len(list(staging.glob("features_*.parquet"))) == 3
+    assert not (output_root / "features").exists()
+    assert not (output_root / "features_backfill_v1.lineage.json").exists()
+
+
+def test_receipt_failure_keeps_published_features(bf, tmp_path, monkeypatch):
+    df = _synthetic_observations()
+    obs_path, lineage_path = _write_d2_pair(tmp_path, df)
+    output_root = tmp_path / "out"
+    output_root.mkdir()
+    monkeypatch.setattr(bf, "require_clean_repo_sha", lambda: "d" * 40)
+
+    def fake_compute(obs, window, config, canonical_key_index):
+        return _synthetic_feature_frame(bf, obs, window, config)
+
+    monkeypatch.setattr(bf, "compute_one_window_features", fake_compute)
+
+    def boom_receipt(path, payload):
+        raise OSError("receipt write failed")
+
+    monkeypatch.setattr(bf, "write_completion_receipt", boom_receipt)
+
+    with pytest.raises(OSError, match="receipt write failed"):
+        bf.run_feature_backfill(
+            observations_path=obs_path,
+            d2_lineage_path=lineage_path,
+            config_path=SPEC_PATH,
+            output_root=output_root,
+            expected_snapshot_id="snaptest01",
+            expected_build_id="buildtest01",
+        )
+
+    assert (output_root / "features").is_dir()
+    assert not (output_root / "features.building").exists()
+    assert len(list((output_root / "features").glob("features_*.parquet"))) == 281
+    assert not (output_root / "features_backfill_v1.lineage.json").exists()
+
+
+def test_successful_cli_publishes_features_and_atomic_receipt(bf, tmp_path, monkeypatch):
+    cfg = bf.load_feature_backfill_config(SPEC_PATH)
+    df = _synthetic_observations()
+    obs_path, lineage_path = _write_d2_pair(tmp_path, df)
+    output_root = tmp_path / "out"
+    output_root.mkdir()
+    repo_sha = "e" * 40
+    monkeypatch.setattr(bf, "require_clean_repo_sha", lambda: repo_sha)
+
+    def fake_compute(obs, window, config, canonical_key_index):
+        return _synthetic_feature_frame(bf, obs, window, config)
+
+    monkeypatch.setattr(bf, "compute_one_window_features", fake_compute)
+
+    rc = bf.main(
+        [
+            "--observations",
+            str(obs_path),
+            "--d2-lineage",
+            str(lineage_path),
+            "--config",
+            str(SPEC_PATH),
+            "--output-root",
+            str(output_root),
+            "--expected-snapshot-id",
+            "snaptest01",
+            "--expected-build-id",
+            "buildtest01",
+        ]
+    )
+    assert rc == 0
+
+    features_dir = output_root / "features"
+    receipt_path = output_root / "features_backfill_v1.lineage.json"
+    assert features_dir.is_dir()
+    assert not (output_root / "features.building").exists()
+    feature_files = sorted(features_dir.glob("features_*.parquet"))
+    assert len(feature_files) == 281
+    assert receipt_path.is_file()
+
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["status"] == "complete"
+    assert receipt["artifact"] == "features_backfill_v1"
+    assert receipt["schema_version"] == "1"
+    assert receipt["repo_sha"] == repo_sha
+    assert receipt["spec_version"] == cfg.spec_version
+    assert receipt["spec_id"] == cfg.spec_id
+    assert receipt["feature_config_sha256"] == cfg.config_sha256
+    assert receipt["snapshot_id"] == "snaptest01"
+    assert receipt["build_id"] == "buildtest01"
+    assert receipt["observations_path"] == str(obs_path.resolve())
+    assert receipt["d2_lineage_path"] == str(lineage_path.resolve())
+    assert receipt["observations_file_sha256"] == sha256_file(obs_path)
+    assert receipt["observations_row_count"] == len(df)
+    assert receipt["observations_key_count"] == len(df)
+    assert receipt["observations_output_key_digest"] == a1_key_digest(df)
+    assert receipt["window_count"] == 281
+    assert receipt["windows"] == [[m, n] for m, n in cfg.windows]
+    assert receipt["baseline_window"] == {"max_lag": 42, "min_lag": 8}
+    assert receipt["momentum_min_periods"] == 1
+    assert receipt["cvg_min_periods"] == 1
+    assert receipt["output_root"] == str(output_root.resolve())
+    assert receipt["features_dir"] == str(features_dir.resolve())
+    assert len(receipt["files"]) == 281
+    assert receipt["files"][0]["filename"] == "features_6_2.parquet"
+    assert receipt["files"][-1]["filename"] == "features_60_24.parquet"
+    assert all(len(item["file_sha256"]) == 64 for item in receipt["files"])
+    assert all(
+        (features_dir / item["filename"]).is_file() for item in receipt["files"]
+    )
+    assert not list(output_root.glob("*.tmp"))
+
+
+def test_cli_nonzero_on_error(bf, tmp_path, monkeypatch):
+    monkeypatch.setattr(bf, "require_clean_repo_sha", lambda: "f" * 40)
+    rc = bf.main(
+        [
+            "--observations",
+            str(tmp_path / "missing.parquet"),
+            "--d2-lineage",
+            str(tmp_path / "missing.lineage.json"),
+            "--config",
+            str(SPEC_PATH),
+            "--output-root",
+            str(tmp_path),
+            "--expected-snapshot-id",
+            "snaptest01",
+            "--expected-build-id",
+            "buildtest01",
+        ]
+    )
+    assert rc == 1

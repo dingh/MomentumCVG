@@ -2,14 +2,18 @@
 
 Block 1: configuration loading, accepted-D2 input validation, clean-Git provenance.
 Block 2: one-window Momentum/CVG computation and staging-file write.
-Later blocks add the 281-window loop, publication, and receipt.
+Block 3: 281-window orchestration, staging validation, atomic publication, receipt, CLI.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import subprocess
+import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -633,3 +637,314 @@ def write_staging_feature_file(
         raise ValueError(f"refusing to overwrite existing staging file: {target}")
     frame.to_parquet(target, index=False, compression="snappy")
     return target.resolve()
+
+
+def resolve_output_paths(output_root: Path | str) -> tuple[Path, Path, Path]:
+    """Return ``(staging_dir, features_dir, receipt_path)`` under ``output_root``."""
+    root = Path(output_root).resolve()
+    return (
+        root / "features.building",
+        root / "features",
+        root / "features_backfill_v1.lineage.json",
+    )
+
+
+def refuse_existing_outputs(output_root: Path | str) -> None:
+    """Fail closed if staging, final features, or receipt already exist."""
+    staging_dir, features_dir, receipt_path = resolve_output_paths(output_root)
+    existing: list[str] = []
+    if staging_dir.exists():
+        existing.append(str(staging_dir))
+    if features_dir.exists():
+        existing.append(str(features_dir))
+    if receipt_path.exists():
+        existing.append(str(receipt_path))
+    if existing:
+        raise ValueError(
+            "refusing to run because output path(s) already exist: "
+            + ", ".join(existing)
+        )
+
+
+def _assert_sorted_by_ticker_date(frame: pd.DataFrame, *, label: str) -> None:
+    ordered = frame.sort_values(["ticker", "date"], kind="mergesort")
+    tickers = frame["ticker"].astype(str).to_numpy()
+    dates = pd.to_datetime(frame["date"]).dt.normalize().to_numpy()
+    ordered_tickers = ordered["ticker"].astype(str).to_numpy()
+    ordered_dates = pd.to_datetime(ordered["date"]).dt.normalize().to_numpy()
+    if not ((tickers == ordered_tickers).all() and (dates == ordered_dates).all()):
+        raise ValueError(
+            f"{label} rows are not deterministically sorted by (ticker, date)"
+        )
+
+
+def validate_staging_directory(
+    staging_dir: Path | str,
+    *,
+    windows: Sequence[tuple[int, int]],
+    output_columns_per_window: Sequence[str],
+    canonical_key_index: pd.MultiIndex,
+    expected_row_count: int,
+) -> list[dict[str, Any]]:
+    """Validate every staged window file; return ordered per-file receipt records."""
+    staging = Path(staging_dir).resolve()
+    if not staging.is_dir():
+        raise ValueError(f"staging directory does not exist: {staging}")
+    if expected_row_count != len(canonical_key_index):
+        raise ValueError(
+            f"expected_row_count {expected_row_count} != "
+            f"canonical key count {len(canonical_key_index)}"
+        )
+
+    expected_names = [f"features_{max_lag}_{min_lag}.parquet" for max_lag, min_lag in windows]
+    entries = list(staging.iterdir())
+    if any(entry.is_dir() for entry in entries):
+        raise ValueError(f"staging directory contains unexpected subdirectories: {staging}")
+    actual_names = [entry.name for entry in entries]
+    if sorted(actual_names) != sorted(expected_names):
+        missing = sorted(set(expected_names) - set(actual_names))
+        unexpected = sorted(set(actual_names) - set(expected_names))
+        raise ValueError(
+            "staging directory filenames do not match the expected window grid; "
+            f"missing={missing[:5]!r} unexpected={unexpected[:5]!r}"
+        )
+    if len(actual_names) != len(expected_names):
+        raise ValueError(
+            f"staging directory entry count {len(actual_names)} != "
+            f"expected window count {len(expected_names)}"
+        )
+
+    file_records: list[dict[str, Any]] = []
+    for max_lag, min_lag in windows:
+        filename = f"features_{max_lag}_{min_lag}.parquet"
+        path = staging / filename
+        label = f"staging file {filename}"
+        try:
+            digest = sha256_file(path)
+            frame = pd.read_parquet(path)
+        except Exception as exc:
+            raise ValueError(f"{label} is not a readable Parquet file: {exc}") from exc
+
+        publish_columns = render_output_columns(
+            output_columns_per_window, max_lag, min_lag
+        )
+        if list(frame.columns) != publish_columns:
+            raise ValueError(
+                f"{label} columns {list(frame.columns)!r} != required {publish_columns!r}"
+            )
+        key_index = _key_index_from_frame(
+            frame, ticker_col="ticker", date_col="date", label=label
+        )
+        if len(frame) != expected_row_count:
+            raise ValueError(
+                f"{label} row count {len(frame)} != expected {expected_row_count}"
+            )
+        _assert_key_index_equal(
+            key_index,
+            canonical_key_index,
+            label=label,
+        )
+        _assert_sorted_by_ticker_date(frame, label=label)
+        file_records.append(
+            {
+                "filename": filename,
+                "max_lag": int(max_lag),
+                "min_lag": int(min_lag),
+                "row_count": int(len(frame)),
+                "file_sha256": digest,
+            }
+        )
+        del frame
+    return file_records
+
+
+def publish_features_directory(
+    staging_dir: Path | str,
+    features_dir: Path | str,
+    *,
+    receipt_path: Path | str,
+) -> Path:
+    """Atomically rename staging to final ``features/`` after pre-rename rechecks."""
+    staging = Path(staging_dir).resolve()
+    features = Path(features_dir).resolve()
+    receipt = Path(receipt_path).resolve()
+    if not staging.is_dir():
+        raise ValueError(f"staging directory does not exist: {staging}")
+    if features.exists():
+        raise ValueError(
+            f"refusing to publish: final features directory already exists: {features}"
+        )
+    if receipt.exists():
+        raise ValueError(
+            f"refusing to publish: completion receipt already exists: {receipt}"
+        )
+    os.rename(staging, features)
+    return features
+
+
+def build_completion_receipt(
+    *,
+    repo_sha: str,
+    config: FeatureBackfillConfig,
+    d2: ValidatedD2Input,
+    output_root: Path,
+    features_dir: Path,
+    file_records: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the approved ``features_backfill_v1`` completion receipt payload."""
+    windows = [[int(max_lag), int(min_lag)] for max_lag, min_lag in config.windows]
+    return {
+        "schema_version": "1",
+        "artifact": "features_backfill_v1",
+        "created_at_utc": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "repo_sha": repo_sha,
+        "spec_version": config.spec_version,
+        "spec_id": config.spec_id,
+        "feature_config_path": str(config.config_path.resolve()),
+        "feature_config_sha256": config.config_sha256,
+        "snapshot_id": d2.snapshot_id,
+        "build_id": d2.build_id,
+        "observations_path": str(d2.observations_path.resolve()),
+        "d2_lineage_path": str(d2.d2_lineage_path.resolve()),
+        "observations_file_sha256": d2.file_sha256,
+        "observations_row_count": d2.row_count,
+        "observations_key_count": d2.key_count,
+        "observations_output_key_digest": d2.output_key_digest,
+        "window_count": len(windows),
+        "windows": windows,
+        "baseline_window": {
+            "max_lag": int(config.baseline_window[0]),
+            "min_lag": int(config.baseline_window[1]),
+        },
+        "momentum_min_periods": config.momentum_min_periods,
+        "cvg_min_periods": config.cvg_min_periods,
+        "output_root": str(Path(output_root).resolve()),
+        "features_dir": str(Path(features_dir).resolve()),
+        "files": list(file_records),
+        "status": "complete",
+    }
+
+
+def write_completion_receipt(receipt_path: Path | str, payload: dict[str, Any]) -> Path:
+    """Atomically write the completion receipt via a temporary sibling file."""
+    target = Path(receipt_path).resolve()
+    if target.exists():
+        raise ValueError(f"refusing to overwrite existing completion receipt: {target}")
+    temp_path = target.with_name(target.name + ".tmp")
+    try:
+        with temp_path.open("w", encoding="utf-8", newline="\n") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(temp_path, target)
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise
+    return target
+
+
+def run_feature_backfill(
+    *,
+    observations_path: Path | str,
+    d2_lineage_path: Path | str,
+    config_path: Path | str,
+    output_root: Path | str,
+    expected_snapshot_id: str,
+    expected_build_id: str,
+) -> Path:
+    """Execute the full D3 publication path; return the written receipt path."""
+    output_root_path = Path(output_root).resolve()
+    if not output_root_path.is_dir():
+        raise ValueError(
+            f"output-root does not exist or is not a directory: {output_root_path}"
+        )
+
+    config = load_feature_backfill_config(config_path)
+    if len(config.windows) != 281:
+        raise ValueError(
+            f"approved config must expand to 281 windows, got {len(config.windows)}"
+        )
+
+    d2 = validate_d2_input(
+        observations_path=observations_path,
+        d2_lineage_path=d2_lineage_path,
+        expected_snapshot_id=expected_snapshot_id,
+        expected_build_id=expected_build_id,
+        required_columns=config.required_columns,
+    )
+    repo_sha = require_clean_repo_sha()
+    refuse_existing_outputs(output_root_path)
+
+    canonical_key_index = build_canonical_key_index(d2.observations)
+    staging_dir, features_dir, receipt_path = resolve_output_paths(output_root_path)
+    staging_dir.mkdir(exist_ok=False)
+
+    for window in config.windows:
+        frame = compute_one_window_features(
+            d2.observations,
+            window,
+            config,
+            canonical_key_index,
+        )
+        write_staging_feature_file(frame, staging_dir, window)
+        del frame
+
+    file_records = validate_staging_directory(
+        staging_dir,
+        windows=config.windows,
+        output_columns_per_window=config.output_columns_per_window,
+        canonical_key_index=canonical_key_index,
+        expected_row_count=d2.row_count,
+    )
+    publish_features_directory(
+        staging_dir,
+        features_dir,
+        receipt_path=receipt_path,
+    )
+    receipt = build_completion_receipt(
+        repo_sha=repo_sha,
+        config=config,
+        d2=d2,
+        output_root=output_root_path,
+        features_dir=features_dir,
+        file_records=file_records,
+    )
+    return write_completion_receipt(receipt_path, receipt)
+
+
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Sprint 005 D3 — publish weekly Momentum/CVG feature backfill."
+    )
+    parser.add_argument("--observations", required=True, type=Path)
+    parser.add_argument("--d2-lineage", required=True, type=Path)
+    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--output-root", required=True, type=Path)
+    parser.add_argument("--expected-snapshot-id", required=True)
+    parser.add_argument("--expected-build-id", required=True)
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint. Returns 0 only after the completion receipt is published."""
+    args = _parse_args(argv)
+    try:
+        run_feature_backfill(
+            observations_path=args.observations,
+            d2_lineage_path=args.d2_lineage,
+            config_path=args.config,
+            output_root=args.output_root,
+            expected_snapshot_id=args.expected_snapshot_id,
+            expected_build_id=args.expected_build_id,
+        )
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
