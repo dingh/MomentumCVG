@@ -1,4 +1,4 @@
-"""Sprint 005 D3 Block 1 — feature backfill config, D2 input, and Git checks."""
+"""Sprint 005 D3 — feature backfill helpers (Block 1 input validation + Block 2 compute)."""
 
 from __future__ import annotations
 
@@ -585,3 +585,216 @@ def test_git_helper_not_run_at_import(bf):
     # Importing the module (fixture) must not require a clean tree; this file can
     # exist while the suite itself dirties nothing related to require_clean_repo_sha.
     assert callable(bf.require_clean_repo_sha)
+
+
+# ---------------------------------------------------------------------------
+# Block 2 — one-window compute + staging write
+# ---------------------------------------------------------------------------
+
+
+def _panel_for_window(n_dates: int = 12) -> pd.DataFrame:
+    """Weekly panel large enough for window (6, 2) with independent miss patterns."""
+    dates = pd.date_range("2020-01-03", periods=n_dates, freq="W-FRI")
+    rows = []
+    for ticker, returns, gaps in (
+        (
+            "AAA",
+            [10.0, None, 20.0, None, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0],
+            [0.10] * n_dates,
+        ),
+        (
+            "BBB",
+            [1.0] * n_dates,
+            [None, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05],
+        ),
+    ):
+        for entry, ret, gap in zip(dates, returns, gaps, strict=True):
+            rows.append(
+                {
+                    "ticker": ticker,
+                    "entry_date": entry,
+                    "return_pct": ret,
+                    "entry_iv": 0.2,
+                    "realized_volatility": 0.25 if gap is None else 0.2 + gap,
+                    "vol_gap": gap,
+                    "expiry_date": entry + pd.Timedelta(days=7),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_compute_one_window_end_to_end_with_production_calculators(bf, monkeypatch):
+    cfg = bf.load_feature_backfill_config(SPEC_PATH)
+    observations = _panel_for_window()
+    window = (6, 2)
+    mom_calls: list[dict] = []
+    cvg_calls: list[dict] = []
+
+    orig_mom = bf.MomentumCalculator.calculate_bulk
+    orig_cvg = bf.CVGCalculator.calculate_bulk
+
+    def spy_mom(self, context, start_date, end_date, tickers=None):
+        mom_calls.append(
+            {
+                "windows": list(self.windows),
+                "min_periods": self.min_periods,
+                "tickers": tickers,
+                "n_rows": len(context.get("straddle_history")),
+                "n_tickers": context.get("straddle_history")["ticker"].nunique(),
+            }
+        )
+        return orig_mom(self, context, start_date, end_date, tickers=tickers)
+
+    def spy_cvg(self, context, start_date, end_date, tickers=None):
+        cvg_calls.append(
+            {
+                "windows": list(self.windows),
+                "min_periods": self.min_periods,
+                "tickers": tickers,
+                "n_rows": len(context.get("straddle_history")),
+                "n_tickers": context.get("straddle_history")["ticker"].nunique(),
+            }
+        )
+        return orig_cvg(self, context, start_date, end_date, tickers=tickers)
+
+    monkeypatch.setattr(bf.MomentumCalculator, "calculate_bulk", spy_mom)
+    monkeypatch.setattr(bf.CVGCalculator, "calculate_bulk", spy_cvg)
+
+    out = bf.compute_one_window_features(observations, window, cfg)
+
+    assert len(mom_calls) == 1 and len(cvg_calls) == 1
+    assert mom_calls[0]["windows"] == [(6, 2)]
+    assert cvg_calls[0]["windows"] == [(6, 2)]
+    assert mom_calls[0]["min_periods"] == 1
+    assert cvg_calls[0]["min_periods"] == 1
+    assert mom_calls[0]["tickers"] is None
+    assert cvg_calls[0]["tickers"] is None
+    assert mom_calls[0]["n_rows"] == len(observations)
+    assert cvg_calls[0]["n_rows"] == len(observations)
+    assert mom_calls[0]["n_tickers"] == observations["ticker"].nunique()
+
+    expected_cols = [
+        "ticker",
+        "date",
+        "mom_6_2_mean",
+        "mom_6_2_count",
+        "cvg_6_2",
+        "cvg_count_6_2",
+    ]
+    assert list(out.columns) == expected_cols
+    assert "entry_date" not in out.columns
+    assert len(out) == len(observations)
+    assert out.duplicated(["ticker", "date"]).sum() == 0
+    assert out["ticker"].isna().sum() == 0
+    assert out["date"].isna().sum() == 0
+    assert out.equals(out.sort_values(["ticker", "date"], kind="mergesort").reset_index(drop=True))
+
+    # NA features must not drop rows (early history / sparse slots remain).
+    assert out["mom_6_2_mean"].isna().any()
+    assert len(out) == len(observations)
+
+    # Independent Momentum vs CVG counts: AAA feature date index 6 uses
+    # returns [10, None, 20, None, 30] (count 3) and five finite vol_gaps.
+    feature_date = pd.to_datetime(observations["entry_date"]).drop_duplicates().iloc[6]
+    row = out.loc[(out["ticker"] == "AAA") & (out["date"] == feature_date)].iloc[0]
+    assert row["mom_6_2_count"] == 3
+    assert row["cvg_count_6_2"] == 5
+
+
+@pytest.mark.parametrize(
+    "which, mutator, match",
+    [
+        (
+            "momentum",
+            lambda df: df.iloc[:-1].copy(),
+            "Momentum output keys",
+        ),
+        (
+            "cvg",
+            lambda df: df.iloc[:-1].copy(),
+            "CVG output keys",
+        ),
+        (
+            "momentum",
+            lambda df: pd.concat([df, df.iloc[[0]]], ignore_index=True),
+            "duplicate",
+        ),
+        (
+            "cvg",
+            lambda df: pd.concat([df, df.iloc[[0]]], ignore_index=True),
+            "duplicate",
+        ),
+        (
+            "momentum",
+            lambda df: df.assign(ticker=df["ticker"].where(df.index != 0, "ZZZ")),
+            "Momentum output keys",
+        ),
+        (
+            "cvg",
+            lambda df: df.assign(ticker=df["ticker"].where(df.index != 0, "ZZZ")),
+            "CVG output keys",
+        ),
+    ],
+)
+def test_compute_fails_on_malformed_calculator_keys(bf, monkeypatch, which, mutator, match):
+    cfg = bf.load_feature_backfill_config(SPEC_PATH)
+    observations = _panel_for_window()
+    window = (6, 2)
+
+    if which == "momentum":
+        orig = bf.MomentumCalculator.calculate_bulk
+
+        def bad(self, context, start_date, end_date, tickers=None):
+            return mutator(orig(self, context, start_date, end_date, tickers=tickers))
+
+        monkeypatch.setattr(bf.MomentumCalculator, "calculate_bulk", bad)
+    else:
+        orig = bf.CVGCalculator.calculate_bulk
+
+        def bad(self, context, start_date, end_date, tickers=None):
+            return mutator(orig(self, context, start_date, end_date, tickers=tickers))
+
+        monkeypatch.setattr(bf.CVGCalculator, "calculate_bulk", bad)
+
+    with pytest.raises(ValueError, match=match):
+        bf.compute_one_window_features(observations, window, cfg)
+
+
+def test_write_staging_feature_file_schema_and_no_overwrite(bf, tmp_path):
+    from src.backtest.surface_run_config import SurfaceDataPaths
+
+    cfg = bf.load_feature_backfill_config(SPEC_PATH)
+    observations = _panel_for_window()
+    window = (6, 2)
+    frame = bf.compute_one_window_features(observations, window, cfg)
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    written = bf.write_staging_feature_file(frame, staging, window)
+    assert written.name == "features_6_2.parquet"
+    assert written.parent == staging.resolve()
+
+    paths = SurfaceDataPaths(cache_dir=tmp_path, features_dir=staging)
+    assert paths.resolved_features_dir / "features_6_2.parquet" == written
+
+    roundtrip = pd.read_parquet(written)
+    assert list(roundtrip.columns) == list(frame.columns)
+    pd.testing.assert_frame_equal(
+        roundtrip.sort_values(["ticker", "date"]).reset_index(drop=True),
+        frame.sort_values(["ticker", "date"]).reset_index(drop=True),
+        check_dtype=False,
+    )
+
+    with pytest.raises(ValueError, match="refusing to overwrite"):
+        bf.write_staging_feature_file(frame, staging, window)
+
+    assert not (tmp_path / "features").exists()
+    assert not list(tmp_path.rglob("features_backfill_v1.lineage.json"))
+
+
+def test_write_staging_requires_existing_directory(bf, tmp_path):
+    cfg = bf.load_feature_backfill_config(SPEC_PATH)
+    frame = bf.compute_one_window_features(_panel_for_window(), (6, 2), cfg)
+    missing = tmp_path / "does_not_exist"
+    with pytest.raises(ValueError, match="staging directory does not exist"):
+        bf.write_staging_feature_file(frame, missing, (6, 2))

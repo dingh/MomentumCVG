@@ -1,7 +1,8 @@
 """Sprint 005 D3 — standalone weekly Momentum/CVG feature backfill.
 
-Block 1 implements configuration loading, accepted-D2 input validation, and
-clean-Git provenance helpers only. Later blocks add calculation and publication.
+Block 1: configuration loading, accepted-D2 input validation, clean-Git provenance.
+Block 2: one-window Momentum/CVG computation and staging-file write.
+Later blocks add the 281-window loop, publication, and receipt.
 """
 
 from __future__ import annotations
@@ -15,6 +16,9 @@ from typing import Any, Sequence
 import pandas as pd
 
 from src.data.snapshot_foundation import sha256_file
+from src.features.base import FeatureDataContext
+from src.features.cvg_calculator import CVGCalculator
+from src.features.momentum_calculator import MomentumCalculator
 from src.features.straddle_observations import a1_key_digest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -423,3 +427,174 @@ def require_clean_repo_sha() -> str:
             f"commit or stash changes first (HEAD {head}):\n{pending}"
         )
     return head
+
+
+def render_output_columns(
+    templates: Sequence[str], max_lag: int, min_lag: int
+) -> list[str]:
+    """Render approved per-window column templates for one window."""
+    rendered: list[str] = []
+    for template in templates:
+        if "{max}" in template or "{min}" in template:
+            rendered.append(
+                template.replace("{max}", str(max_lag)).replace("{min}", str(min_lag))
+            )
+        else:
+            rendered.append(template)
+    return rendered
+
+
+def _normalized_key_pairs(
+    frame: pd.DataFrame, *, ticker_col: str, date_col: str, label: str
+) -> list[tuple[str, pd.Timestamp]]:
+    """Return ordered unique `(ticker, normalized date)` pairs or fail."""
+    if ticker_col not in frame.columns or date_col not in frame.columns:
+        raise ValueError(f"{label} missing key columns {ticker_col!r}/{date_col!r}")
+    if frame[ticker_col].isna().any() or frame[date_col].isna().any():
+        raise ValueError(f"{label} contains null {ticker_col}/{date_col} keys")
+    tickers = frame[ticker_col].astype(str)
+    dates = pd.to_datetime(frame[date_col]).dt.normalize()
+    pairs = list(zip(tickers.tolist(), dates.tolist(), strict=True))
+    if len(pairs) != len(set(pairs)):
+        raise ValueError(f"{label} contains duplicate ({ticker_col}, {date_col}) keys")
+    return pairs
+
+
+def _assert_key_set_equal(
+    actual_pairs: Sequence[tuple[str, pd.Timestamp]],
+    expected_pairs: Sequence[tuple[str, pd.Timestamp]],
+    *,
+    label: str,
+) -> None:
+    actual_set = set(actual_pairs)
+    expected_set = set(expected_pairs)
+    if actual_set != expected_set:
+        missing = sorted(expected_set - actual_set)
+        unexpected = sorted(actual_set - expected_set)
+        raise ValueError(
+            f"{label} keys are not exactly equal to the canonical D2 key set; "
+            f"missing={missing[:5]!r} unexpected={unexpected[:5]!r}"
+        )
+    if len(actual_pairs) != len(expected_pairs):
+        raise ValueError(
+            f"{label} key count {len(actual_pairs)} != canonical D2 key count "
+            f"{len(expected_pairs)}"
+        )
+
+
+def compute_one_window_features(
+    observations: pd.DataFrame,
+    window: tuple[int, int],
+    config: FeatureBackfillConfig,
+) -> pd.DataFrame:
+    """Compute one window's six-column publish frame from a validated D2 panel."""
+    if not isinstance(window, tuple) or len(window) != 2:
+        raise ValueError(f"window must be a (max_lag, min_lag) tuple, got {window!r}")
+    max_lag, min_lag = int(window[0]), int(window[1])
+    if max_lag <= min_lag:
+        raise ValueError(f"window must satisfy max_lag > min_lag, got {(max_lag, min_lag)}")
+    if (max_lag, min_lag) not in config.windows:
+        raise ValueError(
+            f"window {(max_lag, min_lag)} is not in the approved config window grid"
+        )
+    if list(observations.columns) != list(config.required_columns):
+        raise ValueError(
+            "observations columns must exactly match the validated required_columns "
+            f"{config.required_columns!r}, got {list(observations.columns)!r}"
+        )
+
+    canonical_pairs = _normalized_key_pairs(
+        observations, ticker_col="ticker", date_col="entry_date", label="D2 observations"
+    )
+    start_date = pd.to_datetime(observations["entry_date"]).min()
+    end_date = pd.to_datetime(observations["entry_date"]).max()
+    context = FeatureDataContext(straddle_history=observations)
+
+    momentum = MomentumCalculator(
+        windows=[(max_lag, min_lag)],
+        min_periods=config.momentum_min_periods,
+    ).calculate_bulk(
+        context,
+        start_date=start_date,
+        end_date=end_date,
+        tickers=None,
+    )
+    cvg = CVGCalculator(
+        windows=[(max_lag, min_lag)],
+        min_periods=config.cvg_min_periods,
+    ).calculate_bulk(
+        context,
+        start_date=start_date,
+        end_date=end_date,
+        tickers=None,
+    )
+
+    mom_pairs = _normalized_key_pairs(
+        momentum, ticker_col="ticker", date_col="date", label="Momentum output"
+    )
+    cvg_pairs = _normalized_key_pairs(
+        cvg, ticker_col="ticker", date_col="date", label="CVG output"
+    )
+    _assert_key_set_equal(mom_pairs, canonical_pairs, label="Momentum output")
+    _assert_key_set_equal(cvg_pairs, canonical_pairs, label="CVG output")
+
+    publish_columns = render_output_columns(
+        config.output_columns_per_window, max_lag, min_lag
+    )
+    mom_mean_col = f"mom_{max_lag}_{min_lag}_mean"
+    mom_count_col = f"mom_{max_lag}_{min_lag}_count"
+    cvg_col = f"cvg_{max_lag}_{min_lag}"
+    cvg_count_col = f"cvg_count_{max_lag}_{min_lag}"
+    for col in (mom_mean_col, mom_count_col):
+        if col not in momentum.columns:
+            raise ValueError(f"Momentum output missing required column {col!r}")
+    for col in (cvg_col, cvg_count_col):
+        if col not in cvg.columns:
+            raise ValueError(f"CVG output missing required column {col!r}")
+
+    mom_part = momentum.loc[:, ["ticker", "date", mom_mean_col, mom_count_col]].copy()
+    mom_part["date"] = pd.to_datetime(mom_part["date"]).dt.normalize()
+    cvg_part = cvg.loc[:, ["ticker", "date", cvg_col, cvg_count_col]].copy()
+    cvg_part["date"] = pd.to_datetime(cvg_part["date"]).dt.normalize()
+
+    merged = mom_part.merge(
+        cvg_part,
+        on=["ticker", "date"],
+        how="inner",
+        validate="one_to_one",
+    )
+    merged_pairs = _normalized_key_pairs(
+        merged, ticker_col="ticker", date_col="date", label="merged features"
+    )
+    _assert_key_set_equal(merged_pairs, canonical_pairs, label="merged features")
+    if len(merged) != len(canonical_pairs):
+        raise ValueError(
+            f"merged feature row count {len(merged)} != canonical D2 key count "
+            f"{len(canonical_pairs)}"
+        )
+
+    out = merged.loc[:, publish_columns].sort_values(
+        ["ticker", "date"], kind="mergesort"
+    ).reset_index(drop=True)
+    if list(out.columns) != publish_columns:
+        raise ValueError(
+            f"published columns {list(out.columns)!r} != required {publish_columns!r}"
+        )
+    return out
+
+
+def write_staging_feature_file(
+    frame: pd.DataFrame,
+    staging_dir: Path | str,
+    window: tuple[int, int],
+) -> Path:
+    """Write one six-column window frame into an existing staging directory."""
+    staging = Path(staging_dir)
+    if not staging.is_dir():
+        raise ValueError(f"staging directory does not exist: {staging}")
+    max_lag, min_lag = int(window[0]), int(window[1])
+    target = staging / f"features_{max_lag}_{min_lag}.parquet"
+    if target.exists():
+        raise ValueError(f"refusing to overwrite existing staging file: {target}")
+    frame.to_parquet(target, index=False, compression="snappy")
+    return target.resolve()
