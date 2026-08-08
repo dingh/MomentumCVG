@@ -626,6 +626,7 @@ def _panel_for_window(n_dates: int = 12) -> pd.DataFrame:
 def test_compute_one_window_end_to_end_with_production_calculators(bf, monkeypatch):
     cfg = bf.load_feature_backfill_config(SPEC_PATH)
     observations = _panel_for_window()
+    canonical = bf.build_canonical_key_index(observations)
     window = (6, 2)
     mom_calls: list[dict] = []
     cvg_calls: list[dict] = []
@@ -660,7 +661,7 @@ def test_compute_one_window_end_to_end_with_production_calculators(bf, monkeypat
     monkeypatch.setattr(bf.MomentumCalculator, "calculate_bulk", spy_mom)
     monkeypatch.setattr(bf.CVGCalculator, "calculate_bulk", spy_cvg)
 
-    out = bf.compute_one_window_features(observations, window, cfg)
+    out = bf.compute_one_window_features(observations, window, cfg, canonical)
 
     assert len(mom_calls) == 1 and len(cvg_calls) == 1
     assert mom_calls[0]["windows"] == [(6, 2)]
@@ -701,6 +702,61 @@ def test_compute_one_window_end_to_end_with_production_calculators(bf, monkeypat
     assert row["cvg_count_6_2"] == 5
 
 
+def test_canonical_key_index_built_once_and_reused(bf):
+    cfg = bf.load_feature_backfill_config(SPEC_PATH)
+    observations = _panel_for_window()
+    canonical = bf.build_canonical_key_index(observations)
+    assert isinstance(canonical, pd.MultiIndex)
+    assert len(canonical) == len(observations)
+    assert canonical.is_unique
+
+    out_a = bf.compute_one_window_features(observations, (6, 2), cfg, canonical)
+    out_b = bf.compute_one_window_features(observations, (8, 2), cfg, canonical)
+    assert len(out_a) == len(canonical)
+    assert len(out_b) == len(canonical)
+    assert list(out_a.columns) == [
+        "ticker",
+        "date",
+        "mom_6_2_mean",
+        "mom_6_2_count",
+        "cvg_6_2",
+        "cvg_count_6_2",
+    ]
+    assert list(out_b.columns) == [
+        "ticker",
+        "date",
+        "mom_8_2_mean",
+        "mom_8_2_count",
+        "cvg_8_2",
+        "cvg_count_8_2",
+    ]
+
+
+def test_compute_accepts_reordered_calculator_keys(bf, monkeypatch):
+    cfg = bf.load_feature_backfill_config(SPEC_PATH)
+    observations = _panel_for_window()
+    canonical = bf.build_canonical_key_index(observations)
+    orig_mom = bf.MomentumCalculator.calculate_bulk
+    orig_cvg = bf.CVGCalculator.calculate_bulk
+
+    def shuffle_mom(self, context, start_date, end_date, tickers=None):
+        out = orig_mom(self, context, start_date, end_date, tickers=tickers)
+        return out.sample(frac=1.0, random_state=0).reset_index(drop=True)
+
+    def shuffle_cvg(self, context, start_date, end_date, tickers=None):
+        out = orig_cvg(self, context, start_date, end_date, tickers=tickers)
+        return out.sample(frac=1.0, random_state=1).reset_index(drop=True)
+
+    monkeypatch.setattr(bf.MomentumCalculator, "calculate_bulk", shuffle_mom)
+    monkeypatch.setattr(bf.CVGCalculator, "calculate_bulk", shuffle_cvg)
+
+    out = bf.compute_one_window_features(observations, (6, 2), cfg, canonical)
+    assert len(out) == len(canonical)
+    assert out.equals(
+        out.sort_values(["ticker", "date"], kind="mergesort").reset_index(drop=True)
+    )
+
+
 @pytest.mark.parametrize(
     "which, mutator, match",
     [
@@ -734,11 +790,22 @@ def test_compute_one_window_end_to_end_with_production_calculators(bf, monkeypat
             lambda df: df.assign(ticker=df["ticker"].where(df.index != 0, "ZZZ")),
             "CVG output keys",
         ),
+        (
+            "momentum",
+            lambda df: df.assign(ticker=df["ticker"].where(df.index != 0, None)),
+            "null",
+        ),
+        (
+            "cvg",
+            lambda df: df.assign(ticker=df["ticker"].where(df.index != 0, None)),
+            "null",
+        ),
     ],
 )
 def test_compute_fails_on_malformed_calculator_keys(bf, monkeypatch, which, mutator, match):
     cfg = bf.load_feature_backfill_config(SPEC_PATH)
     observations = _panel_for_window()
+    canonical = bf.build_canonical_key_index(observations)
     window = (6, 2)
 
     if which == "momentum":
@@ -757,7 +824,7 @@ def test_compute_fails_on_malformed_calculator_keys(bf, monkeypatch, which, muta
         monkeypatch.setattr(bf.CVGCalculator, "calculate_bulk", bad)
 
     with pytest.raises(ValueError, match=match):
-        bf.compute_one_window_features(observations, window, cfg)
+        bf.compute_one_window_features(observations, window, cfg, canonical)
 
 
 def test_write_staging_feature_file_schema_and_no_overwrite(bf, tmp_path):
@@ -765,8 +832,9 @@ def test_write_staging_feature_file_schema_and_no_overwrite(bf, tmp_path):
 
     cfg = bf.load_feature_backfill_config(SPEC_PATH)
     observations = _panel_for_window()
+    canonical = bf.build_canonical_key_index(observations)
     window = (6, 2)
-    frame = bf.compute_one_window_features(observations, window, cfg)
+    frame = bf.compute_one_window_features(observations, window, cfg, canonical)
 
     staging = tmp_path / "staging"
     staging.mkdir()
@@ -794,7 +862,10 @@ def test_write_staging_feature_file_schema_and_no_overwrite(bf, tmp_path):
 
 def test_write_staging_requires_existing_directory(bf, tmp_path):
     cfg = bf.load_feature_backfill_config(SPEC_PATH)
-    frame = bf.compute_one_window_features(_panel_for_window(), (6, 2), cfg)
+    observations = _panel_for_window()
+    frame = bf.compute_one_window_features(
+        observations, (6, 2), cfg, bf.build_canonical_key_index(observations)
+    )
     missing = tmp_path / "does_not_exist"
     with pytest.raises(ValueError, match="staging directory does not exist"):
         bf.write_staging_feature_file(frame, missing, (6, 2))

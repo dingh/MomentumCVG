@@ -444,41 +444,62 @@ def render_output_columns(
     return rendered
 
 
-def _normalized_key_pairs(
+def build_canonical_key_index(observations: pd.DataFrame) -> pd.MultiIndex:
+    """Build a compact sorted ``(ticker, date)`` MultiIndex from validated D2 keys.
+
+    Call once before the window loop and reuse the same object for every window.
+    """
+    if "ticker" not in observations.columns or "entry_date" not in observations.columns:
+        raise ValueError("D2 observations missing key columns 'ticker'/'entry_date'")
+    if observations["ticker"].isna().any() or observations["entry_date"].isna().any():
+        raise ValueError("D2 observations contain null ticker/entry_date keys")
+    index = pd.MultiIndex.from_arrays(
+        [
+            observations["ticker"].astype(str).to_numpy(),
+            pd.to_datetime(observations["entry_date"]).dt.normalize().to_numpy(),
+        ],
+        names=["ticker", "date"],
+    )
+    if not index.is_unique:
+        raise ValueError("D2 observations contain duplicate (ticker, entry_date) keys")
+    return index.sort_values()
+
+
+def _key_index_from_frame(
     frame: pd.DataFrame, *, ticker_col: str, date_col: str, label: str
-) -> list[tuple[str, pd.Timestamp]]:
-    """Return ordered unique `(ticker, normalized date)` pairs or fail."""
+) -> pd.MultiIndex:
+    """Build a compact key MultiIndex from a calculator frame or fail."""
     if ticker_col not in frame.columns or date_col not in frame.columns:
         raise ValueError(f"{label} missing key columns {ticker_col!r}/{date_col!r}")
     if frame[ticker_col].isna().any() or frame[date_col].isna().any():
         raise ValueError(f"{label} contains null {ticker_col}/{date_col} keys")
-    tickers = frame[ticker_col].astype(str)
-    dates = pd.to_datetime(frame[date_col]).dt.normalize()
-    pairs = list(zip(tickers.tolist(), dates.tolist(), strict=True))
-    if len(pairs) != len(set(pairs)):
+    index = pd.MultiIndex.from_arrays(
+        [
+            frame[ticker_col].astype(str).to_numpy(),
+            pd.to_datetime(frame[date_col]).dt.normalize().to_numpy(),
+        ],
+        names=["ticker", "date"],
+    )
+    if not index.is_unique:
         raise ValueError(f"{label} contains duplicate ({ticker_col}, {date_col}) keys")
-    return pairs
+    return index
 
 
-def _assert_key_set_equal(
-    actual_pairs: Sequence[tuple[str, pd.Timestamp]],
-    expected_pairs: Sequence[tuple[str, pd.Timestamp]],
+def _assert_key_index_equal(
+    actual: pd.MultiIndex,
+    expected: pd.MultiIndex,
     *,
     label: str,
 ) -> None:
-    actual_set = set(actual_pairs)
-    expected_set = set(expected_pairs)
-    if actual_set != expected_set:
-        missing = sorted(expected_set - actual_set)
-        unexpected = sorted(actual_set - expected_set)
+    """Require exact key-set equality via pandas index ops (order-independent)."""
+    missing = expected.difference(actual)
+    unexpected = actual.difference(expected)
+    if len(missing) or len(unexpected) or len(actual) != len(expected):
+        missing_sample = [missing[i] for i in range(min(5, len(missing)))]
+        unexpected_sample = [unexpected[i] for i in range(min(5, len(unexpected)))]
         raise ValueError(
             f"{label} keys are not exactly equal to the canonical D2 key set; "
-            f"missing={missing[:5]!r} unexpected={unexpected[:5]!r}"
-        )
-    if len(actual_pairs) != len(expected_pairs):
-        raise ValueError(
-            f"{label} key count {len(actual_pairs)} != canonical D2 key count "
-            f"{len(expected_pairs)}"
+            f"missing={missing_sample!r} unexpected={unexpected_sample!r}"
         )
 
 
@@ -486,6 +507,7 @@ def compute_one_window_features(
     observations: pd.DataFrame,
     window: tuple[int, int],
     config: FeatureBackfillConfig,
+    canonical_key_index: pd.MultiIndex,
 ) -> pd.DataFrame:
     """Compute one window's six-column publish frame from a validated D2 panel."""
     if not isinstance(window, tuple) or len(window) != 2:
@@ -502,10 +524,17 @@ def compute_one_window_features(
             "observations columns must exactly match the validated required_columns "
             f"{config.required_columns!r}, got {list(observations.columns)!r}"
         )
+    if not isinstance(canonical_key_index, pd.MultiIndex):
+        raise TypeError(
+            "canonical_key_index must be a pandas MultiIndex, "
+            f"got {type(canonical_key_index)!r}"
+        )
+    if len(canonical_key_index) != len(observations):
+        raise ValueError(
+            f"canonical_key_index length {len(canonical_key_index)} != "
+            f"observations row count {len(observations)}"
+        )
 
-    canonical_pairs = _normalized_key_pairs(
-        observations, ticker_col="ticker", date_col="entry_date", label="D2 observations"
-    )
     start_date = pd.to_datetime(observations["entry_date"]).min()
     end_date = pd.to_datetime(observations["entry_date"]).max()
     context = FeatureDataContext(straddle_history=observations)
@@ -529,14 +558,20 @@ def compute_one_window_features(
         tickers=None,
     )
 
-    mom_pairs = _normalized_key_pairs(
-        momentum, ticker_col="ticker", date_col="date", label="Momentum output"
+    _assert_key_index_equal(
+        _key_index_from_frame(
+            momentum, ticker_col="ticker", date_col="date", label="Momentum output"
+        ),
+        canonical_key_index,
+        label="Momentum output",
     )
-    cvg_pairs = _normalized_key_pairs(
-        cvg, ticker_col="ticker", date_col="date", label="CVG output"
+    _assert_key_index_equal(
+        _key_index_from_frame(
+            cvg, ticker_col="ticker", date_col="date", label="CVG output"
+        ),
+        canonical_key_index,
+        label="CVG output",
     )
-    _assert_key_set_equal(mom_pairs, canonical_pairs, label="Momentum output")
-    _assert_key_set_equal(cvg_pairs, canonical_pairs, label="CVG output")
 
     publish_columns = render_output_columns(
         config.output_columns_per_window, max_lag, min_lag
@@ -563,15 +598,15 @@ def compute_one_window_features(
         how="inner",
         validate="one_to_one",
     )
-    merged_pairs = _normalized_key_pairs(
-        merged, ticker_col="ticker", date_col="date", label="merged features"
-    )
-    _assert_key_set_equal(merged_pairs, canonical_pairs, label="merged features")
-    if len(merged) != len(canonical_pairs):
+    if len(merged) != len(canonical_key_index):
         raise ValueError(
             f"merged feature row count {len(merged)} != canonical D2 key count "
-            f"{len(canonical_pairs)}"
+            f"{len(canonical_key_index)}"
         )
+    if merged["ticker"].isna().any() or merged["date"].isna().any():
+        raise ValueError("merged features contain null ticker/date keys")
+    if merged.duplicated(["ticker", "date"]).any():
+        raise ValueError("merged features contain duplicate (ticker, date) keys")
 
     out = merged.loc[:, publish_columns].sort_values(
         ["ticker", "date"], kind="mergesort"
