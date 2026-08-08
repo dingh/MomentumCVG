@@ -142,7 +142,14 @@ def test_real_config_expands_to_281_ordered_windows(bf):
     assert cfg.momentum_min_periods == 1
     assert cfg.cvg_min_periods == 1
     assert cfg.required_columns == REQUIRED_COLUMNS
-    assert "mom_{max}_{min}_mean" in cfg.output_columns_per_window
+    assert cfg.output_columns_per_window == [
+        "ticker",
+        "date",
+        "mom_{max}_{min}_mean",
+        "mom_{max}_{min}_count",
+        "cvg_{max}_{min}",
+        "cvg_count_{max}_{min}",
+    ]
     assert cfg.config_sha256 == sha256_file(SPEC_PATH)
     assert cfg.config_path == SPEC_PATH.resolve()
 
@@ -160,6 +167,86 @@ def test_config_malformed_expected_count_fails(bf, tmp_path):
     raw["windows"]["expected_count"] = 280
     bad = _write_json(tmp_path / "bad_count.json", raw)
     with pytest.raises(ValueError, match="expected_count"):
+        bf.load_feature_backfill_config(bad)
+
+
+def test_shifted_281_grid_fails_frozen_endpoints(bf, tmp_path):
+    """A 281-window grid like (4,0)…(58,22) must not pass as the frozen v1 grid."""
+    raw = json.loads(SPEC_PATH.read_text(encoding="utf-8"))
+    raw["windows"]["min_lag_start"] = 0
+    raw["windows"]["min_lag_end"] = 22
+    raw["windows"]["max_lag_start"] = 4
+    raw["windows"]["max_lag_end"] = 58
+    bad = _write_json(tmp_path / "shifted_grid.json", raw)
+    with pytest.raises(ValueError, match=r"must start with \(6, 2\)"):
+        bf.load_feature_backfill_config(bad)
+
+
+@pytest.mark.parametrize(
+    "section, value",
+    [
+        ("momentum", 3),
+        ("momentum", 0),
+        ("cvg", 5),
+        ("cvg", 2),
+    ],
+)
+def test_min_periods_must_be_exactly_one(bf, tmp_path, section, value):
+    raw = json.loads(SPEC_PATH.read_text(encoding="utf-8"))
+    raw[section]["min_periods"] = value
+    bad = _write_json(tmp_path / f"bad_{section}_min_{value}.json", raw)
+    with pytest.raises(ValueError, match=rf"{section}\.min_periods must be 1"):
+        bf.load_feature_backfill_config(bad)
+
+
+@pytest.mark.parametrize(
+    "field, value, match",
+    [
+        (
+            "required_columns",
+            ["ticker"],
+            "required_columns must exactly match",
+        ),
+        (
+            "output_columns_per_window",
+            ["ticker"],
+            "output_columns_per_window must exactly match",
+        ),
+        (
+            "required_columns",
+            [
+                "ticker",
+                "entry_date",
+                "return_pct",
+                "entry_iv",
+                "realized_volatility",
+                "vol_gap",
+                "extra_col",
+            ],
+            "required_columns must exactly match",
+        ),
+        (
+            "output_columns_per_window",
+            [
+                "date",
+                "ticker",
+                "mom_{max}_{min}_mean",
+                "mom_{max}_{min}_count",
+                "cvg_{max}_{min}",
+                "cvg_count_{max}_{min}",
+            ],
+            "output_columns_per_window must exactly match",
+        ),
+    ],
+)
+def test_exact_v1_schemas_enforced(bf, tmp_path, field, value, match):
+    raw = json.loads(SPEC_PATH.read_text(encoding="utf-8"))
+    if field == "required_columns":
+        raw["input_schema"]["required_columns"] = value
+    else:
+        raw["output_columns_per_window"] = value
+    bad = _write_json(tmp_path / f"bad_{field}.json", raw)
+    with pytest.raises(ValueError, match=match):
         bf.load_feature_backfill_config(bad)
 
 
@@ -191,6 +278,7 @@ def test_valid_synthetic_d2_passes_and_uses_a1_key_digest(bf, tmp_path):
         required_columns=REQUIRED_COLUMNS,
     )
     assert len(validated.observations) == len(df)
+    assert list(validated.observations.columns) == REQUIRED_COLUMNS
     assert validated.output_key_digest == a1_key_digest(df)
     assert validated.file_sha256 == sha256_file(obs_path)
     assert validated.row_count == len(df)
@@ -198,6 +286,24 @@ def test_valid_synthetic_d2_passes_and_uses_a1_key_digest(bf, tmp_path):
     assert not (tmp_path / "features").exists()
     assert not (tmp_path / "features.building").exists()
     assert not list(tmp_path.rglob("features_backfill_v1.lineage.json"))
+
+
+def test_validated_d2_frame_keeps_only_required_columns(bf, tmp_path):
+    df = _synthetic_observations()
+    df["extra_noise"] = 123.0
+    df["another_extra"] = "x"
+    obs_path, lineage_path = _write_d2_pair(tmp_path, df)
+    validated = bf.validate_d2_input(
+        observations_path=obs_path,
+        d2_lineage_path=lineage_path,
+        expected_snapshot_id="snaptest01",
+        expected_build_id="buildtest01",
+        required_columns=REQUIRED_COLUMNS,
+    )
+    assert list(validated.observations.columns) == REQUIRED_COLUMNS
+    assert "extra_noise" not in validated.observations.columns
+    assert "another_extra" not in validated.observations.columns
+    assert len(validated.observations) == len(df)
 
 
 @pytest.mark.parametrize(

@@ -21,6 +21,25 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _COMMIT_SHA_PATTERN_LEN = 40
 _MUTABLE_CACHE_ROOT = Path(r"C:/MomentumCVG_env/cache")
 
+# Exact approved schemas from configs/feature_backfill_v1.json (order matters).
+_APPROVED_REQUIRED_COLUMNS = [
+    "ticker",
+    "entry_date",
+    "return_pct",
+    "entry_iv",
+    "realized_volatility",
+    "vol_gap",
+    "expiry_date",
+]
+_APPROVED_OUTPUT_COLUMNS_PER_WINDOW = [
+    "ticker",
+    "date",
+    "mom_{max}_{min}_mean",
+    "mom_{max}_{min}_count",
+    "cvg_{max}_{min}",
+    "cvg_count_{max}_{min}",
+]
+
 
 @dataclass(frozen=True)
 class FeatureBackfillConfig:
@@ -172,6 +191,14 @@ def load_feature_backfill_config(config_path: Path | str) -> FeatureBackfillConf
         raise ValueError("expanded window list contains duplicates")
     if any(max_lag <= min_lag for max_lag, min_lag in windows):
         raise ValueError("every window must satisfy max_lag > min_lag")
+    if windows[0] != (6, 2):
+        raise ValueError(
+            f"frozen grid must start with (6, 2), got {windows[0]}"
+        )
+    if windows[-1] != (60, 24):
+        raise ValueError(
+            f"frozen grid must end with (60, 24), got {windows[-1]}"
+        )
 
     baseline_cfg = _require_mapping(
         raw.get("baseline_window"), "feature config.baseline_window"
@@ -189,6 +216,12 @@ def load_feature_backfill_config(config_path: Path | str) -> FeatureBackfillConf
     cvg_cfg = _require_mapping(raw.get("cvg"), "feature config.cvg")
     momentum_min_periods = _require_int(momentum_cfg, "min_periods", "momentum")
     cvg_min_periods = _require_int(cvg_cfg, "min_periods", "cvg")
+    if momentum_min_periods != 1:
+        raise ValueError(
+            f"momentum.min_periods must be 1, got {momentum_min_periods}"
+        )
+    if cvg_min_periods != 1:
+        raise ValueError(f"cvg.min_periods must be 1, got {cvg_min_periods}")
 
     input_schema = _require_mapping(
         raw.get("input_schema"), "feature config.input_schema"
@@ -199,6 +232,17 @@ def load_feature_backfill_config(config_path: Path | str) -> FeatureBackfillConf
     output_columns = _require_str_list(
         raw, "output_columns_per_window", "feature config"
     )
+    if required_columns != _APPROVED_REQUIRED_COLUMNS:
+        raise ValueError(
+            "input_schema.required_columns must exactly match the approved "
+            f"v1 schema {_APPROVED_REQUIRED_COLUMNS!r}, got {required_columns!r}"
+        )
+    if output_columns != _APPROVED_OUTPUT_COLUMNS_PER_WINDOW:
+        raise ValueError(
+            "output_columns_per_window must exactly match the approved "
+            f"v1 schema {_APPROVED_OUTPUT_COLUMNS_PER_WINDOW!r}, "
+            f"got {output_columns!r}"
+        )
 
     return FeatureBackfillConfig(
         spec_version=spec_version,
@@ -326,6 +370,8 @@ def validate_d2_input(
             f"key digest mismatch: a1_key_digest() produced {recomputed_digest}, "
             f"lineage output.output_key_digest {output_key_digest}"
         )
+
+    observations = observations.loc[:, list(required_columns)].copy()
 
     return ValidatedD2Input(
         observations=observations,
