@@ -128,7 +128,9 @@ Prefer the published snapshot + manifest over a mutable cache:
 - [ ] `production_accepted=true` and `params.scope=full` for production use
 - [ ] Surface consumers filter `surface_valid=True`
 - [ ] PIT universe uses one global snapshot with `month_date < t` (same snapshot for all tickers; never `<= t`)
-- [ ] No A4/feature validation expected until Sprint 005 scope is accepted
+- [ ] This runbook remains limited to Sprint 004 accepted input-snapshot / producer scope; it does not define A4 feature refresh
+
+Sprint 005 is `CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS` ([005_closeout.md](sprint_memos/005_closeout.md)). Accepted full-history feature artifacts live under `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/`. That acceptance does **not** authorize incremental feature refresh, Sprint 006, strategy evaluation, or shadow trading. Any weekly feature-refresh procedure requires separate planning and acceptance.
 
 ---
 
@@ -138,7 +140,7 @@ Prefer the published snapshot + manifest over a mutable cache:
 |---------|--------------|--------|
 | Split adjustment errors | Missing splits for ticker | Re-fetch / repair scoped tickers; re-audit |
 | Empty liquidity panel rows | ORATS gap on scan date | Check ORATS coverage |
-| Straddle history / features | Sprint 005 not accepted yet | Hold until scope review completes |
+| Straddle history / features missing or unexpected | Wrong derived root, or expecting this runbook to refresh features | Use accepted Sprint 005 derived artifacts per [005_closeout.md](sprint_memos/005_closeout.md); do not invent refresh steps here |
 | Treating mutable cache as production | Wrong handoff | Use published snapshot manifest |
 
 ---
@@ -152,3 +154,4 @@ Prefer the published snapshot + manifest over a mutable cache:
 | 2026-06-29 | C4 liquidity panel commands, paths, failure modes |
 | 2026-07-04 | C5 adjusted-liquid paths, pipeline order, audit commands |
 | 2026-07-26 | Snapshot-first handoff; obsolete weekly CLI claims marked historical/deferred |
+| 2026-08-09 | Align to Sprint 005 closeout; remove stale “005 not accepted” hold language |
