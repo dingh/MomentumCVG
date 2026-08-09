@@ -15,7 +15,7 @@
 | D3 receipt | `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/features_backfill_v1.lineage.json` (`status=complete`; SHA-256 `c585bce169d897d8a393e9cbf7c62a4e42d28e9139e4dce51eabdacc8f4866a5`) |
 | D4 implementation | `22a8375d2d6c3b2dbd661697d9524548ea6def9a` |
 | D4 evidence commit | `3c59f05ed971b0d56afd39937113a4f55e0880a1` |
-| Approved plan | `docs/tmp/sprint005_d5_surface_runner_consumer_smoke_plan.md` |
+| Approved plan commit | `b19e9c8869664bf1ebc9e0b796f8045dd900a196` (plan retired at Sprint 005 closeout) |
 
 ## Startup identity gate
 

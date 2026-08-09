@@ -1,7 +1,7 @@
 # V1 weekly input runbook
 
 **Status:** Active (producer / repair notes) — **not** the accepted production handoff
-**Last updated:** 2026-07-26 (aligned to Sprint 004 closeout)
+**Last updated:** 2026-08-09 (aligned to Sprint 005 closeout)
 **Owner:** Operator + agent
 
 ---
@@ -34,8 +34,9 @@ Historical and operational notes for Stage A **producer scripts** (liquidity, ad
 **Companion docs:**
 
 - [sprint_memos/004_closeout.md](sprint_memos/004_closeout.md) — accepted snapshot
+- [sprint_memos/005_closeout.md](sprint_memos/005_closeout.md) — accepted features + consumer smoke
 - [v1_universe_protocol.md](v1_universe_protocol.md) — PIT trading universe rule
-- [agenda/current_sprint.md](agenda/current_sprint.md) — Sprint 005 scope under review
+- [agenda/current_sprint.md](agenda/current_sprint.md) — Sprint 005 closed; next sprint not authorized
 - [surface_engine_data_contract.md](surface_engine_data_contract.md) — A1–A4 schemas
 
 ---

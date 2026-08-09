@@ -85,7 +85,7 @@ Producer and repair notes: [v1_weekly_runbook.md](v1_weekly_runbook.md). Accepte
 | Accepted snapshot | `C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886` | Resolve liquidity, adjusted chains, spot, surface via manifest `e2c1f8fd44d72176` |
 | ORATS raw chains | `C:/ORATS/data/ORATS_Data` | Producer input for liquidity panel rebuilds |
 | Producer liquidity / adjusted / cache | `C:/MomentumCVG_env/input/…`, `C:/MomentumCVG_env/cache/…` | Mutable working locations — not interchangeable with a published snapshot |
-| Features (momentum/CVG) | Not yet produced for Sprint 005 | Scope under review |
+| Features (momentum/CVG) | `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/features/` | Sprint 005 closed; see [005_closeout.md](sprint_memos/005_closeout.md) |
 
 ---
 

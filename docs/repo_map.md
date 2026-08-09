@@ -1,7 +1,7 @@
 # Repository map
 
 **Status:** Active  
-**Last updated:** 2026-07-26 (Sprint 004 closeout — snapshot-first handoff)
+**Last updated:** 2026-08-09 (Sprint 005 closeout — features handoff)
 
 ---
 
@@ -29,7 +29,8 @@ MomentumCVG/
 | `C:/MomentumCVG_env/input/adjusted_liquid` | Producer / legacy working root for split-adjusted chains (C5) — **not** interchangeable with a published snapshot |
 | `C:/MomentumCVG_env/input/liquidity` | Producer liquidity panel artifacts |
 | `C:/ORATS/data/ORATS_Adjusted` | Legacy full-universe adjusted mirror (maintenance only; not active default) |
-| `C:/MomentumCVG_env/cache/` | Mutable producer cache (spot, surfaces, features) — not the accepted handoff |
+| `C:/MomentumCVG_env/cache/` | Mutable producer cache (spot, surfaces) — not the accepted handoff |
+| `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/` | Accepted Sprint 005 derived artifacts (D2 observations, 281 feature windows, receipts) |
 | `C:/MomentumCVG_env/venv/` | Python virtual environment |
 
 Trusted downstream consumption uses the immutable published snapshot + manifest ([sprint_memos/004_closeout.md](sprint_memos/004_closeout.md)). Mutable `input/` and `cache/` roots remain valid **producer** locations only.
@@ -90,7 +91,8 @@ ORATS raw ZIPs (ORATS_Data)
     → publish immutable snapshot + manifest  → accepted Stage A handoff (Sprint 004)
 
 Published snapshot (manifest-resolved paths)
-    → build_features.py        → momentum + CVG features (Sprint 005 — scope under review)
+    → straddle observations (D2) → backfill_features.py → features_{max}_{min}.parquet (Sprint 005 — closed)
+      under C:/MomentumCVG_env/derived/<snapshot_id>/
 
 At rebalance date t:
     step1_get_universe (liquidity panel, PIT)
@@ -111,7 +113,8 @@ At rebalance date t:
 | `audit_adjusted_liquid.py` | PASS/WARN/FAIL audit report |
 | `extract_spot_prices.py` | Spot DB |
 | `build_liquidity_panel.py` | Liquidity panel (raw ORATS only) |
-| `build_features.py` | Feature parquet |
+| `backfill_features.py` | Sprint 005 281-window feature parquet set (accepted derived root) |
+| `build_features.py` | Legacy / helper feature path (not Sprint 005 authority) |
 | `precompute_option_surface.py` | Surface artifacts |
 | `run_surface_search.py` | Backtest / search results |
 
