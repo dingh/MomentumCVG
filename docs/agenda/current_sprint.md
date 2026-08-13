@@ -1,80 +1,207 @@
-# Current sprint — 005
+# Current sprint — 006
 
-**Updated:** 2026-08-09
-**Status:** `CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`
-**Mode:** Closed (no active Build authorization)
-**Closeout:** [`005_closeout.md`](../sprint_memos/005_closeout.md)
-**Previous:** Sprint 004 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/004_closeout.md)
-
----
-
-## 1. Sprint goal
-
-Produce trusted, reproducible, full-history weekly Momentum/CVG features from the accepted Sprint 004 surface snapshot so a future Sprint 006 can run a first credible real-data economic backtest.
-
-**Outcome:** Goal met under documented limitations. See the closeout memo.
+**Updated:** 2026-08-12
+**Status:** `PROPOSED — AWAITING ACCEPTANCE`
+**Mode:** Proposed. Acceptance authorizes D0 only. D1–D4 work is authorized one deliverable at a time after a short deliverable design is reviewed and accepted.
+**Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`; HEAD verified unchanged at proposal)
 
 ---
 
-## 2. Context and role in the project
+## 1. Sprint intent
+
+Bridge from trusted historical features to the **first economic backtest result we can genuinely trust**.
+
+**Central question:** Does the frozen `42:8` Momentum+CVG signal produce believable economic results on the accepted real dataset after conservative transaction costs?
+
+A weak or negative strategy result is still a successful Sprint 006 outcome if the evidence is correct and complete. This is not another general infrastructure sprint.
+
+---
+
+## 2. Starting point (Sprint 005)
+
+Sprint 005 closed with accepted, lineaged artifacts and a one-date `SurfaceRunner` consumability smoke — not an economic evaluation.
+
+| Input | Identity |
+|-------|----------|
+| Snapshot | `e2c1f8fd44d72176` / build `20260724T045049097520Z_40b16886` |
+| Snapshot root | `C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886` |
+| Derived root | `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/` |
+| Features | Frozen 281-window grid; baseline `(42,8)` ready interval `2018-10-26` → `2026-07-10` |
+| Existing execution path | `SurfaceRunner` (`scripts/run_surface_search.py` → S1→S8 pipeline + surface metrics); to be validated and minimally repaired in D1 before acceptance as the baseline runner |
+
+Do not reopen or redesign accepted Sprint 004/005 work.
 
 ```text
-Sprint 004: trusted immutable input snapshot (done)
-Sprint 005: trusted full-history weekly Momentum/CVG features  ← CLOSED
-Sprint 006: first credible real-data economic backtest (not started; requires separate authorization)
-Later:     shadow signals and execution observation
+Sprint 004: trusted immutable input snapshot          ← CLOSED
+Sprint 005: trusted full-history weekly Mom/CVG        ← CLOSED
+Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (proposed)
+Sprint 007: bounded robustness (only after 006 trusted)
 ```
 
-**Accepted input:** snapshot `e2c1f8fd44d72176` / build `20260724T045049097520Z_40b16886` at `C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886`.
+---
 
-**Canonical bridge delivered:** Surface (A1/A2) → D2 straddle observations → frozen 281-window Momentum/CVG features → D5 `SurfaceRunner` consumability smoke on baseline `(42,8)`.
+## 3. Agenda-level decisions (fixed for this sprint)
+
+These are locked at the agenda level. Exact numeric values and detailed economic rules are frozen in **D0** (not chosen here) before any new P&L is inspected:
+
+* One fixed `42:8` Momentum+CVG baseline — not a parameter search
+* Accepted Sprint 005 feature and surface artifacts as inputs
+* Weekly option positions held to expiration
+* Long ATM straddles; short iron flies
+* Diagnostic mid-price results **and** conservative cross-price results, with **cross fills as the primary economic view**
+* Full accepted historical coverage, with a clearly identified primary reporting period
+* Joint Momentum and CVG eligibility and data-coverage checks
+* Reproducible inputs, configuration, code identity, outputs, and evidence
+* Decision-oriented reporting: returns, risk, stability, costs, side attribution, concentration, trading activity, and data availability
+* Manual verification of a small trade sample before accepting the full result
+* No retuning after observing the result
 
 ---
 
-## 3. Required deliverables
+## 4. What must be achieved
 
-### D1 — Feature specification + bounded Momentum/CVG audit — `ACCEPTED`
-**Status:** Accepted 2026-08-03. Spec `configs/feature_backfill_v1.json`; correctness memo [`005_feature_correctness_audit.md`](../sprint_memos/005_feature_correctness_audit.md); zero-neutral fix `ff68a3d`; acceptance `0dec69e`.
-
-### D2 — Canonical surface → straddle observation transform — `ACCEPTED`
-**Status:** Accepted 2026-08-01. Artifact under `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/` (lineage `repo_sha` `6f0d570`); design [`surface_straddle_observation_transform_design.md`](../surface_straddle_observation_transform_design.md); acceptance `3f598eb`.
-
-### D3 — Standalone full-history feature backfill — `ACCEPTED`
-**Status:** Accepted. Producer SHA `131d0ac`; evidence [`sprint005_d3_production_backfill_evidence.md`](../sprint_memos/sprint005_d3_production_backfill_evidence.md) (`816e28f`); 281 windows + complete receipt.
-
-### D4 — Complete Momentum/CVG outputs + coverage evidence — `ACCEPTED`
-**Status:** Accepted. Implementation `22a8375`; evidence [`sprint005_d4_quality_audit_evidence.md`](../sprint_memos/sprint005_d4_quality_audit_evidence.md) (`3c59f05`).
-
-### D5 — Sprint 006 consumer smoke + acceptance evidence — `ACCEPTED`
-**Status:** Accepted. Plan `b19e9c8`; evidence [`sprint005_d5_surface_runner_smoke_evidence.md`](../sprint_memos/sprint005_d5_surface_runner_smoke_evidence.md) (`3892079`).
+By sprint end: a reproducible, trustworthy answer to the central question — positive, negative, or inconclusive — with enough evidence to recommend the next step without changing parameters in response to observed P&L.
 
 ---
 
-## 4. Execution order (completed)
+## 5. In scope / out of scope
 
-1. ~~**D2** — Surface→straddle transform~~ **done**
-2. ~~**D1** — Spec + bounded Momentum/CVG audit~~ **done**
-3. ~~**D3** — Standalone 281-window backfill~~ **done**
-4. ~~**D4** — Coverage / missingness / PIT evidence~~ **done**
-5. ~~**D5** — SurfaceRunner consumer smoke~~ **done**
+### In scope
+
+* Freeze and run one fixed baseline on accepted real artifacts via the existing Surface path
+* Joint eligibility / coverage correctness so failed or no-trade dates cannot disappear silently
+* Diagnostic mid + conservative cross evaluation; decision-quality reporting
+* Small-sample manual verification, full-history execution, reproducibility evidence, and closeout recommendation
+
+### Explicitly out of scope
+
+* Searching or ranking all 281 feature windows
+* Broad hyperparameter optimization
+* Walk-forward model or parameter selection
+* Tier B integer-lot portfolio construction or a production dollar capital budget
+* Live or shadow trading integration
+* Broker connectivity, scheduling, monitoring, or order management
+* A generic multi-strategy research platform
+* New feature engineering unless a defect directly invalidates baseline correctness
+* PIT earnings filtering without a trusted accepted earnings artifact
+* Iron-condor comparison while KB-001 remains open
+* Unrelated refactoring, cleanup, or known-bug fixes that do not block the baseline
 
 ---
 
-## 5. Definition of done
+## 6. High-level deliverables
 
-- [x] D1–D5 done under the blocker test
-- [x] Straddle history preserves the full accepted A1 key grid; features lineaged to the accepted snapshot (not mutable `cache/` / `input/` stand-ins)
-- [x] Frozen 281-window grid in `SurfaceRunner`-consumable form with `momentum_count` and `cvg_count`
-- [x] D1 decisions settled; focused production-path Momentum/CVG cases pass (no second implementation)
-- [x] PIT: contributing straddles expire before the feature date
-- [x] Consumer smoke loads artifacts (no economic ranking) — D5
-- [x] Short acceptance evidence recorded (commands, ids, results, residual risks)
+Design each deliverable immediately before implementing it. **D0** must freeze every choice capable of materially changing P&L before any new P&L is inspected. **D1–D4** may defer engineering decisions only (CLI, manifests, module boundaries, tests, presentation). This agenda does not choose the exact experiment values.
+
+### D0 — Baseline experiment contract
+
+Freeze the exact baseline configuration, input identities, evaluation periods, assumptions, exclusions, and evidence expectations before reviewing full economic results.
+
+### D1 — Trusted baseline runner
+
+Provide one supported, reproducible way to run the fixed baseline from accepted artifacts, with enough identity and configuration recording to reproduce the result. Reuse existing backtest machinery; do not create a new generalized framework.
+
+### D2 — Eligibility and coverage correctness
+
+Jointly enforce Momentum and CVG eligibility; handle missing or ineligible observations explicitly; ensure failed or no-trade dates cannot disappear silently. Add only the focused tests and diagnostics needed.
+
+### D3 — Decision-quality evaluation report
+
+Produce the economic and operational evidence needed to judge the baseline: overall and yearly behavior, transaction-cost impact, long/short attribution, concentration, drawdown, trading activity, and data coverage. Support a decision — not a general analytics platform.
+
+### D4 — Verification, full execution, and closeout
+
+Small real-data smoke; independent inspection of a limited trade sample; frozen full-history baseline under required fill assumptions; reproducibility evidence; documented conclusion; clean closeout.
 
 ---
 
-## 6. Non-goals (unchanged; still out of scope for this sprint)
+## 7. Definition of done (outcomes)
 
-Economic backtesting / parameter ranking / best-window selection; strategy optimization; rebuilding the accepted Sprint 004 snapshot; generalized feature store; production scheduling; Sprint 006 implementation.
+Success is evidence quality, not a required Sharpe or positive-return threshold.
+
+- [ ] One frozen baseline runs reproducibly from accepted inputs
+- [ ] The accepted result can be reproduced through one documented command using the recorded inputs and frozen configuration
+- [ ] Input, configuration, code, and output identities are recorded
+- [ ] Joint feature eligibility and complete date handling are verified
+- [ ] Every expected decision date is classified as `traded`, `valid_no_trade`, or `failed`; no date is silently absent, and unresolved failures block acceptance
+- [ ] A small sample of trades is independently checked from signal through settlement and aggregation
+- [ ] Full-history diagnostic (mid) and conservative-fill (cross) runs complete
+- [ ] Final report has enough economic and operational evidence to judge credibility
+- [ ] Result and limitations are documented **without** changing parameters in response to observed P&L
+- [ ] Sprint records a clear recommendation: proceed to bounded Sprint 007 robustness work, investigate a specific defect, or reject/defer the hypothesis
+
+---
+
+## 8. Sprint 007 handoff
+
+Sprint 007 begins only after the Sprint 006 baseline is trusted. Its possible role is bounded robustness testing, a small preregistered candidate set, walk-forward correctness, Tier B integer lots, and a realistic capital budget.
+
+Sprint 006 does **not** pre-build those capabilities.
+
+---
+
+## 9. Scope-control principles
+
+* Prefer the narrowest change that answers the sprint question
+* Reuse accepted artifacts and existing backtest code (`SurfaceRunner` / pipeline / surface metrics)
+* Design each deliverable immediately before implementing it
+* Do not add speculative abstractions or flexibility
+* Treat non-blocking imperfections as follow-up items
+* Block only on economic correctness, look-ahead bias, reproducibility, silent data loss, or inability to interpret the result
+* Evidence and decision quality matter more than architectural polish
+
+---
+
+## 10. Decision boundaries
+
+### Must be frozen in D0 before any new P&L is viewed
+
+* Signal-selection and CVG-retention thresholds
+* Momentum and CVG count-eligibility thresholds
+* Liquidity and spread-selection rules
+* Per-side position limits, ranking, and tie handling
+* Option-selection and iron-fly wing rules
+* Entry timing, holding period, and settlement treatment
+* Sizing and capital-at-risk normalization
+* Mid and cross fill definitions
+* Exact full-history and primary reporting dates
+* Manual trade-sample selection method
+* Required decision metrics and evidence expectations
+
+Before D0 is accepted, only coverage- and schema-level preflight may be inspected. Do not inspect aggregate P&L, Sharpe, strategy rankings, or side-level performance.
+
+### May be decided in the relevant deliverable design
+
+* CLI interface and command shape
+* Configuration and manifest representation
+* Report and output-file layout
+* Module boundaries and internal implementation
+* Focused test organization
+* Diagnostic presentation details
+
+---
+
+## 11. Implementation authorization and stop rules
+
+Sprint 006 is implementation-light, not implementation-free. A proposed code change is authorized only when all three conditions hold:
+
+1. Without it, a Definition-of-Done outcome cannot be achieved or trusted.
+2. It is the narrowest practical change that reuses the existing backtest path.
+3. Its acceptance evidence is defined before implementation begins.
+
+If a change does not pass this test, record it as follow-up work rather than implementing it.
+
+Each deliverable starts with a short design covering the required behavior, minimum expected changes, focused tests, acceptance evidence, and explicit non-goals. Stop the deliverable once that evidence passes.
+
+Pause and request rescoping before implementation if the work:
+
+* Introduces a new framework, generalized abstraction, data product, or storage contract
+* Pre-builds a Sprint 007 capability
+* Expands into a subsystem not identified in the accepted deliverable design
+* Is expected to push total enabling implementation materially beyond the planned 12–18 focused hours
+* Requires changing the frozen experiment after P&L has been viewed
+
+The 12–18 hour budget is a review trigger, not an acceptance condition. A correctness-driven change after P&L exposure must be documented and versioned as a new experiment run; it must not silently replace the original result.
 
 ---
 
@@ -82,14 +209,5 @@ Economic backtesting / parameter ranking / best-window selection; strategy optim
 
 | Date | Notes |
 |------|-------|
-| 2026-07-26 | Sprint 004 closed; Sprint 005 marked scope under review |
-| 2026-07-26 | Proposed Sprint 005 scope/plan written into this agenda (awaiting acceptance) |
-| 2026-07-26 | Execution order: D2 (surface→straddle) before D1 (feature audit) |
-| 2026-07-26 | Surgical corrections: full A1 key grid; D2 economics/`vol_gap`; versioned backfill config; D1 settle list; counts + PIT expiry |
-| 2026-08-01 | Sprint 005 scope accepted; mode set to Build. D2 implementation authorized against the reviewed design [`surface_straddle_observation_transform_design.md`](../surface_straddle_observation_transform_design.md) (rev 3) |
-| 2026-08-01 | **D2 accepted.** Canonical straddle observations published under `derived/e2c1f8fd44d72176/`; receipt `repo_sha` `6f0d570`; design § 11.2 A1–A10 pass. Next: D1 |
-| 2026-08-03 | **D1 accepted.** Versioned feature contract frozen; zero-neutral CVG fix `ff68a3d`; bounded D2 audit + PIT in [`005_feature_correctness_audit.md`](../sprint_memos/005_feature_correctness_audit.md). Next: D3 |
-| 2026-08-09 | **D3 accepted.** 281-window publication + receipt; evidence [`sprint005_d3_production_backfill_evidence.md`](../sprint_memos/sprint005_d3_production_backfill_evidence.md) |
-| 2026-08-09 | **D4 accepted.** Coverage / missingness / PIT audit; evidence [`sprint005_d4_quality_audit_evidence.md`](../sprint_memos/sprint005_d4_quality_audit_evidence.md) |
-| 2026-08-09 | **D5 accepted.** One-date `SurfaceRunner` consumer smoke; evidence [`sprint005_d5_surface_runner_smoke_evidence.md`](../sprint_memos/sprint005_d5_surface_runner_smoke_evidence.md) |
-| 2026-08-09 | **Sprint 005 closed** — `CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`. Closeout [`005_closeout.md`](../sprint_memos/005_closeout.md). Sprint 006 not started. |
+| 2026-08-09 | Sprint 005 closed — [`005_closeout.md`](../sprint_memos/005_closeout.md). Sprint 006 not started. |
+| 2026-08-12 | Proposed Sprint 006 agenda written into this document (`PROPOSED — AWAITING ACCEPTANCE`). HEAD at proposal: `1517b1b`. Refined with D0 experiment-freeze boundaries, deliverable-level implementation authorization, and minimal-implementation stop rules. |
