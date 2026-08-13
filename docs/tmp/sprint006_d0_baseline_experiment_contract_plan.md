@@ -1,28 +1,27 @@
 # Sprint 006 D0 — Baseline experiment contract plan
 
-**Status:** `PLAN — AWAITING REVIEW` (design only; no implementation authorized by this file alone)  
+**Status:** `PLAN — AWAITING REVIEW` (design only; not accepted; no implementation authorized by this file alone)  
 **Mode:** Audit / design (no runtime edits, no economic run)  
-**Repository HEAD at design:** `f0a36f1b5ceff545cc2933c5a3c73d7a9ba891ba`  
-**Working tree at design:** clean  
+**Repository HEAD at original design:** `f0a36f1b5ceff545cc2933c5a3c73d7a9ba891ba`  
+**Plan commit:** `9ff498fdf52b335f97a194c3b132ad16edb64def`  
+**Correction HEAD:** `9ff498fdf52b335f97a194c3b132ad16edb64def` (working-tree edit; uncommitted)  
 **Naming convention:** `docs/tmp/sprint00N_dN_*_plan.md` (matches Sprint 005 deliverable plans)
 
 ---
 
 ## Review summary
 
-D0 freezes one Sprint 006 economic baseline **before any new P&L is inspected**: fixed `(42,8)` Momentum+CVG, no search, accepted Sprint 004/005 artifacts, weekly hold-to-expiry long ATM straddle + short iron fly, Tier A `equal_max_loss`, diagnostic mid + primary cross fills, full ready history with primary reporting `2020-01-01`→`2026-07-10`.
+D0 freezes one Sprint 006 economic baseline **before any new P&L is inspected**: fixed `(42,8)` Momentum+CVG, no search, accepted Sprint 004/005 artifacts, weekly hold-to-expiry long ATM straddle + short iron fly, Tier A `equal_max_loss` (long financed by short premium; `10000` fallback permits long-only books), mid diagnostic + **cross primary**, history `2018-10-26`→`2026-07-10`, primary reporting from `2020-01-01`.
 
-**Pinned inputs:** snapshot `e2c1f8fd44d72176` / build `20260724T045049097520Z_40b16886`; derived features under `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/` with D3 receipt `status=complete`; `(42,8)` file `features_42_8.parquet`; Stage A paths from the snapshot manifest (not mutable cache).
+**Expected dates** come from sorted unique A1 `entry_date` values in that interval (**all rows, including `surface_valid=False`**), then reconciled to `features_42_8.parquet`. Feature-file absence cannot hide a calendar date. Every A1 expected date must be `traded` / `valid_no_trade` / `failed`.
 
-**Compact baseline:** top/bottom 10% momentum → keep highest 50% CVG per side; joint count ≥ 28/35 (80%); PIT dvol top 20% with `spread_bottom_pct=1.0` (AND semantics; matches C7); max 25 names/side; iron-fly wings via existing `_choose_below_nearest` at `|Δ|≤0.15`; earnings off; no retuning after P&L.
+**Return views (D3):** (1) **conditional deployed-capital** — existing CAR on traded dates only (`valid_no_trade` → NaN, excluded from Sharpe/DD); (2) **calendar-aligned** — full A1 calendar with `valid_no_trade=0`, any `failed` blocks a complete result. Do **not** use `robust_score` for go/no-go.
 
-**D0 implementation footprint (later):** record an approved frozen contract JSON + short acceptance note only (~2–4 h). Runner repair, joint eligibility, reporting, and the economic run belong to D1–D4.
+**Spread gate intent:** `max_leg_spread_pct=0.50` on **every** traded leg. Code today filters straddle bodies and iron-fly **wings only** (not iron-fly ATM shorts) — **partial; D2 corrects**. Quote gate ≠ cross-fill TC.
 
-**Top risks / mismatches:** (1) code filters only Momentum count today — joint Mom+CVG ≥80% is contract-now / D2-later; (2) “closest 0.15 delta” wording ≠ `_choose_below_nearest`; (3) `run_surface_search.py` cannot construct current `BacktestRunConfig` (missing `sizing_mode`) and passes illegal `contract_multiplier` into `SurfaceDataPaths`; (4) empty-signal dates are silently skipped in `SurfaceRunner` — expected-date accounting is D2.
+**Accepting this design approves every §5 `Proposed` row** (full list in §13). Remaining code gaps: joint Mom+CVG count (D2); A1 calendar + empty-date accounting (D2); all-leg spread (D2); trusted runner/CLI (D1); dual return views + metric pack (D3).
 
-**Needs user approval:** spread `1.0`; wing rule as below-nearest; joint count rule; `max_leg_spread_pct=0.50`; Tier A budget scale `10000`; pre-registered manual sample rule; confirm no earnings.
-
-**Ready for implementation?** Yes, as a **documentation/config freeze**, after the highlighted approvals. Not ready to run economics.
+**D0 implementation later:** frozen contract JSON only (~2–4 h). **Ready for approval?** Yes as a corrected design freeze after §13 approvals — still not accepted, and not ready to run economics.
 
 ---
 
@@ -31,10 +30,10 @@ D0 freezes one Sprint 006 economic baseline **before any new P&L is inspected**:
 | Goal | Non-goal |
 |------|----------|
 | Freeze every P&L-sensitive choice for one Sprint 006 baseline | Implement runner repairs (D1) |
-| Pin accepted input identities and reproducibility evidence | Implement joint eligibility / date accounting (D2) |
-| Define expected-date / failure taxonomy and manual sample rule before results | Build decision report UI/metrics code (D3) |
-| Bound D0 vs D1–D4 so implementation stays small | Execute mid/cross full-history backtest or inspect new P&L (D4) |
-| Prefer existing `BacktestRunConfig` / Surface path | New config framework, new engine, new features, Sprint 007 capabilities |
+| Pin accepted input identities and reproducibility evidence | Implement joint eligibility / date accounting / all-leg spread (D2) |
+| Define expected-date taxonomy, no-trade metrics, and manual sample before results | Build decision report code (D3) |
+| Bound D0 vs D1–D4 so implementation stays small | Execute mid/cross backtest or inspect new P&L (D4) |
+| Prefer existing `BacktestRunConfig` / Surface path | New framework, engine, features, Sprint 007 capabilities |
 
 ---
 
@@ -42,39 +41,30 @@ D0 freezes one Sprint 006 economic baseline **before any new P&L is inspected**:
 
 | Path | Why relevant | Key fact taken |
 |------|--------------|----------------|
-| `docs/agenda/current_sprint.md` | Sprint 006 scope / D0 boundaries | Acceptance authorizes D0 only; freeze all P&L knobs before new P&L; `(42,8)`, mid+cross, no retuning |
-| `docs/sprint_memos/005_closeout.md` | Accepted Sprint 005 lineage | Snapshot `e2c1f8fd44d72176`; `(42,8)` ready `2018-10-26`→`2026-07-10`; D5 consumability only |
-| `docs/sprint_memos/005_feature_correctness_audit.md` | Feature semantics / research adaptations | `(42,8)` = 35 slots; Sprint 006 joint thresholds intentionally unset in 005; accepted adaptations beat raw papers |
-| `docs/sprint_memos/sprint005_d3_production_backfill_evidence.md` | Feature publication identity | 281 files; receipt SHA-256 `c585bce…`; producer `repo_sha` `131d0ac…` |
-| `docs/sprint_memos/sprint005_d4_quality_audit_evidence.md` | Coverage / ready interval | `(42,8)` joint coverage ~68.38% in ready interval; PIT 0 violations |
-| `docs/sprint_memos/sprint005_d5_surface_runner_smoke_evidence.md` | Consumer path / smoke ≠ strategy pins | Explicit Stage A + `features_42_8` paths; smoke thresholds not Sprint 006 params |
-| `docs/sprint_memos/004_closeout.md` | Snapshot contract | Immutable root `…/20260724T045049097520Z_40b16886`; `production_accepted=true` |
-| `docs/sprint_memos/004_c6_option_surface.md` | Weekly ~7DTE surface semantics | Strict calendar weekly expiry; hold-to-expiry settlement via A1 `exit_spot` |
-| `docs/sprint_memos/004_c7_pit_universe.md` | Liquidity filter envelope | Canonical `dvol_top_pct=0.20`, `spread_bottom_pct=1.0`; AND ranks |
-| `docs/v1_spec_pins.md` | v1 strategy pins | Long straddle / short IF|IC; 7DTE; hold-to-expiry; Tier A/B; primary go/no-go from 2020 |
-| `docs/v1_universe_protocol.md` | PIT universe | Prior snapshot `month_date < t`; top 20% dvol; signals inside universe |
-| `docs/backtest_evaluation_protocol.md` | Evaluation windows / fills | Tier A full sample; Tier B `2020→latest`; cross primary; mid diagnostic |
-| `docs/development_workflow.md` | Roadmap | 006 = real-data economic backtest after separate authorization (agenda is current authority for 006 shape) |
-| `docs/known_bugs.md` | Out-of-scope defects | KB-001 iron-condor body credit — IC comparison excluded while open |
-| `docs/decisions/001_canonical_backtest_path.md` | Engine choice | `SurfaceRunner` path is canonical |
-| `docs/decisions/003_position_cap_per_side.md` | Caps | Independent `max_names_per_side` (e.g. 25+25) |
-| `docs/decisions/004_tier_b_credit_financed_long.md` | Sizing boundary | Tier A conceptual unchanged; Tier B out of Sprint 006 |
-| `docs/surface_engine_data_contract.md` | S1–S8 contracts | S1 AND filters; S2 count uses `count_col` only; S7 hold-to-expiry |
-| `docs/surface_engine_portfolio_metrics_design.md` | Tier A / CAR / metrics | `equal_max_loss`; primary `cycle_return_on_capital_at_risk` |
-| `docs/surface_straddle_observation_transform_design.md` | D2 observation contract | Body `is_body` only; mid=(bid+ask)/2 for economics |
-| `configs/feature_backfill_v1.json` | Window / columns | Baseline `(42,8)`; publish `mom_*_count` and `cvg_count_*` |
-| `scripts/run_surface_search.py` | Current CLI defaults / breakage | Defaults include search, `spread_bottom_pct=0.20`, `max_names=3`, earnings=5; missing `sizing_mode`; illegal `SurfaceDataPaths(..., contract_multiplier=)` |
-| `src/backtest/run_config.py` | Config schema | Requires `sizing_mode`; Tier A fields; fill via `FillAssumption` |
-| `src/backtest/surface_runner.py` | Orchestration gap | Empty signals → `continue` (date disappears); trade dates = feature dates in range |
-| `src/backtest/pipeline.py` | Economic rules in code | S1 AND; S2 mom-count only; S5 per-side cap; Tier A sizing; settle included only |
-| `src/backtest/option_surface.py` | Structure / fill / wings | `FillAssumption.cross`; iron-fly `_choose_below_nearest`; ATM body from surface meta |
-| `src/backtest/surface_metrics.py` | Existing metrics | Weekly Sharpe √52 on CAR cycle returns; availability heuristic |
-| `src/backtest/surface_run_config.py` | Path resolution | Explicit snapshot/derived paths required for trusted runs |
-| `tests/unit/test_option_surface_ironfly.py` | Wing semantics evidence | Pins `_choose_below_nearest` (≤ target), not true closest |
-| `tests/contract/test_step1_universe_contract.py` / `test_step2_signals_contract.py` / `test_step5_select_and_size_contract.py` | Contract coverage | Universe AND; signal pools; per-side sizing path |
-| `docs/baseline_status.md` | Env / accepted roots | Venv + accepted snapshot/derived locations |
+| `docs/agenda/current_sprint.md` | D0 freeze boundaries | Freeze all P&L knobs before new P&L; mid+cross; classify every expected date |
+| `docs/backtest_evaluation_protocol.md` | Required metric families | Sharpe, CAR return, CAGR, drawdown, win rate, profit factor, concentration, harsh vs mid |
+| `docs/surface_engine_data_contract.md` | A1 grain / S7–S8 | A1 grain `(ticker, entry_date)` incl. invalid rows; settle at `exit_spot`; S2 mom-count only today |
+| `docs/surface_engine_portfolio_metrics_design.md` | Tier A / CAR | `equal_max_loss` + long financed by short premium; long-budget fallback edge rule; Sharpe on cycle series |
+| `src/backtest/surface_runner.py` | Date loop | Trade dates from **features**; empty signals → `continue` (date disappears) |
+| `src/backtest/surface_metrics.py` | Conditional CAR today | Zero CAR → NaN cycle return; Sharpe/DD on finite cycle series; `robust_score` = Sharpe×availability (search heuristic) |
+| `src/backtest/run_config.py` | Required fields | `sizing_mode` required; `wing_selection_rule`, `max_loss_budget_per_trade`, `cost_model` required schema fields |
+| `src/backtest/pipeline.py` | S1–S5 economics | AND universe; mom-only count; Tier A fallback to `tier_a_long_budget` when no/non-positive short credit |
+| `src/backtest/option_surface.py` | Fill + structures | `mid`/`cross`; straddle filters **body** by `max_leg_spread_pct`; iron fly filters **OTM only** (body unfiltered); `_choose_below_nearest` |
+| `docs/sprint_memos/005_closeout.md` | Identities | Snapshot `e2c1f8fd…`; ready `2018-10-26`→`2026-07-10` |
+| `docs/sprint_memos/004_c7_pit_universe.md` | Universe envelope | Canonical `dvol_top_pct=0.20`, `spread_bottom_pct=1.0` |
+| `docs/decisions/003_position_cap_per_side.md` | Caps | Independent `max_names_per_side` |
+| `configs/feature_backfill_v1.json` | Window | Baseline `(42,8)`; `cvg_count_*` published |
+| `scripts/run_surface_search.py` | Broken defaults | Missing `sizing_mode`; illegal `contract_multiplier` kwarg; defaults ≠ baseline |
+| `tests/unit/test_option_surface_straddle.py` | Mid/cross, settle, body spread gate | Mid/cross fills; settle PnL; `max_leg_spread_pct` drops illiquid **body** legs |
+| `tests/unit/test_option_surface_ironfly.py` | Wings, settle, wing-only spread gate | `_choose_below_nearest`; settle paths; `max_leg_spread_pct` applied to **wings**, not ATM body shorts |
+| `tests/contract/test_step5_select_and_size_contract.py` | Tier A | `equal_max_loss` credit financing; fallback to long budget w/o shorts or zero credit; CAR/`pnl_total` |
+| `tests/contract/test_run_metrics_contract.py` | Aggregation | Zero-denominator dates → NaN cycle return; Sharpe √52 on finite series; all-excluded date NaN |
+| `tests/contract/test_orchestration_contract.py` | Empty-date behavior | `test_empty_signals_date_skipped_without_s5_call` — empty signals skip S5; empty summaries |
+| `tests/contract/test_run_envelope_contract.py` | Config validation | `sizing_mode` required; Tier A/B field rules |
+| `tests/contract/conftest.py` | Constructible defaults | Shows required fields incl. `wing_selection_rule`, `max_loss_budget_per_trade=500`, `cost_model` |
+| `tests/contract/test_step1_universe_contract.py` / `test_step2_signals_contract.py` | S1/S2 | AND universe; mom/CVG pools (mom count path) |
 
-**Research note:** No primary-source Momentum/CVG papers live in-repo. Authoritative semantics are `feature_backfill_v1` + `005_feature_correctness_audit.md` (deliberate weekly adaptations). Transaction-cost model for this baseline is repository `FillAssumption` mid/cross, not an external TC paper.
+**Research note:** Repo feature semantics (`feature_backfill_v1` + Sprint 005 audit) outrank external papers. TC model is `FillAssumption` mid/cross.
 
 ---
 
@@ -93,232 +83,274 @@ D0 freezes one Sprint 006 economic baseline **before any new P&L is inspected**:
 | D3 producer `repo_sha` | `131d0ac05e1e57749d3095923927a394fdcbc25b` |
 | Feature config | `configs/feature_backfill_v1.json` (SHA-256 `764056ce7153751d93c1764b1b4cae13a521bf5c3baee729db30bb69543132dd`) |
 | D4 audit JSON | `…/features_quality_audit_v1.json` |
-| A1 meta | `…/cache/surface/option_surface_meta_weekly_2018_2026.parquet` |
+| A1 meta (**expected-date authority**) | `…/cache/surface/option_surface_meta_weekly_2018_2026.parquet` |
 | A2 quotes | `…/cache/surface/option_surface_quotes_weekly_2018_2026.parquet` |
 | Liquidity panel | `…/input/liquidity/ticker_liquidity_panel.parquet` |
-| Earnings artifact | **None** (path unset) |
-| Mutable cache | **Forbidden** as accepted input for Sprint 006 baseline |
-
-D0 implementation must record file digests from the D3 receipt for `features_42_8.parquet` and resolve A1/A2/liquidity digests from the snapshot manifest / on-disk hash at freeze time (read-only).
+| Earnings | **None** |
+| Mutable cache | **Forbidden** as accepted input |
 
 ---
 
 ## 4. Proposed frozen experiment contract
 
-### 4.1 Compact parameter table
+### 4.1 Exact `BacktestRunConfig` twin (mid + cross)
 
-| Area | Frozen value | Support today |
-|------|--------------|---------------|
-| Feature window | `(42,8)` only — columns `mom_42_8_mean`, `cvg_42_8`, `mom_42_8_count`, `cvg_count_42_8` | Yes |
-| Search | None (single config × two fills) | CLI defaults search — must not use defaults |
-| Available / run history | `start_date=2018-10-26`, `end_date=2026-07-10` (inclusive via `<= end`) | Yes |
-| Primary reporting period | Filter metrics to trade dates in `[2020-01-01, 2026-07-10]` on the same run | Reporting = D3; run once |
-| Momentum selection | `long_top_pct=0.10`, `short_bottom_pct=0.10` | Yes |
-| CVG refinement | `cvg_filter_pct=0.50` (highest 50% CVG within each side) | Yes |
-| Feature eligibility | **Joint:** `mom_42_8_count ≥ 28` **and** `cvg_count_42_8 ≥ 28` (`min_count_pct=0.80`, window=35) | **Partial** — code uses mom `count_col` only |
-| Liquidity | `dvol_top_pct=0.20` | Yes |
-| Spread filter | `spread_bottom_pct=1.0` (AND with dvol; disables extra spread cull) | Yes; matches C7 |
-| Portfolio cap | `max_names_per_side=25` independent | Yes |
-| Long / short structures | Long ATM straddle; short `ironfly` | Yes |
-| Iron-fly wings | `wing_delta_target=0.15` via `_choose_below_nearest` (max `abs_delta ≤ 0.15`) | Yes (not true closest) |
-| Holding | Weekly surface entry (~6–8 DTE observed); hold to expiry | Yes (A1 meta) |
-| Sizing | `sizing_mode=conceptual`, `tier_a_mode=equal_max_loss`, `tier_a_short_budget=10000`, `tier_a_long_budget=10000` (fallback only) | Yes in pipeline; CLI broken |
-| Fills | Two paired runs: `FillAssumption.mid()` diagnostic; `FillAssumption.cross()` **primary** | Yes |
-| Earnings | `earnings_path=None`, `earnings_exclusion_days=0` | Yes |
-| Per-leg spread gate | `max_leg_spread_pct=0.50` | Yes |
-| Structure spread-cost cap | `max_spread_cost_ratio=None` | Yes |
-| Diagnostics rows | `include_diagnostics=True` | Yes |
-| `cost_model` | `"mid"` (legacy required field; economics use `fill`) | Yes |
-| `contract_multiplier` | `100.0` | Yes (Tier A ratios scale-invariant) |
-| Retuning | Forbidden after P&L exposure | Process |
+Identical except `fill` / `run_id` suffix:
 
-### 4.2 Material rules not in the working proposal (frozen here)
+| Field | Frozen value | Notes |
+|-------|--------------|-------|
+| `run_id` | `sprint006_baseline_v1_mid` / `…_cross` | Twin runs |
+| `momentum_col` / `cvg_col` / `count_col` | `mom_42_8_mean` / `cvg_42_8` / `mom_42_8_count` | Joint CVG count uses published `cvg_count_42_8` (D2) |
+| `min_count_pct` | `0.80` | With joint rule → ≥28 of 35 |
+| `long_top_pct` / `short_bottom_pct` | `0.10` / `0.10` | |
+| `cvg_filter_pct` | `0.50` | Highest 50% CVG within side |
+| `dvol_top_pct` / `spread_bottom_pct` | `0.20` / `1.0` | C7 canonical; AND |
+| `short_structure` | `ironfly` | |
+| `wing_selection_rule` | `"closest_delta"` | **Required config string**; surface IF actually uses `_choose_below_nearest` (`abs_delta ≤ 0.15`) |
+| `wing_delta_target` | `0.15` | |
+| `max_names_per_side` | `25` | Independent per side |
+| `max_loss_budget_per_trade` | `500.0` | **Legacy required**; **does not** control Tier A `equal_max_loss` |
+| `earnings_exclusion_days` | `0` | + `earnings_path=None` |
+| `cost_model` | `"mid"` | Legacy/unused by surface economics; **`fill` authoritative** |
+| `start_date` / `end_date` | `2018-10-26` / `2026-07-10` | Inclusive via runner `<= end` |
+| `fill` | `FillAssumption.mid()` / `.cross()` | Cross = primary decision fill |
+| `max_leg_spread_pct` | `0.50` | **Intent: all traded legs**; code partial — D2 |
+| `max_spread_cost_ratio` | `None` | |
+| `condor_short_delta_target` / `condor_long_delta_target` | `None` / `None` | Unused (not ironcondor) |
+| `include_diagnostics` | `True` | |
+| `sizing_mode` | `"conceptual"` | |
+| `tier_a_mode` | `"equal_max_loss"` | |
+| `tier_a_short_budget` | `10000.0` | Total short max-loss budget |
+| `tier_a_long_budget` | `10000.0` | **Fallback only** (see below) |
+| `tier_b_short_max_loss_budget` | `None` | Unused (not Tier B); omit/unset |
+| `contract_multiplier` | `100.0` | Tier A ratios scale-invariant |
+| `deployable_capital` | `None` | Unused |
 
-| Topic | Exact rule |
-|-------|------------|
-| Entry dates | Feature dates in `[start,end]` from `features_42_8.parquet` (weekly schedule already aligned to surface) |
-| Expiry / DTE | A1 precomputed weekly expiry + `exit_spot`; no alternate DTE search |
-| ATM selection | A1 `body_strike` / A2 `is_body` call+put |
-| Ranking | Momentum `rank(pct=True, method='average')` within PIT∩eligible cross-section; long high / short low |
-| Cap tie-break | After side rank sort, secondary key `ticker` ascending (determinism; **needs D1/D2 sort pin** if current sort is unstable) |
-| Missing structure | Keep candidate row with `structure_ok=False` / `failure_reason`; not portfolio-included |
-| Long/short independence | Separate pools and caps (Decision 003) |
-| Capital / return | Primary: `cycle_return_on_capital_at_risk = Σ pnl_total / Σ capital_at_risk_dollars` per date; Sharpe on that series × √52 |
-| Settlement | Intrinsic payoff at A1 `exit_spot` on expiry; no exit spread |
-| TC semantics | Cross: buys ask / sells bid on every leg; mid: α=0.5 both sides; entry-only friction |
-| No-trade vs failed | See §8 |
-| Manual sample | See §9 |
-| Decision metrics | See §10 |
+**Tier A fallback (explicit):** normally longs are financed by collected short premium. If there are **no usable shorts** or collected short premium is **non-positive**, use fixed `tier_a_long_budget=10000`. This **permits a long-only book** on that date and requires approval.
+
+**Search:** none. **Retuning after P&L:** forbidden.
+
+### 4.2 Other frozen economic rules
+
+| Topic | Exact rule | Support |
+|-------|------------|---------|
+| Primary reporting | Same run; metrics also filtered to dates in `[2020-01-01, 2026-07-10]` | D3 |
+| Expected calendar | §8 — A1 `entry_date`, not feature-derived | D2 |
+| No-trade metrics | §8.1 — conditional + calendar-aligned | D3 |
+| ATM / expiry | A1 `body_strike` + weekly expiry/`exit_spot`; hold to expiry | Yes |
+| Ranking | Momentum `rank(pct=True, method='average')`; long high / short low | Yes |
+| Cap tie-break | Secondary `ticker` ascending | **Needs D1/D2 pin** |
+| Missing structure | `structure_ok=False` + `failure_reason`; not included | Yes |
+| TC | Cross = buy ask / sell bid; mid α=0.5; entry-only | Yes |
+| Quote gate vs TC | `max_leg_spread_pct` is pre-trade quote quality; cross fills are separate execution friction | Intent vs code mismatch on IF body |
 
 ---
 
 ## 5. Decision register
 
-| ID | Decision | Proposed exact value/rule | Source / rationale | Code/config support | Status | If unresolved |
-|----|----------|---------------------------|--------------------|---------------------|--------|---------------|
-| D-01 | Feature window | `(42,8)` only | Sprint 005 baseline + 006 agenda | Supported | **Fixed (agenda)** | Wrong research question |
-| D-02 | Search | None | Agenda | CLI defaults must be overridden | **Fixed** | Contaminates baseline |
-| D-03 | Full history | `2018-10-26`→`2026-07-10` | D4 ready interval | Supported | **Fixed** | Incomparable coverage |
-| D-04 | Primary period | Metrics filter `2020-01-01`→`2026-07-10` | `v1_spec_pins` / eval protocol | Reporting later | **Proposed** | Ambiguous go/no-go window |
-| D-05 | Mom tails | 10% / 10% | Working proposal + CLI research default | Supported | **Proposed** | Changes book composition |
-| D-06 | CVG keep | Top 50% within side | Working proposal + CLI default | Supported | **Proposed** | Changes book composition |
-| D-07 | Count eligibility | Joint Mom **and** CVG ≥ `0.80×35=28` | Agenda “both”; window math verified | **Mismatch** — mom-only today | **Proposed; D2 implements** | Silent quality bias |
-| D-08 | Liquidity | PIT top 20% dvol | Spec + C7 | Supported | **Fixed** | Unsupported universe |
-| D-09 | Spread pct | `1.0` | Avoid double 20% AND; **C7 canonical** | Supported; CLI default `0.20` differs | **Proposed (approve)** | Severely shrinks universe if left at 0.20 |
-| D-10 | Cap | 25/side | Decision 003 | Supported; CLI default 3 | **Proposed** | Wrong book size |
-| D-11 | Structures | Long straddle + short iron fly | Agenda / pins; KB-001 blocks IC | Supported | **Fixed** | Out of scope |
-| D-12 | Wing rule | `_choose_below_nearest` @ 0.15 | Actual surface builder + tests | Supported; wording “closest” is false | **Proposed (approve wording→code)** | Reinterpretation changes wings/P&L |
-| D-13 | Hold model | Hold to expiry on weekly surface | Pins + A1 | Supported | **Fixed** | Live gap remains documented |
-| D-14 | Sizing | Tier A `equal_max_loss`, short budget 10000, long budget 10000 fallback | Portfolio metrics design; Sprint 006 excludes Tier B | Pipeline yes; search CLI no | **Proposed** | Absolute scale largely cancels in CAR ratios; still must freeze |
-| D-15 | Fills | Mid diagnostic + cross primary | Agenda / eval protocol | Supported | **Fixed** | Wrong decision fill |
-| D-16 | Earnings | Off (`days=0`, no path) | Agenda; no trusted PIT earnings | Supported | **Proposed** | Lookahead if speculative earnings used |
-| D-17 | Retuning | Forbidden after P&L | Agenda | Process | **Fixed** | Invalidates experiment |
-| D-18 | `max_leg_spread_pct` | `0.50` | Existing search default; material | Supported | **Proposed (approve)** | Changes fillable set |
-| D-19 | Expected dates | All feature dates in run interval | Agenda DoD | Runner currently omits empties | **Proposed; D2 enforces** | Silent attrition |
-| D-20 | Cap tie-break | `ticker` asc secondary | Reproducibility | Not pinned today | **Proposed; D1/D2** | Non-reproducible edge ties |
-| D-21 | Entry point | Trusted single-config Surface run on snapshot/derived paths | Decision 001; D5 pattern | `run_surface_search.py` broken for v1 sizing | **D1 delivers** | Cannot reproduce |
+| ID | Decision | Proposed exact value/rule | Source | Support | Status | If unresolved |
+|----|----------|---------------------------|--------|---------|--------|---------------|
+| D-01 | Feature window | `(42,8)` only | Agenda / 005 | Yes | **Fixed (agenda)** | Wrong question |
+| D-02 | Search | None | Agenda | Override CLI | **Fixed** | Contaminates baseline |
+| D-03 | Full history | `2018-10-26`→`2026-07-10` | D4 ready | Yes | **Fixed** | Coverage drift |
+| D-04 | Primary period | Metrics filter `2020-01-01`→`2026-07-10` | Spec / eval protocol | D3 | **Proposed** | Ambiguous go/no-go window |
+| D-05 | Mom tails | 10% / 10% | Working proposal | Yes | **Proposed** | Book composition |
+| D-06 | CVG keep | Top 50% within side | Working proposal | Yes | **Proposed** | Book composition |
+| D-07 | Count eligibility | Joint Mom **and** CVG ≥28 | Agenda “both” | Mom-only today | **Proposed; D2** | Quality bias |
+| D-08 | Liquidity | PIT top 20% dvol | Spec / C7 | Yes | **Fixed** | Wrong universe |
+| D-09 | Spread pct | `1.0` | C7; avoid double 20% AND | Yes; CLI≠ | **Proposed** | Shrinks universe if 0.20 |
+| D-10 | Cap | 25/side independent | Decision 003 | Yes; CLI≠ | **Proposed** | Wrong book size |
+| D-11 | Structures | Long straddle + short iron fly | Agenda; KB-001 | Yes | **Fixed** | Out of scope |
+| D-12 | Wing economics | `_choose_below_nearest` @ 0.15; config `wing_selection_rule="closest_delta"` | Code + tests | Yes | **Proposed** | Wing/P&L change |
+| D-13 | Hold model | Hold to expiry | Pins + A1 | Yes | **Fixed** | Live gap remains |
+| D-14 | Sizing | Tier A `equal_max_loss`; budgets 10000/10000 fallback; long-only allowed on fallback | Portfolio metrics + step5 tests | Pipeline yes; CLI no | **Proposed** | Scale/fallback ambiguity |
+| D-15 | Fills | Mid diagnostic; cross primary | Agenda | Yes | **Fixed** | Wrong decision fill |
+| D-16 | Earnings | Off | Agenda | Yes | **Proposed** | Lookahead if invented |
+| D-17 | Retuning | Forbidden after P&L | Agenda | Process | **Fixed** | Invalid experiment |
+| D-18 | All-leg spread gate | `0.50` on straddle bodies **and** all four IF legs | Quote-quality intent | **Partial** (IF body unfiltered) | **Proposed; D2** | Inconsistent liquidity filter |
+| D-19 | Expected dates | A1 unique `entry_date` in interval, any `surface_valid`; reconcile features | DoD; avoid circular calendar | Runner feature-based today | **Proposed; D2** | Silent attrition |
+| D-20 | Cap tie-break | `ticker` asc secondary | Reproducibility | Not pinned | **Proposed; D1/D2** | Non-reproducible ties |
+| D-21 | No-trade metrics | Conditional CAR + calendar-aligned 0-fill (§8.1) | Eval protocol completeness | Conditional≈today; calendar=D3 | **Proposed** | Misleading Sharpe |
+| D-22 | Manual sample | §9 deterministic fallbacks | Agenda | Process | **Proposed** | Cherry-picking |
+| D-23 | Legacy fields | `max_loss_budget_per_trade=500`, `cost_model="mid"`, multiplier 100; Tier B/condor unset | Constructible config | Schema | **Proposed** | Implicit defaults |
+| D-24 | Entry point | Trusted Surface run on snapshot/derived paths | Decision 001 | CLI broken | **D1 delivers** | Cannot reproduce |
+
+**Acceptance rule:** accepting this D0 design **approves every `Proposed` row above** (and the Fixed agenda pins). It does not authorize D1–D4 implementation by itself.
 
 ---
 
 ## 6. P&L-exposure firewall
 
-1. **No new Sprint 006 aggregate P&L, Sharpe, rankings, side returns, or strategy comparisons may be inspected before this contract is accepted.**
-2. Read-only code, schema, coverage, and identity checks are allowed.
-3. **Do not run a real-data economic backtest as part of D0 design or D0 implementation.**
-4. After P&L exposure, any correctness-driven contract change creates a **new versioned experiment ID**; it must not silently overwrite the original.
-5. Parameters may not be changed merely because results are unattractive.
+1. No new Sprint 006 aggregate P&L, Sharpe, rankings, side returns, or strategy comparisons before contract acceptance.  
+2. Read-only code/schema/coverage/identity checks allowed.  
+3. Do not run a real-data economic backtest in D0 design or D0 implementation.  
+4. Post-exposure correctness changes → new versioned experiment ID; no silent overwrite.  
+5. No retuning because results look unattractive.
 
 ---
 
 ## 7. Reproducibility and output identity requirements
 
-D4 (not D0) must emit, for each fill view, enough to reproduce:
-
 | Record | Requirement |
 |--------|-------------|
-| Experiment ID | e.g. `sprint006_baseline_v1` (+ `_mid` / `_cross`) |
-| Code identity | Clean git HEAD SHA used for the run |
-| Config identity | Frozen contract JSON SHA-256 + effective `BacktestRunConfig` dump |
-| Input identities | Snapshot/build IDs; feature file digest; A1/A2/liquidity digests; D3 receipt digest |
-| Outputs | Trade log, date summary, run summary, date-status table (§8) |
-| Command | One documented command using explicit snapshot/derived paths (no mutable cache) |
-
-D0 implementation only **writes the frozen contract artifact** that those later runs must cite.
+| Experiment ID | `sprint006_baseline_v1` (+ `_mid` / `_cross`) |
+| Code | Clean git HEAD of the run |
+| Config | Frozen contract JSON SHA-256 + effective `BacktestRunConfig` dump |
+| Inputs | Snapshot/build; feature + A1/A2/liquidity digests; D3 receipt |
+| Outputs | Trade log, date summary, run summary, **date-status table**, both metric views |
+| Command | One documented command; explicit snapshot/derived paths only |
 
 ---
 
 ## 8. Expected-date and failure-accounting contract
 
-**Expected decision calendar:** sorted unique `date` values in `features_42_8.parquet` with `date ∈ [2018-10-26, 2026-07-10]`.
+### 8.0 Independent calendar
 
-Every expected date must appear in a date-status table with exactly one class:
+**Canonical expected decision calendar:** sorted unique A1 `entry_date` values with `entry_date ∈ [2018-10-26, 2026-07-10]`, **including dates that appear only on `surface_valid=False` rows** (so an all-failure date cannot vanish).
+
+**Reconciliation (D0/D2; not implemented now):**
+
+1. Build A1 expected set as above.  
+2. Build feature date set from `features_42_8.parquet` in the same closed interval.  
+3. Every A1 expected date must be classified `traded` / `valid_no_trade` / `failed`.  
+4. An A1 date **missing entirely** from the feature artifact is **not** silently absent — default class **`failed`** (missing feature coverage) unless an intentional exception is **explicit and evidenced**.  
+5. Feature dates absent from A1 must be reported in reconciliation evidence (they are not members of the expected calendar).
 
 | Class | Meaning |
 |-------|---------|
-| `traded` | ≥1 row with `included_in_portfolio=True` |
-| `valid_no_trade` | Pipeline completed; zero included names for an allowed economic reason (empty universe after filters, no names passing signal/eligibility, all candidates `no_tradeable_structure` / sizing rejects, etc.) |
-| `failed` | Incomplete/aborted processing, schema/identity failure, or unresolved exception |
+| `traded` | ≥1 `included_in_portfolio=True` |
+| `valid_no_trade` | Pipeline completed; zero included names for an allowed economic reason |
+| `failed` | Incomplete processing, missing features vs A1, schema/identity failure, unresolved exception |
 
-**Rules:** no expected date may be absent; unresolved `failed` blocks Sprint 006 acceptance; classification implementation is **D2** (current runner `continue` on empty signals violates this).
+Unresolved `failed` blocks Sprint 006 acceptance. Classification + runner date loop fixes are **D2** (today: feature-derived dates + empty-signal skip).
+
+### 8.1 No-trade return / Sharpe treatment (D3 reporting contract)
+
+Cross = primary fill; mid = diagnostic. Report **both** views; **do not** use `robust_score` as go/no-go.
+
+**View A — Conditional deployed-capital (preserves accepted CAR behavior)**
+
+* `traded`: `cycle_return_on_capital_at_risk = Σ pnl_total / Σ capital_at_risk_dollars`.  
+* `valid_no_trade`: zero denominator → **NaN**; **excluded** from conditional Sharpe and drawdown.  
+* Label explicitly as **conditional on traded dates**.
+
+**View B — Calendar-aligned sensitivity**
+
+* Series length = full independent A1 expected calendar (within reporting window).  
+* `traded`: book cycle CAR return.  
+* `valid_no_trade`: contribute **`0`**.  
+* Any `failed` → incomplete; **do not** present as a complete result.  
+* Report calendar-aligned compounded return, annualized return/CAGR, Sharpe (√52 on that series), and drawdown.
+
+Yearly splits use the **same** conventions as the parent view.
 
 ---
 
 ## 9. Manual verification sampling contract
 
-Freeze selection **before** viewing P&L. Deterministic, non-performance-based:
+Freeze **before** P&L. Cap ≤6 hand-checked trades. No performance-based replacement.
 
-| Sample | Selection rule (apply after D2 date-status exists; design-time pin) |
-|--------|---------------------------------------------------------------------|
-| S1 | Median expected date by sorted calendar order (same spirit as D5) |
-| S2 | First `traded` date with ≥1 long and ≥1 short included (earliest) |
-| S3 | First date classified `valid_no_trade` |
-| S4 | First date with ≥1 `structure_ok=False` candidate (if any; else next `traded`) |
-| Per included trade on S1/S2 | Independently re-check: universe membership → signal ranks/CVG → legs/strikes/expiry → fill prices → max loss → settle PnL → contribution to date CAR |
+| Sample | Rule |
+|--------|------|
+| S1 | Median A1 expected date (sorted). Date-level lineage/status always. If `traded`, sample lowest-ticker included long and short **that exist** on that date |
+| S2 | Earliest `traded` date with both sides. If none: earliest long-traded and/or earliest short-traded as available |
+| S3 | Earliest `valid_no_trade`; if none → **`N/A`** |
+| S4 | Earliest date with ≥1 `structure_ok=False`; if none → **`N/A`** |
+| Shortfall | If fewer than six qualifying trade rows exist across S1/S2 picks, audit those available and document the shortfall — do not substitute a P&L-selected date |
 
-Exact ticker picks on a multi-name date: lowest `ticker` among included longs and among included shorts (deterministic). Cap at **≤6 trades** hand-checked.
+Per included trade: universe → ranks/CVG → legs/strikes/expiry → fills → max loss → settle → date CAR contribution.
 
 ---
 
 ## 10. Required decision report and metrics
 
-D3 must support a decision (not a platform). Minimum evidence on **cross (primary)** and **mid (diagnostic)**:
+Small decision pack for **cross (primary)** and **mid (diagnostic)**. No charts, dashboards, new scores, or numeric profitability thresholds.
 
-| Block | Contents |
-|-------|----------|
-| Headline | Full-history and primary-period mean cycle CAR return, annualized Sharpe (√52), max drawdown |
-| Costs | Mid vs cross delta on same dates; mean `spread_cost_ratio` |
+| Block | Required contents |
+|-------|-------------------|
+| Headline (both windows: full history + primary) | Mean cycle CAR (conditional); conditional traded-date annualized Sharpe + drawdown; calendar-aligned compounded return, CAGR/annualized return, Sharpe, drawdown |
+| Weekly outcomes | Win rate; profit factor; no-trade frequency (separate) |
+| Yearly | Per year: return, Sharpe, drawdown, `traded` / `valid_no_trade` / `failed` counts — for each view’s conventions |
 | Attribution | Long vs short cycle returns and trade counts |
-| Activity | Dates by `traded` / `valid_no_trade` / `failed`; avg names/side; turnover |
-| Concentration | Top-5 ticker share of |PnL| in primary period |
-| Coverage | Joint feature eligibility pass rate; structure failure reason histogram |
-| Limitations | Hold-to-expiry vs live; no earnings; wing below-nearest; Tier A not integer lots |
+| Costs | Mid vs cross delta on overlapping dates; mean `spread_cost_ratio` |
+| Concentration | Top-5 ticker share of \|PnL\| (primary period) |
+| Activity / data | Avg names/side; turnover; joint feature coverage; structure-failure reason histogram; date-class counts |
+| Limitations | Hold-to-expiry; no earnings; below-nearest wings; Tier A not integer lots; long-only fallback dates |
 
-Numeric pass/fail thresholds remain TBD per evaluation protocol — Sprint 006 success is evidence quality.
+**Frozen definitions**
+
+* **Weekly win rate:** fraction of **finite traded** book-return weeks with return > 0; report no-trade frequency separately (do not treat NaN/0-fill weeks as wins).  
+* **Profit factor:** (sum of positive weekly book P&L) / (absolute sum of negative weekly book P&L). If denominator = 0: `+inf` when numerator > 0; `NaN` when numerator = 0. State which weekly series (conditional traded P&L weeks) is used.  
+* **Sharpe:** mean/std(ddof=1)×√52 on the relevant weekly return series (≥2 finite points; else NaN).  
+* **Do not** rank go/no-go by `robust_score`.
 
 ---
 
 ## 11. Minimal D0 implementation plan
 
-**Scope:** record the approved contract so D1+ can load/cite it. **~2–4 focused hours.**
+**Later (~2–4 h), after acceptance:** write `configs/sprint006_baseline_v1.json` matching §4 + mark this plan accepted. No runtime/test edits; no backtest.
 
-| Artifact | Action |
-|----------|--------|
-| `configs/sprint006_baseline_v1.json` | New frozen contract: identities, `BacktestRunConfig` fields for mid/cross twin runs, expected-date rule, sample rule, firewall statement |
-| This plan file | Status → `APPROVED FOR IMPLEMENTATION` / `ACCEPTED` after review; no runtime code |
-| Optional short note in progress log later | Only when user authorizes agenda update (not part of this design task) |
-
-**Explicitly not in D0 implementation:** edits to `pipeline.py` / `surface_runner.py` / `run_surface_search.py`; eligibility logic; metrics/report code; economic execution.
-
-**Scope alarm:** if “recording the contract” seems to require >4–6 h or runtime behavior changes, stop — that work is D1/D2.
+**Not D0:** `pipeline` / `surface_runner` / CLI fixes; eligibility; all-leg spread; metrics code; economic execution.
 
 ---
 
 ## 12. Verification and acceptance criteria
 
-### Design acceptance (this document)
+### Design acceptance (this corrected document)
 
-- [x] Every P&L-sensitive choice listed in §5
-- [x] Each proposal has source/rationale + support/mismatch
-- [x] Input identities pinned (§3)
-- [x] D1–D4 not pulled into D0 (§11, §14)
-- [x] P&L firewall explicit (§6)
-- [x] Expected dates cannot disappear silently (§8)
-- [x] Reproduction / evidence expectations defined (§7, §10)
-- [x] Manual sample fixed before results (§9)
-- [ ] User approvals for highlighted rows in §5 / §13
+- [x] P&L-sensitive choices in §5; Proposed set = approval boundary (§13)  
+- [x] Independent A1 expected calendar; feature absence cannot hide dates (§8)  
+- [x] No-trade treatment explicit for decision metrics (§8.1, §10)  
+- [x] Metric set covers eval-protocol families without becoming a platform (§10)  
+- [x] All-leg spread intent + IF body mismatch accurate (§4, §13)  
+- [x] Exact config constructible without unspecified defaults (§4.1)  
+- [x] Manual samples deterministic with N/A / shortfall rules (§9)  
+- [x] Relevant implementation tests read (§2)  
+- [x] D1–D4 not pulled into D0; P&L firewall explicit  
+- [ ] User acceptance of the full Proposed contract  
 
 ### Later D0 implementation acceptance
 
-- [ ] Approved JSON exists and matches this contract
-- [ ] Digests recorded for baseline feature file + Stage A inputs
-- [ ] No runtime/test changes; no backtest run; no P&L inspection
+- [ ] Approved JSON matches this contract + digests  
+- [ ] No runtime/test changes; no backtest; no P&L inspection  
 
 ---
 
 ## 13. Risks, inconsistencies, and open decisions
 
-### Documentation vs code mismatches (do not resolve silently)
+### Documentation vs code mismatches
 
-| Mismatch | Docs / proposal | Code today | Narrowest resolution |
-|----------|-----------------|------------|----------------------|
-| Joint count eligibility | Agenda: both Mom+CVG ≥80% | S2 filters `mom_*_count` only; data contract I3 mom-only | **Freeze joint ≥28 in D0; implement in D2** |
-| Wing wording | “Closest to \|Δ\|=0.15” | `_choose_below_nearest` (≤0.15, max abs_delta) | **Freeze code behavior**; treat “closest” as informal |
-| Spread filter | Proposal + C7: `1.0` | `run_surface_search` default `0.20` (AND) | **Freeze `1.0`** |
-| Caps / earnings | 25/side; no earnings | CLI defaults `3` / `5` days | **Freeze 25 and 0** |
-| Trusted entrypoint | Decision 001 cites `run_surface_search.py` | Missing `sizing_mode`; illegal `contract_multiplier` kwarg | **D1**: minimal trusted runner/CLI; do not use broken defaults |
-| Empty dates | DoD: classify every date | `SurfaceRunner` skips empty signals | **D2** |
-| Roadmap vs agenda | Older roadmap maps go/no-go to 007 | Sprint 006 agenda = first trusted economic result | **Agenda wins for 006** |
-| Eval protocol “partial spread” fill | Three fill tiers historically | Sprint 006 = mid + cross only | **Freeze mid+cross** |
+| Mismatch | Contract | Code today | Resolution |
+|----------|----------|------------|------------|
+| Expected calendar | A1 `entry_date` (any validity) | Feature dates; empty signals skipped | **D2** |
+| Joint count | Mom+CVG ≥28 | Mom `count_col` only | **D2** |
+| All-leg spread 0.50 | Every traded leg | Straddle bodies yes; IF **wings only** | **D2** |
+| Wing label | Config `closest_delta` | `_choose_below_nearest` | Freeze both; no silent rename |
+| Spread universe | `spread_bottom_pct=1.0` | CLI default 0.20 | Freeze 1.0 |
+| Caps / earnings | 25 / 0 | CLI 3 / 5 | Freeze 25 / 0 |
+| Trusted CLI | Snapshot/derived + sizing | Broken `sizing_mode` / kwargs | **D1** |
+| Calendar metrics | Dual views | Conditional CAR only; `robust_score` exists | **D3** (no go/no-go via `robust_score`) |
 
-### Decisions requiring user approval (recommended defaults above)
+### Complete user-approval boundary
 
-1. `spread_bottom_pct=1.0` (not 0.20).  
-2. Wing rule = `_choose_below_nearest` @ 0.15 (not true closest).  
-3. Joint Mom+CVG count ≥ 28 (D2 implements).  
-4. `max_leg_spread_pct=0.50`.  
-5. Tier A budgets `10000` / `10000` fallback.  
-6. Manual sample rule in §9.  
-7. Earnings fully off.
+Accepting this design approves **all** of the following Proposed choices (Fixed agenda pins are already locked and are not reopened):
+
+1. Primary reporting period `2020-01-01`→`2026-07-10`  
+2. Momentum tails 10% / 10%  
+3. Highest 50% CVG retention within side  
+4. Joint Mom+CVG counts ≥28 (D2 implements)  
+5. `spread_bottom_pct=1.0`  
+6. 25-name independent per-side cap  
+7. Below-nearest 0.15-delta wing behavior (+ config `wing_selection_rule="closest_delta"`)  
+8. Tier A `equal_max_loss` with budgets `10000` / `10000` fallback  
+9. Long-side fallback (may produce long-only books)  
+10. Earnings off  
+11. All-leg `max_leg_spread_pct=0.50` (D2 completes IF body)  
+12. Independent A1 expected-date calendar + feature reconciliation  
+13. Deterministic cap tie-break (`ticker` asc)  
+14. Dual no-trade metric treatment (§8.1)  
+15. Manual verification sampling (§9)  
+16. Legacy/unused field pins (`max_loss_budget_per_trade=500`, `cost_model="mid"`, multiplier 100, Tier B/condor unset)  
 
 ---
 
@@ -326,12 +358,12 @@ Numeric pass/fail thresholds remain TBD per evaluation protocol — Sprint 006 s
 
 | Deliverable | Owns | Must not reopen |
 |-------------|------|-----------------|
-| **D0** | Experiment contract freeze (this doc + later JSON) | Runtime behavior, P&L |
-| **D1** | Trusted reproducible runner/command on accepted paths; config/manifest wiring; deterministic tie-break if needed | Eligibility semantics; report pack; full economic interpretation |
-| **D2** | Joint Mom+CVG eligibility; expected-date status table; no silent date loss; focused tests | Parameter retune; new features |
-| **D3** | Decision-quality report/metrics from frozen outputs | Changing frozen knobs |
-| **D4** | Smoke, manual sample verification, full mid+cross execution, reproducibility evidence, closeout recommendation | Silent contract replacement; Sprint 007 robustness matrix |
+| **D0** | Contract freeze (this doc + later JSON) | Runtime behavior, P&L |
+| **D1** | Trusted reproducible runner/command; config dump; tie-break pin if needed | Eligibility; all-leg spread; report pack |
+| **D2** | Joint Mom+CVG eligibility; A1 expected-date status; no silent date loss; all-leg `max_leg_spread_pct`; focused tests | Parameter retune; new features |
+| **D3** | Decision report: dual return views + §10 metrics | Changing frozen knobs; `robust_score` go/no-go |
+| **D4** | Smoke, manual sample, full mid+cross run, reproducibility, closeout | Silent contract replacement; Sprint 007 matrix |
 
 ---
 
-**End of D0 design.** Stop here pending review.
+**End of corrected D0 design.** Stop here pending review.
