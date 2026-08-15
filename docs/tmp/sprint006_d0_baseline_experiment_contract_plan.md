@@ -4,7 +4,7 @@
 **Mode:** Audit / design (no runtime edits, no economic run)  
 **Repository HEAD at original design:** `f0a36f1b5ceff545cc2933c5a3c73d7a9ba891ba`  
 **Plan commit:** `9ff498fdf52b335f97a194c3b132ad16edb64def`  
-**Correction HEAD:** `9ff498fdf52b335f97a194c3b132ad16edb64def` (working-tree edit; uncommitted)  
+**Last correction commit:** `5bb33097b078e4c5371baf0c93e96094e67e4dd6`
 **Naming convention:** `docs/tmp/sprint00N_dN_*_plan.md` (matches Sprint 005 deliverable plans)
 
 ---
@@ -13,15 +13,13 @@
 
 D0 freezes one Sprint 006 economic baseline **before any new P&L is inspected**: fixed `(42,8)` Momentum+CVG, no search, accepted Sprint 004/005 artifacts, weekly hold-to-expiry long ATM straddle + short iron fly, Tier A `equal_max_loss` (long financed by short premium; `10000` fallback permits long-only books), mid diagnostic + **cross primary**, history `2018-10-26`→`2026-07-10`, primary reporting from `2020-01-01`.
 
-**Expected dates** come from sorted unique A1 `entry_date` values in that interval (**all rows, including `surface_valid=False`**), then reconciled to `features_42_8.parquet`. Feature-file absence cannot hide a calendar date. Every A1 expected date must be `traded` / `valid_no_trade` / `failed`.
+**Execution pricing:** `config.fill` is the sole Surface pricing mechanism (`mid` at mid; `cross` buys ask / sells bid). `cost_model="mid"` is an inactive legacy field in both runs and must not add cost on top of `fill`. D1 must verify mid/cross prices and no extra spread deduction.
 
-**Return views (D3):** (1) **conditional deployed-capital** — existing CAR on traded dates only (`valid_no_trade` → NaN, excluded from Sharpe/DD); (2) **calendar-aligned** — full A1 calendar with `valid_no_trade=0`, any `failed` blocks a complete result. Do **not** use `robust_score` for go/no-go.
+**Count eligibility:** freeze `min_count_pct=0.80` (not a bare `28`); apply jointly to `mom_42_8_count` and `cvg_count_42_8` via `required_count = ceil(min_count_pct × (max_lag − min_lag + 1))` → `28` of `35` for `(42,8)`. No second CVG threshold field; D2 reuses `min_count_pct`.
 
-**Spread gate intent:** `max_leg_spread_pct=0.50` on **every** traded leg. Code today filters straddle bodies and iron-fly **wings only** (not iron-fly ATM shorts) — **partial; D2 corrects**. Quote gate ≠ cross-fill TC.
+**Expected dates** from sorted unique A1 `entry_date`s (including `surface_valid=False`), reconciled to `features_42_8.parquet`. Dual return views (conditional CAR + calendar-aligned 0-fill); no `robust_score` go/no-go. All-leg `max_leg_spread_pct=0.50` intent; IF ATM body unfiltered today → D2.
 
-**Accepting this design approves every §5 `Proposed` row** (full list in §13). Remaining code gaps: joint Mom+CVG count (D2); A1 calendar + empty-date accounting (D2); all-leg spread (D2); trusted runner/CLI (D1); dual return views + metric pack (D3).
-
-**D0 implementation later:** frozen contract JSON only (~2–4 h). **Ready for approval?** Yes as a corrected design freeze after §13 approvals — still not accepted, and not ready to run economics.
+**Accepting this design approves every §5 `Proposed` row** (§13). Gaps: joint count (D2); A1 calendar (D2); all-leg spread (D2); trusted runner + fill verification (D1); dual metrics (D3). **Ready for approval?** Yes as a design freeze after §13 — still not accepted; not ready to run economics.
 
 ---
 
@@ -100,8 +98,8 @@ Identical except `fill` / `run_id` suffix:
 | Field | Frozen value | Notes |
 |-------|--------------|-------|
 | `run_id` | `sprint006_baseline_v1_mid` / `…_cross` | Twin runs |
-| `momentum_col` / `cvg_col` / `count_col` | `mom_42_8_mean` / `cvg_42_8` / `mom_42_8_count` | Joint CVG count uses published `cvg_count_42_8` (D2) |
-| `min_count_pct` | `0.80` | With joint rule → ≥28 of 35 |
+| `momentum_col` / `cvg_col` / `count_col` | `mom_42_8_mean` / `cvg_42_8` / `mom_42_8_count` | Published `cvg_count_42_8` used jointly under same `min_count_pct` (D2); no extra CVG threshold field |
+| `min_count_pct` | `0.80` | Sole count-threshold parameter. `required_count = ceil(min_count_pct × (max_lag − min_lag + 1))` → `ceil(0.80 × 35) = 28` for `(42,8)`. Require `mom_42_8_count ≥ required_count` **and** `cvg_count_42_8 ≥ required_count` |
 | `long_top_pct` / `short_bottom_pct` | `0.10` / `0.10` | |
 | `cvg_filter_pct` | `0.50` | Highest 50% CVG within side |
 | `dvol_top_pct` / `spread_bottom_pct` | `0.20` / `1.0` | C7 canonical; AND |
@@ -111,9 +109,9 @@ Identical except `fill` / `run_id` suffix:
 | `max_names_per_side` | `25` | Independent per side |
 | `max_loss_budget_per_trade` | `500.0` | **Legacy required**; **does not** control Tier A `equal_max_loss` |
 | `earnings_exclusion_days` | `0` | + `earnings_path=None` |
-| `cost_model` | `"mid"` | Legacy/unused by surface economics; **`fill` authoritative** |
+| `cost_model` | `"mid"` | **Inactive legacy compatibility** in both mid and cross runs. Must **not** affect Surface P&L or add any spread deduction on top of `fill`. Pipeline does not consume this field |
 | `start_date` / `end_date` | `2018-10-26` / `2026-07-10` | Inclusive via runner `<= end` |
-| `fill` | `FillAssumption.mid()` / `.cross()` | Cross = primary decision fill |
+| `fill` | `FillAssumption.mid()` / `.cross()` | **Sole authoritative Surface execution pricing.** Mid = fill at mid; cross = buy ask / sell bid. Cross = primary decision fill |
 | `max_leg_spread_pct` | `0.50` | **Intent: all traded legs**; code partial — D2 |
 | `max_spread_cost_ratio` | `None` | |
 | `condor_short_delta_target` / `condor_long_delta_target` | `None` / `None` | Unused (not ironcondor) |
@@ -128,6 +126,8 @@ Identical except `fill` / `run_id` suffix:
 
 **Tier A fallback (explicit):** normally longs are financed by collected short premium. If there are **no usable shorts** or collected short premium is **non-positive**, use fixed `tier_a_long_budget=10000`. This **permits a long-only book** on that date and requires approval.
 
+**Execution pricing (no second cost layer):** Surface builders receive only `config.fill`. Twin runs differ solely by `FillAssumption.mid()` vs `.cross()`. Setting `cost_model="mid"` on both runs keeps the schema valid; it is not an additional transaction-cost model.
+
 **Search:** none. **Retuning after P&L:** forbidden.
 
 ### 4.2 Other frozen economic rules
@@ -141,8 +141,9 @@ Identical except `fill` / `run_id` suffix:
 | Ranking | Momentum `rank(pct=True, method='average')`; long high / short low | Yes |
 | Cap tie-break | Secondary `ticker` ascending | **Needs D1/D2 pin** |
 | Missing structure | `structure_ok=False` + `failure_reason`; not included | Yes |
-| TC | Cross = buy ask / sell bid; mid α=0.5; entry-only | Yes |
+| TC / execution pricing | Solely via `config.fill` (mid or cross); `cost_model` inactive; entry-only; no stacked spread deduction | Yes (`fill`); D1 verifies |
 | Quote gate vs TC | `max_leg_spread_pct` is pre-trade quote quality; cross fills are separate execution friction | Intent vs code mismatch on IF body |
+| Count eligibility | Same `min_count_pct` jointly on Mom + CVG counts via ceil formula (§4.1) | Mom-only today — D2 |
 
 ---
 
@@ -156,7 +157,7 @@ Identical except `fill` / `run_id` suffix:
 | D-04 | Primary period | Metrics filter `2020-01-01`→`2026-07-10` | Spec / eval protocol | D3 | **Proposed** | Ambiguous go/no-go window |
 | D-05 | Mom tails | 10% / 10% | Working proposal | Yes | **Proposed** | Book composition |
 | D-06 | CVG keep | Top 50% within side | Working proposal | Yes | **Proposed** | Book composition |
-| D-07 | Count eligibility | Joint Mom **and** CVG ≥28 | Agenda “both” | Mom-only today | **Proposed; D2** | Quality bias |
+| D-07 | Count eligibility | Freeze `min_count_pct=0.80`; apply jointly to `mom_42_8_count` and `cvg_count_42_8` with `required_count = ceil(min_count_pct × (max_lag − min_lag + 1))` (=28 for `(42,8)`). No separate CVG threshold field | Agenda “both”; reuse existing config | Mom-only today | **Proposed; D2** | Quality bias |
 | D-08 | Liquidity | PIT top 20% dvol | Spec / C7 | Yes | **Fixed** | Wrong universe |
 | D-09 | Spread pct | `1.0` | C7; avoid double 20% AND | Yes; CLI≠ | **Proposed** | Shrinks universe if 0.20 |
 | D-10 | Cap | 25/side independent | Decision 003 | Yes; CLI≠ | **Proposed** | Wrong book size |
@@ -164,7 +165,7 @@ Identical except `fill` / `run_id` suffix:
 | D-12 | Wing economics | `_choose_below_nearest` @ 0.15; config `wing_selection_rule="closest_delta"` | Code + tests | Yes | **Proposed** | Wing/P&L change |
 | D-13 | Hold model | Hold to expiry | Pins + A1 | Yes | **Fixed** | Live gap remains |
 | D-14 | Sizing | Tier A `equal_max_loss`; budgets 10000/10000 fallback; long-only allowed on fallback | Portfolio metrics + step5 tests | Pipeline yes; CLI no | **Proposed** | Scale/fallback ambiguity |
-| D-15 | Fills | Mid diagnostic; cross primary | Agenda | Yes | **Fixed** | Wrong decision fill |
+| D-15 | Fills / execution pricing | `fill` sole Surface pricing: mid diagnostic, cross primary; `cost_model="mid"` inactive on both runs (no stacked cost) | Agenda; search script already comments fill vs cost_model | Yes | **Fixed** | Double-counting costs or wrong decision fill |
 | D-16 | Earnings | Off | Agenda | Yes | **Proposed** | Lookahead if invented |
 | D-17 | Retuning | Forbidden after P&L | Agenda | Process | **Fixed** | Invalid experiment |
 | D-18 | All-leg spread gate | `0.50` on straddle bodies **and** all four IF legs | Quote-quality intent | **Partial** (IF body unfiltered) | **Proposed; D2** | Inconsistent liquidity filter |
@@ -172,8 +173,8 @@ Identical except `fill` / `run_id` suffix:
 | D-20 | Cap tie-break | `ticker` asc secondary | Reproducibility | Not pinned | **Proposed; D1/D2** | Non-reproducible ties |
 | D-21 | No-trade metrics | Conditional CAR + calendar-aligned 0-fill (§8.1) | Eval protocol completeness | Conditional≈today; calendar=D3 | **Proposed** | Misleading Sharpe |
 | D-22 | Manual sample | §9 deterministic fallbacks | Agenda | Process | **Proposed** | Cherry-picking |
-| D-23 | Legacy fields | `max_loss_budget_per_trade=500`, `cost_model="mid"`, multiplier 100; Tier B/condor unset | Constructible config | Schema | **Proposed** | Implicit defaults |
-| D-24 | Entry point | Trusted Surface run on snapshot/derived paths | Decision 001 | CLI broken | **D1 delivers** | Cannot reproduce |
+| D-23 | Legacy fields | `max_loss_budget_per_trade=500`, `cost_model="mid"` (inactive), multiplier 100; Tier B/condor unset | Constructible config; surface ignores `cost_model` | Schema | **Proposed** | Implicit defaults / mistaken second cost layer |
+| D-24 | Entry point + fill verify | Trusted Surface run on snapshot/derived paths; **D1 must verify** mid/cross prices apply correctly and **no additional spread deduction** occurs beyond `fill` | Decision 001; pricing clarification | CLI broken | **D1 delivers** | Cannot reproduce / silent double cost |
 
 **Acceptance rule:** accepting this D0 design **approves every `Proposed` row above** (and the Fixed agenda pins). It does not authorize D1–D4 implementation by itself.
 
@@ -323,7 +324,7 @@ Small decision pack for **cross (primary)** and **mid (diagnostic)**. No charts,
 | Mismatch | Contract | Code today | Resolution |
 |----------|----------|------------|------------|
 | Expected calendar | A1 `entry_date` (any validity) | Feature dates; empty signals skipped | **D2** |
-| Joint count | Mom+CVG ≥28 | Mom `count_col` only | **D2** |
+| Joint count | Same `min_count_pct=0.80` on Mom+CVG via ceil formula (=28 for `(42,8)`) | Mom `count_col` only; float product without joint CVG | **D2** (reuse `min_count_pct`; no new field) |
 | All-leg spread 0.50 | Every traded leg | Straddle bodies yes; IF **wings only** | **D2** |
 | Wing label | Config `closest_delta` | `_choose_below_nearest` | Freeze both; no silent rename |
 | Spread universe | `spread_bottom_pct=1.0` | CLI default 0.20 | Freeze 1.0 |
@@ -338,7 +339,7 @@ Accepting this design approves **all** of the following Proposed choices (Fixed 
 1. Primary reporting period `2020-01-01`→`2026-07-10`  
 2. Momentum tails 10% / 10%  
 3. Highest 50% CVG retention within side  
-4. Joint Mom+CVG counts ≥28 (D2 implements)  
+4. Joint count eligibility via `min_count_pct=0.80` on Mom+CVG (`required_count=28` for `(42,8)`; D2 implements)
 5. `spread_bottom_pct=1.0`  
 6. 25-name independent per-side cap  
 7. Below-nearest 0.15-delta wing behavior (+ config `wing_selection_rule="closest_delta"`)  
@@ -350,7 +351,7 @@ Accepting this design approves **all** of the following Proposed choices (Fixed 
 13. Deterministic cap tie-break (`ticker` asc)  
 14. Dual no-trade metric treatment (§8.1)  
 15. Manual verification sampling (§9)  
-16. Legacy/unused field pins (`max_loss_budget_per_trade=500`, `cost_model="mid"`, multiplier 100, Tier B/condor unset)  
+16. Legacy/unused field pins (`max_loss_budget_per_trade=500`, inactive `cost_model="mid"`, multiplier 100, Tier B/condor unset); `fill` remains sole Surface pricing
 
 ---
 
@@ -359,8 +360,8 @@ Accepting this design approves **all** of the following Proposed choices (Fixed 
 | Deliverable | Owns | Must not reopen |
 |-------------|------|-----------------|
 | **D0** | Contract freeze (this doc + later JSON) | Runtime behavior, P&L |
-| **D1** | Trusted reproducible runner/command; config dump; tie-break pin if needed | Eligibility; all-leg spread; report pack |
-| **D2** | Joint Mom+CVG eligibility; A1 expected-date status; no silent date loss; all-leg `max_leg_spread_pct`; focused tests | Parameter retune; new features |
+| **D1** | Trusted reproducible runner/command; config dump; tie-break pin if needed; **verify mid/cross fill pricing and no extra spread deduction beyond `fill`** | Eligibility; all-leg spread; report pack; new cost framework |
+| **D2** | Joint Mom+CVG eligibility reusing `min_count_pct` (ceil formula); A1 expected-date status; no silent date loss; all-leg `max_leg_spread_pct`; focused tests | Parameter retune; new features; separate CVG threshold field |
 | **D3** | Decision report: dual return views + §10 metrics | Changing frozen knobs; `robust_score` go/no-go |
 | **D4** | Smoke, manual sample, full mid+cross run, reproducibility, closeout | Silent contract replacement; Sprint 007 matrix |
 
