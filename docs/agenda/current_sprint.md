@@ -1,9 +1,11 @@
 # Current sprint — 006
 
-**Updated:** 2026-08-12
-**Status:** `PROPOSED — AWAITING ACCEPTANCE`
-**Mode:** Proposed. Acceptance authorizes D0 only. D1–D4 work is authorized one deliverable at a time after a short deliverable design is reviewed and accepted.
-**Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`; HEAD verified unchanged at proposal)
+**Updated:** 2026-08-15
+**Status:** `ACTIVE — D0 COMPLETE; D1 AWAITING DESIGN`
+**Mode:** Build. D0 accepted and frozen. D1–D4 each require a short deliverable design that is reviewed and accepted before implementation.
+**Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`)
+**D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (design commit `1cdfad7`; SHA-256 `4012b4a472448004e1a1b14e8814f506911ea0e263e35157b4e13e27ed51a54c`)
+**D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
 
 ---
 
@@ -28,13 +30,14 @@ Sprint 005 closed with accepted, lineaged artifacts and a one-date `SurfaceRunne
 | Derived root | `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/` |
 | Features | Frozen 281-window grid; baseline `(42,8)` ready interval `2018-10-26` → `2026-07-10` |
 | Existing execution path | `SurfaceRunner` (`scripts/run_surface_search.py` → S1→S8 pipeline + surface metrics); to be validated and minimally repaired in D1 before acceptance as the baseline runner |
+| Sprint 006 D0 baseline | Frozen in `configs/sprint006_baseline_v1.json` — do not retune after P&L |
 
 Do not reopen or redesign accepted Sprint 004/005 work.
 
 ```text
 Sprint 004: trusted immutable input snapshot          ← CLOSED
 Sprint 005: trusted full-history weekly Mom/CVG        ← CLOSED
-Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (proposed)
+Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D0 complete)
 Sprint 007: bounded robustness (only after 006 trusted)
 ```
 
@@ -42,7 +45,7 @@ Sprint 007: bounded robustness (only after 006 trusted)
 
 ## 3. Agenda-level decisions (fixed for this sprint)
 
-These are locked at the agenda level. Exact numeric values and detailed economic rules are frozen in **D0** (not chosen here) before any new P&L is inspected:
+These are locked at the agenda level. Exact numeric values and detailed economic rules are frozen in **D0** (see contract above) before any new P&L is inspected:
 
 * One fixed `42:8` Momentum+CVG baseline — not a parameter search
 * Accepted Sprint 005 feature and surface artifacts as inputs
@@ -91,15 +94,15 @@ By sprint end: a reproducible, trustworthy answer to the central question — po
 
 ## 6. High-level deliverables
 
-Design each deliverable immediately before implementing it. **D0** must freeze every choice capable of materially changing P&L before any new P&L is inspected. **D1–D4** may defer engineering decisions only (CLI, manifests, module boundaries, tests, presentation). This agenda does not choose the exact experiment values.
+Design each deliverable immediately before implementing it. **D0** freezes every choice capable of materially changing P&L before any new P&L is inspected. **D1–D4** may defer engineering decisions only (CLI, manifests, module boundaries, tests, presentation).
 
-### D0 — Baseline experiment contract
+### D0 — Baseline experiment contract — **COMPLETE**
 
-Freeze the exact baseline configuration, input identities, evaluation periods, assumptions, exclusions, and evidence expectations before reviewing full economic results.
+Frozen in [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json). Plan: [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md).
 
-### D1 — Trusted baseline runner
+### D1 — Trusted baseline runner — **AWAITING DESIGN**
 
-Provide one supported, reproducible way to run the fixed baseline from accepted artifacts, with enough identity and configuration recording to reproduce the result. Reuse existing backtest machinery; do not create a new generalized framework.
+Provide one supported, reproducible way to run the fixed baseline from accepted artifacts, with enough identity and configuration recording to reproduce the result. Reuse existing backtest machinery; do not create a new generalized framework. Includes verification that mid/cross `fill` pricing applies correctly with no stacked `cost_model` deduction.
 
 ### D2 — Eligibility and coverage correctness
 
@@ -168,7 +171,7 @@ Sprint 006 does **not** pre-build those capabilities.
 * Manual trade-sample selection method
 * Required decision metrics and evidence expectations
 
-Before D0 is accepted, only coverage- and schema-level preflight may be inspected. Do not inspect aggregate P&L, Sharpe, strategy rankings, or side-level performance.
+**D0 status:** frozen in `configs/sprint006_baseline_v1.json`. Before any new P&L is inspected, only coverage- and schema-level preflight may run. Do not inspect aggregate P&L, Sharpe, strategy rankings, or side-level performance.
 
 ### May be decided in the relevant deliverable design
 
@@ -211,3 +214,4 @@ The 12–18 hour budget is a review trigger, not an acceptance condition. A corr
 |------|-------|
 | 2026-08-09 | Sprint 005 closed — [`005_closeout.md`](../sprint_memos/005_closeout.md). Sprint 006 not started. |
 | 2026-08-12 | Proposed Sprint 006 agenda written into this document (`PROPOSED — AWAITING ACCEPTANCE`). HEAD at proposal: `1517b1b`. Refined with D0 experiment-freeze boundaries, deliverable-level implementation authorization, and minimal-implementation stop rules. |
+| 2026-08-15 | D0 accepted at design commit `1cdfad7` (including §13). Contract frozen as `configs/sprint006_baseline_v1.json` (SHA-256 `4012b4a4…1a54c`). Sprint status → `ACTIVE — D0 COMPLETE; D1 AWAITING DESIGN`. No runtime changes; no economic backtest; no P&L inspected. |

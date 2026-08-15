@@ -1,25 +1,21 @@
 # Sprint 006 D0 — Baseline experiment contract plan
 
-**Status:** `PLAN — AWAITING REVIEW` (design only; not accepted; no implementation authorized by this file alone)  
-**Mode:** Audit / design (no runtime edits, no economic run)  
-**Repository HEAD at original design:** `f0a36f1b5ceff545cc2933c5a3c73d7a9ba891ba`  
-**Plan commit:** `9ff498fdf52b335f97a194c3b132ad16edb64def`  
-**Last correction commit:** `5bb33097b078e4c5371baf0c93e96094e67e4dd6`
+**Status:** `ACCEPTED — D0 COMPLETE`
+**Mode:** Build (D0 documentation/config freeze only; D1–D4 not authorized by this acceptance alone)
+**Accepted design commit:** `1cdfad7634176de87c466a897a0d5ee5665c61a1`
+**D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json)
+**Contract SHA-256:** `4012b4a472448004e1a1b14e8814f506911ea0e263e35157b4e13e27ed51a54c`
 **Naming convention:** `docs/tmp/sprint00N_dN_*_plan.md` (matches Sprint 005 deliverable plans)
 
 ---
 
 ## Review summary
 
-D0 freezes one Sprint 006 economic baseline **before any new P&L is inspected**: fixed `(42,8)` Momentum+CVG, no search, accepted Sprint 004/005 artifacts, weekly hold-to-expiry long ATM straddle + short iron fly, Tier A `equal_max_loss` (long financed by short premium; `10000` fallback permits long-only books), mid diagnostic + **cross primary**, history `2018-10-26`→`2026-07-10`, primary reporting from `2020-01-01`.
+D0 is **accepted and complete**. The frozen Sprint 006 pre-P&L baseline lives in `configs/sprint006_baseline_v1.json` (SHA-256 above), sourced from design commit `1cdfad7` and §4/§13 of this plan.
 
-**Execution pricing:** `config.fill` is the sole Surface pricing mechanism (`mid` at mid; `cross` buys ask / sells bid). `cost_model="mid"` is an inactive legacy field in both runs and must not add cost on top of `fill`. D1 must verify mid/cross prices and no extra spread deduction.
+**Frozen compactly:** `(42,8)` only; long ATM straddle + short iron fly; Tier A `equal_max_loss` (10000/10000 fallback); mid diagnostic + **cross primary**; `fill` sole Surface pricing (`cost_model=mid` inactive); `min_count_pct=0.80` joint Mom+CVG → derived `required_count=28` of `35`; PIT dvol 20% + `spread_bottom_pct=1.0`; 25/side; A1 expected-date calendar; dual return views; no retuning after P&L.
 
-**Count eligibility:** freeze `min_count_pct=0.80` (not a bare `28`); apply jointly to `mom_42_8_count` and `cvg_count_42_8` via `required_count = ceil(min_count_pct × (max_lag − min_lag + 1))` → `28` of `35` for `(42,8)`. No second CVG threshold field; D2 reuses `min_count_pct`.
-
-**Expected dates** from sorted unique A1 `entry_date`s (including `surface_valid=False`), reconciled to `features_42_8.parquet`. Dual return views (conditional CAR + calendar-aligned 0-fill); no `robust_score` go/no-go. All-leg `max_leg_spread_pct=0.50` intent; IF ATM body unfiltered today → D2.
-
-**Accepting this design approves every §5 `Proposed` row** (§13). Gaps: joint count (D2); A1 calendar (D2); all-leg spread (D2); trusted runner + fill verification (D1); dual metrics (D3). **Ready for approval?** Yes as a design freeze after §13 — still not accepted; not ready to run economics.
+**Not done in D0 (later):** D1 trusted runner + fill verification; D2 joint count / A1 date-status / all-leg spread; D3 report; D4 economic run. **No P&L inspected.**
 
 ---
 
@@ -182,10 +178,10 @@ Identical except `fill` / `run_id` suffix:
 
 ## 6. P&L-exposure firewall
 
-1. No new Sprint 006 aggregate P&L, Sharpe, rankings, side returns, or strategy comparisons before contract acceptance.  
-2. Read-only code/schema/coverage/identity checks allowed.  
-3. Do not run a real-data economic backtest in D0 design or D0 implementation.  
-4. Post-exposure correctness changes → new versioned experiment ID; no silent overwrite.  
+1. No new Sprint 006 aggregate P&L, Sharpe, rankings, side returns, or strategy comparisons before contract acceptance.
+2. Read-only code/schema/coverage/identity checks allowed.
+3. Do not run a real-data economic backtest in D0 design or D0 implementation.
+4. Post-exposure correctness changes → new versioned experiment ID; no silent overwrite.
 5. No retuning because results look unattractive.
 
 ---
@@ -211,10 +207,10 @@ Identical except `fill` / `run_id` suffix:
 
 **Reconciliation (D0/D2; not implemented now):**
 
-1. Build A1 expected set as above.  
-2. Build feature date set from `features_42_8.parquet` in the same closed interval.  
-3. Every A1 expected date must be classified `traded` / `valid_no_trade` / `failed`.  
-4. An A1 date **missing entirely** from the feature artifact is **not** silently absent — default class **`failed`** (missing feature coverage) unless an intentional exception is **explicit and evidenced**.  
+1. Build A1 expected set as above.
+2. Build feature date set from `features_42_8.parquet` in the same closed interval.
+3. Every A1 expected date must be classified `traded` / `valid_no_trade` / `failed`.
+4. An A1 date **missing entirely** from the feature artifact is **not** silently absent — default class **`failed`** (missing feature coverage) unless an intentional exception is **explicit and evidenced**.
 5. Feature dates absent from A1 must be reported in reconciliation evidence (they are not members of the expected calendar).
 
 | Class | Meaning |
@@ -231,16 +227,16 @@ Cross = primary fill; mid = diagnostic. Report **both** views; **do not** use `r
 
 **View A — Conditional deployed-capital (preserves accepted CAR behavior)**
 
-* `traded`: `cycle_return_on_capital_at_risk = Σ pnl_total / Σ capital_at_risk_dollars`.  
-* `valid_no_trade`: zero denominator → **NaN**; **excluded** from conditional Sharpe and drawdown.  
+* `traded`: `cycle_return_on_capital_at_risk = Σ pnl_total / Σ capital_at_risk_dollars`.
+* `valid_no_trade`: zero denominator → **NaN**; **excluded** from conditional Sharpe and drawdown.
 * Label explicitly as **conditional on traded dates**.
 
 **View B — Calendar-aligned sensitivity**
 
-* Series length = full independent A1 expected calendar (within reporting window).  
-* `traded`: book cycle CAR return.  
-* `valid_no_trade`: contribute **`0`**.  
-* Any `failed` → incomplete; **do not** present as a complete result.  
+* Series length = full independent A1 expected calendar (within reporting window).
+* `traded`: book cycle CAR return.
+* `valid_no_trade`: contribute **`0`**.
+* Any `failed` → incomplete; **do not** present as a complete result.
 * Report calendar-aligned compounded return, annualized return/CAGR, Sharpe (√52 on that series), and drawdown.
 
 Yearly splits use the **same** conventions as the parent view.
@@ -280,16 +276,16 @@ Small decision pack for **cross (primary)** and **mid (diagnostic)**. No charts,
 
 **Frozen definitions**
 
-* **Weekly win rate:** fraction of **finite traded** book-return weeks with return > 0; report no-trade frequency separately (do not treat NaN/0-fill weeks as wins).  
-* **Profit factor:** (sum of positive weekly book P&L) / (absolute sum of negative weekly book P&L). If denominator = 0: `+inf` when numerator > 0; `NaN` when numerator = 0. State which weekly series (conditional traded P&L weeks) is used.  
-* **Sharpe:** mean/std(ddof=1)×√52 on the relevant weekly return series (≥2 finite points; else NaN).  
+* **Weekly win rate:** fraction of **finite traded** book-return weeks with return > 0; report no-trade frequency separately (do not treat NaN/0-fill weeks as wins).
+* **Profit factor:** (sum of positive weekly book P&L) / (absolute sum of negative weekly book P&L). If denominator = 0: `+inf` when numerator > 0; `NaN` when numerator = 0. State which weekly series (conditional traded P&L weeks) is used.
+* **Sharpe:** mean/std(ddof=1)×√52 on the relevant weekly return series (≥2 finite points; else NaN).
 * **Do not** rank go/no-go by `robust_score`.
 
 ---
 
 ## 11. Minimal D0 implementation plan
 
-**Later (~2–4 h), after acceptance:** write `configs/sprint006_baseline_v1.json` matching §4 + mark this plan accepted. No runtime/test edits; no backtest.
+**Completed:** `configs/sprint006_baseline_v1.json` matches §4/§13; this plan marked `ACCEPTED — D0 COMPLETE`; contract SHA-256 recorded in the header.
 
 **Not D0:** `pipeline` / `surface_runner` / CLI fixes; eligibility; all-leg spread; metrics code; economic execution.
 
@@ -297,23 +293,25 @@ Small decision pack for **cross (primary)** and **mid (diagnostic)**. No charts,
 
 ## 12. Verification and acceptance criteria
 
-### Design acceptance (this corrected document)
+### Design acceptance (this document)
 
-- [x] P&L-sensitive choices in §5; Proposed set = approval boundary (§13)  
-- [x] Independent A1 expected calendar; feature absence cannot hide dates (§8)  
-- [x] No-trade treatment explicit for decision metrics (§8.1, §10)  
-- [x] Metric set covers eval-protocol families without becoming a platform (§10)  
-- [x] All-leg spread intent + IF body mismatch accurate (§4, §13)  
-- [x] Exact config constructible without unspecified defaults (§4.1)  
-- [x] Manual samples deterministic with N/A / shortfall rules (§9)  
-- [x] Relevant implementation tests read (§2)  
-- [x] D1–D4 not pulled into D0; P&L firewall explicit  
-- [ ] User acceptance of the full Proposed contract  
+- [x] P&L-sensitive choices in §5; Proposed set = approval boundary (§13)
+- [x] Independent A1 expected calendar; feature absence cannot hide dates (§8)
+- [x] No-trade treatment explicit for decision metrics (§8.1, §10)
+- [x] Metric set covers eval-protocol families without becoming a platform (§10)
+- [x] All-leg spread intent + IF body mismatch accurate (§4, §13)
+- [x] Exact config constructible without unspecified defaults (§4.1)
+- [x] Manual samples deterministic with N/A / shortfall rules (§9)
+- [x] Relevant implementation tests read (§2)
+- [x] D1–D4 not pulled into D0; P&L firewall explicit
+- [x] User acceptance of the full Proposed contract (`1cdfad7`, including §13)
 
-### Later D0 implementation acceptance
+### D0 implementation acceptance
 
-- [ ] Approved JSON matches this contract + digests  
-- [ ] No runtime/test changes; no backtest; no P&L inspection  
+- [x] Approved JSON exists at `configs/sprint006_baseline_v1.json` and matches this contract
+- [x] Contract SHA-256 recorded in this document header (digest not embedded in the JSON)
+- [x] No runtime/test changes; no backtest; no P&L inspection
+- [ ] Feature-file / Stage A on-disk digests beyond receipt/manifest pins (record at D1/D4 run time)
 
 ---
 
@@ -336,21 +334,21 @@ Small decision pack for **cross (primary)** and **mid (diagnostic)**. No charts,
 
 Accepting this design approves **all** of the following Proposed choices (Fixed agenda pins are already locked and are not reopened):
 
-1. Primary reporting period `2020-01-01`→`2026-07-10`  
-2. Momentum tails 10% / 10%  
-3. Highest 50% CVG retention within side  
+1. Primary reporting period `2020-01-01`→`2026-07-10`
+2. Momentum tails 10% / 10%
+3. Highest 50% CVG retention within side
 4. Joint count eligibility via `min_count_pct=0.80` on Mom+CVG (`required_count=28` for `(42,8)`; D2 implements)
-5. `spread_bottom_pct=1.0`  
-6. 25-name independent per-side cap  
-7. Below-nearest 0.15-delta wing behavior (+ config `wing_selection_rule="closest_delta"`)  
-8. Tier A `equal_max_loss` with budgets `10000` / `10000` fallback  
-9. Long-side fallback (may produce long-only books)  
-10. Earnings off  
-11. All-leg `max_leg_spread_pct=0.50` (D2 completes IF body)  
-12. Independent A1 expected-date calendar + feature reconciliation  
-13. Deterministic cap tie-break (`ticker` asc)  
-14. Dual no-trade metric treatment (§8.1)  
-15. Manual verification sampling (§9)  
+5. `spread_bottom_pct=1.0`
+6. 25-name independent per-side cap
+7. Below-nearest 0.15-delta wing behavior (+ config `wing_selection_rule="closest_delta"`)
+8. Tier A `equal_max_loss` with budgets `10000` / `10000` fallback
+9. Long-side fallback (may produce long-only books)
+10. Earnings off
+11. All-leg `max_leg_spread_pct=0.50` (D2 completes IF body)
+12. Independent A1 expected-date calendar + feature reconciliation
+13. Deterministic cap tie-break (`ticker` asc)
+14. Dual no-trade metric treatment (§8.1)
+15. Manual verification sampling (§9)
 16. Legacy/unused field pins (`max_loss_budget_per_trade=500`, inactive `cost_model="mid"`, multiplier 100, Tier B/condor unset); `fill` remains sole Surface pricing
 
 ---
@@ -367,4 +365,4 @@ Accepting this design approves **all** of the following Proposed choices (Fixed 
 
 ---
 
-**End of corrected D0 design.** Stop here pending review.
+**End of accepted D0 design.** D1 requires a separate design and authorization.
