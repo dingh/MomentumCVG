@@ -4,7 +4,7 @@
 **Status:** `ACTIVE — D0 COMPLETE; D1 AWAITING DESIGN`
 **Mode:** Build. D0 accepted and frozen. D1–D4 each require a short deliverable design that is reviewed and accepted before implementation.
 **Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`)
-**D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (design commit `1cdfad7`; SHA-256 `4012b4a472448004e1a1b14e8814f506911ea0e263e35157b4e13e27ed51a54c`)
+**D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (design commit `1cdfad7`; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
 
 ---
@@ -214,4 +214,4 @@ The 12–18 hour budget is a review trigger, not an acceptance condition. A corr
 |------|-------|
 | 2026-08-09 | Sprint 005 closed — [`005_closeout.md`](../sprint_memos/005_closeout.md). Sprint 006 not started. |
 | 2026-08-12 | Proposed Sprint 006 agenda written into this document (`PROPOSED — AWAITING ACCEPTANCE`). HEAD at proposal: `1517b1b`. Refined with D0 experiment-freeze boundaries, deliverable-level implementation authorization, and minimal-implementation stop rules. |
-| 2026-08-15 | D0 accepted at design commit `1cdfad7` (including §13). Contract frozen as `configs/sprint006_baseline_v1.json` (SHA-256 `4012b4a4…1a54c`). Sprint status → `ACTIVE — D0 COMPLETE; D1 AWAITING DESIGN`. No runtime changes; no economic backtest; no P&L inspected. |
+| 2026-08-15 | D0 accepted at design commit `1cdfad7` (including §13). Contract frozen as `configs/sprint006_baseline_v1.json` (SHA-256 of committed LF bytes `3cd57f4d…ef715`). Sprint status → `ACTIVE — D0 COMPLETE; D1 AWAITING DESIGN`. No runtime changes; no economic backtest; no P&L inspected. |

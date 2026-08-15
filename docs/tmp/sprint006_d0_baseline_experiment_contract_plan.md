@@ -4,14 +4,14 @@
 **Mode:** Build (D0 documentation/config freeze only; D1–D4 not authorized by this acceptance alone)
 **Accepted design commit:** `1cdfad7634176de87c466a897a0d5ee5665c61a1`
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json)
-**Contract SHA-256:** `4012b4a472448004e1a1b14e8814f506911ea0e263e35157b4e13e27ed51a54c`
+**Contract SHA-256 (committed LF bytes):** `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`
 **Naming convention:** `docs/tmp/sprint00N_dN_*_plan.md` (matches Sprint 005 deliverable plans)
 
 ---
 
 ## Review summary
 
-D0 is **accepted and complete**. The frozen Sprint 006 pre-P&L baseline lives in `configs/sprint006_baseline_v1.json` (SHA-256 above), sourced from design commit `1cdfad7` and §4/§13 of this plan.
+D0 is **accepted and complete**. The frozen Sprint 006 pre-P&L baseline lives in `configs/sprint006_baseline_v1.json` (SHA-256 of committed LF bytes above), sourced from design commit `1cdfad7` and §4/§13 of this plan.
 
 **Frozen compactly:** `(42,8)` only; long ATM straddle + short iron fly; Tier A `equal_max_loss` (10000/10000 fallback); mid diagnostic + **cross primary**; `fill` sole Surface pricing (`cost_model=mid` inactive); `min_count_pct=0.80` joint Mom+CVG → derived `required_count=28` of `35`; PIT dvol 20% + `spread_bottom_pct=1.0`; 25/side; A1 expected-date calendar; dual return views; no retuning after P&L.
 
@@ -285,7 +285,7 @@ Small decision pack for **cross (primary)** and **mid (diagnostic)**. No charts,
 
 ## 11. Minimal D0 implementation plan
 
-**Completed:** `configs/sprint006_baseline_v1.json` matches §4/§13; this plan marked `ACCEPTED — D0 COMPLETE`; contract SHA-256 recorded in the header.
+**Completed:** `configs/sprint006_baseline_v1.json` matches §4/§13; this plan marked `ACCEPTED — D0 COMPLETE`; contract SHA-256 of committed LF bytes recorded in the header.
 
 **Not D0:** `pipeline` / `surface_runner` / CLI fixes; eligibility; all-leg spread; metrics code; economic execution.
 
@@ -309,7 +309,7 @@ Small decision pack for **cross (primary)** and **mid (diagnostic)**. No charts,
 ### D0 implementation acceptance
 
 - [x] Approved JSON exists at `configs/sprint006_baseline_v1.json` and matches this contract
-- [x] Contract SHA-256 recorded in this document header (digest not embedded in the JSON)
+- [x] Contract SHA-256 of committed LF bytes recorded in this document header (digest not embedded in the JSON)
 - [x] No runtime/test changes; no backtest; no P&L inspection
 - [ ] Feature-file / Stage A on-disk digests beyond receipt/manifest pins (record at D1/D4 run time)
 
