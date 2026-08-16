@@ -1,6 +1,6 @@
 # Sprint 006 D1 — Trusted baseline runner plan
 
-**Status:** `PROPOSED — AWAITING ACCEPTANCE`
+**Status:** `PROPOSED — AWAITING ACCEPTANCE` (final wording revision: always mid+cross, overwrite refuse, proportional identity)
 **Mode:** Build (design only until accepted; no D1 implementation authorized by this draft alone)
 **Repo HEAD at design:** `a1b7a3ccf5cf984841cd0c00062e1207e3b494a0` (clean working tree on `main`)
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (unchanged; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
@@ -11,16 +11,18 @@
 
 ## Review summary
 
-**Recommended design:** Keep `SurfaceRunner.run_single_config()` as the only economic execution engine. Add a **thin frozen-contract adapter** that loads the accepted D0 JSON, resolves accepted snapshot/derived paths (never mutable cache defaults), builds the mid/cross twin `BacktestRunConfig`s, runs each through the existing single-config API, and writes the existing result objects plus a small run-identity receipt. Do not repair or redesign the search CLI.
+**Recommended design:** Keep `SurfaceRunner.run_single_config()` as the only economic execution engine. Add a **thin frozen-contract adapter** that loads the accepted D0 JSON, resolves accepted snapshot/derived paths (never the mutable producer cache root), maps only recognized contract fields into twin `BacktestRunConfig`s, and always runs **both** frozen contract fills—diagnostic mid and primary cross—through the existing single-config API. Persist existing result objects plus a small run-identity receipt; refuse to overwrite an existing run output directory or target artifacts. Do not repair or redesign the search CLI.
 
-**Main components reused:** `SurfaceRunner.run_single_config`, `SurfaceDataPaths` (with explicit path overrides), `BacktestRunConfig`, `pipeline` S1→S5, `option_surface.FillAssumption` builders/settle, `surface_metrics` date/run summaries, existing mid/cross unit/contract coverage, Sprint 005 identity-gate patterns (`require_clean_repo_sha` / digest helpers).
+**Main components reused:** `SurfaceRunner.run_single_config`, `SurfaceDataPaths` (with explicit path overrides), `BacktestRunConfig`, `pipeline` S1→S5, `option_surface.FillAssumption` builders/settle, `surface_metrics` date/run summaries, existing mid/cross unit/contract coverage, Sprint 005 clean-repo / light digest patterns.
 
 **Minimum changes believed necessary:**
-1. Contract→paths→twin-config mapping + path/identity preflight (new adapter code).
-2. Thin CLI entry that invokes that adapter for one documented command.
-3. Persist existing `trade_log` / `date_summary` / `run_summary` plus a run receipt (config dump, digests, repo SHA).
+1. Contract→paths→twin-config mapping + path/identity preflight (new adapter code); run set comes entirely from the frozen contract `runs` list.
+2. Thin CLI that always executes mid **and** cross; optional `--dry-run` only for config/path/identity validation (no economic execution). No `--fill` selector.
+3. Persist existing `trade_log` / `date_summary` / `run_summary` plus a run receipt; refuse overwrite of an existing run directory or target artifacts (no staging/atomic/resume system).
 4. Pin unstable per-side cap tie-break to `ticker` ascending (one focused `pipeline` sort change) — D0 D-20.
-5. Focused tests proving mapping, path refusal of mutable defaults, fill-only pricing (no stacked `cost_model`), and tie-break.
+5. Focused tests: recognized-field mapping; refuse mutable producer cache **root** (not every path containing `cache`); one behavioral fill-vs-inactive-`cost_model` economics test; tie-break.
+
+**Identity (proportional):** Clean Git HEAD; contract `contract_id` / `contract_version` / `status`; record a basic digest. No CRLF portability machinery, new hashing framework, or extensive hashing tests.
 
 **Proposed footprint:** ~1 new small library module, ~1 thin script, ~1 small production edit (`pipeline` cap sort), ~1–2 focused test modules. No new backtest engine, metrics framework, or search platform.
 
@@ -28,10 +30,12 @@
 
 **Explicitly deferred:** D2 joint Mom+CVG count / A1 date-status / all-leg spread; D3 decision report; D4 smoke + manual sample + full mid/cross execution; search-CLI repair; Sprint 007 study matrix.
 
+**Fixed by this revision (not open):** Official command always runs mid and cross from the frozen contract; overwrite refusal; proportional identity/digest; recognized-field mapping; mutable-cache-root (not substring) refusal; behavioral fill/`cost_model` test.
+
 **Needs your approval before implementation:**
 1. Add a **new thin CLI** (`scripts/run_sprint006_baseline.py`) backed by an importable helper — rather than patching `run_surface_search.py` or relying on an ephemeral outside-repo driver.
 2. Make the **cap tie-break** production change in D1 (narrow `sort_values` pin), not defer entirely to D2.
-3. Write run artifacts under an **outside-repo** output root (e.g. `C:/MomentumCVG_env/runs/…`), never into Git or mutable producer cache as the accepted input root.
+3. Write run artifacts under an **outside-repo** output root (e.g. `C:/MomentumCVG_env/runs/…`), never into Git or the mutable producer cache root as the accepted input root.
 
 ---
 
@@ -76,20 +80,20 @@
 
 ### Reusable with validation / tests only
 
-* Mid/cross builder economics (extend with an explicit “no second cost layer” regression if needed).
+* Mid/cross builder economics (keep as regression; D1 still needs the behavioral fill/`cost_model` test).
 * Orchestration synthetic runner fixtures.
-* Identity/digest helpers and clean-repo gate pattern from Sprint 005 tooling (adapt narrowly; do not import D4 feature-audit scope).
+* Clean-repo SHA pattern from Sprint 005 tooling (adapt narrowly; do not expand into a hashing design).
 
 ### Gaps that actually block a supported frozen baseline run
 
 | Gap | Why it blocks D1 | Narrow fix |
 |-----|------------------|------------|
 | No frozen-contract entry point | Cannot reproduce D0 twin runs via one documented command; search CLI is wrong path and currently unconstructible | Thin adapter + thin CLI |
-| Mutable-cache defaults | `SurfaceDataPaths()` silently points at forbidden mutable cache | Require explicit accepted paths from contract |
-| No contract→`BacktestRunConfig` mapper | Manual reconstruction risks drift from frozen JSON | One mapper from D0 JSON → twin configs |
-| No identity/output persistence on the single-config path | Runner returns in-memory only; D0 reproducibility needs digests + dumps + written outputs | Adapter writes existing frames + receipt |
+| Mutable-cache defaults | `SurfaceDataPaths()` silently points at forbidden mutable producer cache root | Require explicit accepted paths; refuse that cache **root** (snapshot `…/cache/surface` paths remain valid) |
+| No contract→`BacktestRunConfig` mapper | Manual reconstruction risks drift from frozen JSON | One mapper: recognized fields only → twin configs |
+| No identity/output persistence on the single-config path | Runner returns in-memory only; D0 reproducibility needs dumps + written outputs + light identity | Adapter writes existing frames + receipt; refuse overwrite |
 | Cap tie-break unpinned | Equal `signal_rank_pct` selection order is not deterministic (`sort_values` without secondary key / stable kind) | Pin secondary `ticker` ascending in S5 cap sort |
-| Fill/`cost_model` trust not encoded as a 006 regression | Behavior looks correct, but D0 explicitly requires D1 verification evidence | Focused tests / static assertions — not a new pricing system |
+| Fill/`cost_model` trust not encoded as a 006 regression | Behavior looks correct, but D0 explicitly requires D1 verification evidence | One focused **behavioral** economics test — not static source inspection alone |
 
 ### Non-gaps for D1 (real, but owned later)
 
@@ -105,11 +109,11 @@
 
 | D1 requirement (agenda + D0 handoff) | Status | Action |
 |--------------------------------------|--------|--------|
-| Exercise `run_single_config` for frozen twin configs | Engine ready; no trusted launcher | Adapter builds configs and calls API |
-| Accepted snapshot/derived paths only | Possible via overrides; defaults unsafe | Preflight + explicit `SurfaceDataPaths` |
-| Identity/config recording | Missing on single-config path | Run receipt + effective config dump |
-| Fill pricing correct; no stacked `cost_model` | Behavior appears correct | Evidence tests; no pricing redesign |
-| Reproducible outputs (`trade_log`, `date_summary`, `run_summary`) | In-memory only | Persist from `SurfaceRunResult` |
+| Exercise `run_single_config` for frozen twin configs | Engine ready; no trusted launcher | Adapter builds **both** mid and cross from contract `runs` and calls API |
+| Accepted snapshot/derived paths only | Possible via overrides; defaults unsafe | Preflight + explicit `SurfaceDataPaths`; refuse mutable producer cache root |
+| Identity/config recording | Missing on single-config path | Run receipt (clean HEAD, contract id/version/status, basic digest) + effective config dump |
+| Fill pricing correct; no stacked `cost_model` | Behavior appears correct | One behavioral economics test; no pricing redesign |
+| Reproducible outputs (`trade_log`, `date_summary`, `run_summary`) | In-memory only | Persist from `SurfaceRunResult`; refuse overwrite |
 | Cap tie-break `ticker` asc | Unpinned | One pipeline sort pin + test |
 | Preserve single-config result model for later studies | Present | Do not invent parallel result schema |
 | Search path repair | Not required for fixed-contract execution | **Out of scope** |
@@ -144,10 +148,11 @@ configs/sprint006_baseline_v1.json
 SurfaceDataPaths(explicit accepted paths only; earnings_path=None)
         │
         ▼
-SurfaceRunner.run_single_config(mid_cfg) / (..._cross)
+SurfaceRunner.run_single_config(mid_cfg) then (..._cross)  # always both
         │
         ▼
-SurfaceRunResult  →  write trade_log / date_summary / run_summary + run_receipt.json
+SurfaceRunResult ×2  →  write trade_log / date_summary / run_summary + run_receipt.json
+                        (refuse if run dir or targets already exist)
 ```
 
 No change to the inner date-loop economics except the S5 cap tie-break pin.
@@ -155,13 +160,13 @@ No change to the inner date-loop economics except the S5 cap tie-break pin.
 ### 5.2 Entry point form
 
 * **Importable helper module** (for tests and CLI), e.g. `src/backtest/sprint006_baseline.py` (name may be adjusted while coding; keep Sprint-006-specific to avoid a fake general framework).
-* **Thin CLI** `scripts/run_sprint006_baseline.py`: contract path, output root, optional `--fill {mid,cross,both}`, optional `--dry-run` (identity/path/config only).
+* **Thin CLI** `scripts/run_sprint006_baseline.py`: contract path, output root; optional `--dry-run` (config/path/identity only — no economic execution). **No** `--fill` option: the official command always executes both frozen contract runs (diagnostic mid and primary cross) from the contract `runs` list.
 * CLI must refuse to proceed if required accepted inputs are missing or identity checks fail.
-* Clean git HEAD: record always; **hard-fail when writing acceptance artifacts** (aligns with D0 `require_clean_git_head`).
+* Clean Git HEAD: **hard-fail when writing acceptance artifacts** (aligns with D0 `require_clean_git_head`). Record contract id/version/status and a basic digest — no CRLF portability or hashing framework work.
 
 ### 5.3 Mapping rules (must be literal to D0 JSON)
 
-* Shared fields from `shared_run_config` + feature window columns.
+* Map only **recognized** `BacktestRunConfig` fields from `shared_run_config`, feature window columns, and each `runs[]` entry. Do **not** blindly unpack note/intent/summary prose fields into the dataclass.
 * Twin runs differ only by `run_id` and `FillAssumption` (mid vs cross); both keep inactive `cost_model="mid"`.
 * Dates from contract ISO strings → `date`.
 * `tier_b_*` / condor targets remain unset/`None` as frozen.
@@ -169,12 +174,14 @@ No change to the inner date-loop economics except the S5 cap tie-break pin.
 
 ### 5.4 Outputs (D1)
 
-Per fill role under the chosen outside-repo run directory:
+Per fill role under the chosen outside-repo run directory (always both mid and cross on a non-dry-run):
 
 * `trade_log_<run_id>.parquet` (or `.csv` if parquet tooling is unnecessary — prefer parquet for consistency with search script)
 * `date_summary_<run_id>.parquet`
 * `run_summary_<run_id>.json`
-* One `run_receipt.json` covering both (or per-run receipts): contract id/digest, repo HEAD, input path digests, effective config dump(s), output digests, command argv.
+* One `run_receipt.json` covering both: contract id/version/status, basic digest, repo HEAD, effective config dump(s), light input/output identity, command argv.
+
+**Overwrite safety:** Refuse if the chosen run output directory already exists or any target artifact path already exists. No staging directories, atomic publication, resumability, lifecycle states, or generalized run-management system.
 
 **Not in D1:** `date_status_table`, decision-metric pack, primary-period filtered report.
 
@@ -184,11 +191,7 @@ In `step5_select_and_size` per-side sort, after primary `signal_rank_pct` orderi
 
 ### 5.6 Fill verification (no engine redesign)
 
-Prove with tests/evidence:
-
-1. Surface assembly path receives only `config.fill`.
-2. Changing `cost_model` while holding `fill` fixed does not change entry costs / PnL on a synthetic fixture (or equivalently: surface modules do not reference `cost_model`).
-3. Mid vs cross on the same quotes produce the expected entry-cost / `spread_cost` relationship already encoded in unit tests.
+Require **one focused behavioral test** on a synthetic fixture: `fill` controls pricing/economics, and changing inactive `cost_model` while holding `fill` fixed does **not** change economics. Static source inspection alone is not acceptance evidence. Existing mid/cross builder unit tests remain useful regression coverage but do not replace that behavioral check.
 
 ---
 
@@ -199,9 +202,9 @@ Prove with tests/evidence:
 | `src/backtest/sprint006_baseline.py` (**new**) | Load/verify contract; build paths; build twin configs; optional run+write helpers; receipt schema |
 | `scripts/run_sprint006_baseline.py` (**new**) | Thin argparse CLI over the helper |
 | `src/backtest/pipeline.py` | Cap selection sort: secondary `ticker` ascending |
-| `tests/unit/test_sprint006_baseline_contract_adapter.py` (**new**, name flexible) | Mapping, digest, path refusal, receipt fields, dry-run |
+| `tests/unit/test_sprint006_baseline_contract_adapter.py` (**new**, name flexible) | Recognized-field mapping, identity, mutable-cache-root refusal, overwrite refusal, receipt fields, dry-run |
 | `tests/contract/test_step5_select_and_size_contract.py` or sibling | Equal-rank tie-break selects lower ticker |
-| `tests/unit/` or `tests/contract/` fill/`cost_model` regression | No stacked cost; fill remains authoritative |
+| `tests/unit/` or `tests/contract/` fill/`cost_model` behavioral test | Fill controls economics; inactive `cost_model` does not |
 | **Do not edit** | `configs/sprint006_baseline_v1.json`, `surface_runner.py` loop (unless a blocking shared defect appears), `run_surface_search.py`, D2/D3/D4 docs/status |
 
 Approximate effort: well inside the sprint’s 12–18h review trigger if scope stays as above.
@@ -210,17 +213,18 @@ Approximate effort: well inside the sprint’s 12–18h review trigger if scope 
 
 ## 7. Focused test and validation plan
 
-1. **Contract digest:** loading committed JSON yields the pinned SHA-256 of LF bytes.
-2. **Twin config constructibility:** both mid/cross `BacktestRunConfig`s validate; field values match D0; only `run_id` + fill alphas/labels differ.
-3. **Path preflight:** missing/mismatched snapshot/build/receipt fails; constructing paths without explicit overrides is refused for the 006 entrypoint.
-4. **Tie-break:** two same-side equal `signal_rank_pct` names → lower ticker kept when cap=1.
-5. **Fill authority:** synthetic assembly/run shows mid vs cross friction; `cost_model` inactive.
-6. **Output shape:** adapter writing from a synthetic `SurfaceRunResult` produces expected files + receipt keys.
-7. **Regression subset after edits:** existing orchestration + step5 + option_surface straddle/ironfly mid/cross tests.
+1. **Contract identity:** load committed JSON; check `contract_id` / `contract_version` / `status`; record a basic digest (no extensive hashing suite).
+2. **Twin config constructibility:** both mid and cross `BacktestRunConfig`s validate from recognized fields only; only `run_id` + fill alphas/labels differ.
+3. **Path preflight:** missing/mismatched accepted inputs fail; refuse the mutable producer cache **root** as an input root; do **not** reject legitimate snapshot paths under `snapshot/.../cache/surface`.
+4. **Overwrite refusal:** existing run directory or target artifact → fail.
+5. **Tie-break:** two same-side equal `signal_rank_pct` names → lower ticker kept when cap=1.
+6. **Fill authority (behavioral):** fill controls economics; changing inactive `cost_model` does not.
+7. **Output shape:** adapter writing from a synthetic `SurfaceRunResult` produces expected files + receipt keys for both runs.
+8. **Regression subset after edits:** existing orchestration + step5 + option_surface straddle/ironfly mid/cross tests.
 
 **Forbidden in D1 validation:** full-history real-data backtest; reading/reporting new aggregate Sharpe/P&L/rankings from accepted data.
 
-Optional allowed preflight (no economic loop): open/verify file existence + digests for A1/A2/features/liquidity/manifest/receipt.
+Optional allowed preflight (no economic loop): open/verify file existence for A1/A2/features/liquidity/manifest/receipt.
 
 ---
 
@@ -228,11 +232,11 @@ Optional allowed preflight (no economic loop): open/verify file existence + dige
 
 1. Accept this plan (and the three approval items in the Review summary).
 2. Implement contract load/verify + twin config builder + path preflight (no runner execution yet).
-3. Add tests for mapping/digest/path refusal.
+3. Add tests for recognized-field mapping, identity, mutable-cache-root refusal, and overwrite refusal.
 4. Pin cap tie-break + test.
-5. Add fill/`cost_model` regression coverage as needed.
-6. Implement run+write wrapper calling existing `run_single_config` (synthetic-tested).
-7. Add thin CLI.
+5. Add the focused behavioral fill/`cost_model` economics test.
+6. Implement run+write wrapper calling existing `run_single_config` for **both** mid and cross (synthetic-tested).
+7. Add thin CLI (always both runs; `--dry-run` optional).
 8. Run focused pytest subset; record results in the implementation handoff (not this design doc).
 9. Stop. Do not start D2/D3/D4 work or real-data P&L.
 
@@ -243,18 +247,19 @@ Optional allowed preflight (no economic loop): open/verify file existence + dige
 ### Design acceptance (this document)
 
 - [ ] Review summary approved, including entry-point, tie-break-in-D1, and outside-repo output decisions
+- [ ] Fixed decisions accepted: always mid **and** cross; overwrite refusal; proportional identity; recognized-field mapping; mutable-cache-root refusal; behavioral fill test
 - [ ] Frozen D0 JSON remains untouched
 - [ ] Plan does not authorize D2–D4 or search redesign
 - [ ] No P&L-sensitive contract values reopened
 
 ### D1 implementation acceptance (after coding)
 
-- [ ] One documented command can construct and (when executed) run the frozen mid and/or cross configs through `SurfaceRunner.run_single_config`
-- [ ] Command uses only accepted snapshot/derived paths; mutable cache not used as input root
-- [ ] Effective configs + input/code/output identities recorded in a run receipt
+- [ ] One documented command constructs and (when executed) runs **both** frozen mid and cross configs through `SurfaceRunner.run_single_config`
+- [ ] Command uses only accepted snapshot/derived paths; mutable producer cache **root** not used as input root
+- [ ] Effective configs + proportional identity recorded in a run receipt; existing run dir/artifacts not overwritten
 - [ ] Existing result artifacts persisted without a parallel economics schema
 - [ ] Cap tie-break pinned and tested
-- [ ] Fill-only pricing verified by focused tests (no stacked `cost_model`)
+- [ ] Fill-only pricing verified by a focused **behavioral** test (inactive `cost_model` does not change economics)
 - [ ] Focused pytest subset green
 - [ ] No new real-data aggregate P&L inspected; no parameter retune
 - [ ] Search CLI left unrepaired unless a newly discovered **shared** defect blocks the adapter (unlikely given current evidence)
@@ -274,6 +279,7 @@ Optional allowed preflight (no economic loop): open/verify file existence + dige
 * Repair/redesign of `SurfaceSearch` / `run_surface_search.py`
 * Tier B sizing, iron-condor comparison, earnings filters, new features
 * Sprint 007 bounded study matrix or generalized multi-config experiment platform
+* Staging/atomic/resume run-management systems; CRLF hashing frameworks; `--fill` selectors
 * Unrelated refactors or known-bug fixes that do not block frozen twin execution
 
 ---
