@@ -13,9 +13,11 @@
 
 D0 is **accepted and complete**. The frozen Sprint 006 pre-P&L baseline lives in `configs/sprint006_baseline_v1.json` (SHA-256 of committed LF bytes above), sourced from design commit `1cdfad7` and §4/§13 of this plan.
 
+**Architecture:** Sprint 006 accepts the canonical **single-configuration** path `SurfaceRunner.run_single_config()` on this frozen contract. D1 hardens that path; any new command is only a thin contract adapter. Parameter-search repair/redesign is deferred unless a shared defect blocks fixed-contract runs. Sprint 007 may reuse the accepted runner/result schema for a bounded preregistered study—it must not retune this baseline or add a separate economic path.
+
 **Frozen compactly:** `(42,8)` only; long ATM straddle + short iron fly; Tier A `equal_max_loss` (10000/10000 fallback); mid diagnostic + **cross primary**; `fill` sole Surface pricing (`cost_model=mid` inactive); `min_count_pct=0.80` joint Mom+CVG → derived `required_count=28` of `35`; PIT dvol 20% + `spread_bottom_pct=1.0`; 25/side; A1 expected-date calendar; dual return views; no retuning after P&L.
 
-**Not done in D0 (later):** D1 trusted runner + fill verification; D2 joint count / A1 date-status / all-leg spread; D3 report; D4 economic run. **No P&L inspected.**
+**Not done in D0 (later):** D1 trusted single-config runner + fill verification; D2 joint count / A1 date-status / all-leg spread; D3 report; D4 economic run. **No P&L inspected.**
 
 ---
 
@@ -170,7 +172,7 @@ Identical except `fill` / `run_id` suffix:
 | D-21 | No-trade metrics | Conditional CAR + calendar-aligned 0-fill (§8.1) | Eval protocol completeness | Conditional≈today; calendar=D3 | **Proposed** | Misleading Sharpe |
 | D-22 | Manual sample | §9 deterministic fallbacks | Agenda | Process | **Proposed** | Cherry-picking |
 | D-23 | Legacy fields | `max_loss_budget_per_trade=500`, `cost_model="mid"` (inactive), multiplier 100; Tier B/condor unset | Constructible config; surface ignores `cost_model` | Schema | **Proposed** | Implicit defaults / mistaken second cost layer |
-| D-24 | Entry point + fill verify | Trusted Surface run on snapshot/derived paths; **D1 must verify** mid/cross prices apply correctly and **no additional spread deduction** occurs beyond `fill` | Decision 001; pricing clarification | CLI broken | **D1 delivers** | Cannot reproduce / silent double cost |
+| D-24 | Entry point + fill verify | Trusted run via `SurfaceRunner.run_single_config()` on snapshot/derived paths (thin frozen-contract adapter only if a new command is needed); **D1 must verify** mid/cross prices and **no additional spread deduction** beyond `fill`. Search CLI repair deferred unless it shares a blocking defect | Decision 001; architecture clarification | Search CLI broken; single-config API exists | **D1 delivers** | Cannot reproduce / silent double cost / wrong path |
 
 **Acceptance rule:** accepting this D0 design **approves every `Proposed` row above** (and the Fixed agenda pins). It does not authorize D1–D4 implementation by itself.
 
@@ -327,7 +329,7 @@ Small decision pack for **cross (primary)** and **mid (diagnostic)**. No charts,
 | Wing label | Config `closest_delta` | `_choose_below_nearest` | Freeze both; no silent rename |
 | Spread universe | `spread_bottom_pct=1.0` | CLI default 0.20 | Freeze 1.0 |
 | Caps / earnings | 25 / 0 | CLI 3 / 5 | Freeze 25 / 0 |
-| Trusted CLI | Snapshot/derived + sizing | Broken `sizing_mode` / kwargs | **D1** |
+| Trusted CLI | Thin adapter over `run_single_config` + sizing/paths | Search CLI missing `sizing_mode` / illegal kwargs; search is not the 006 path | **D1** (search redesign deferred) |
 | Calendar metrics | Dual views | Conditional CAR only; `robust_score` exists | **D3** (no go/no-go via `robust_score`) |
 
 ### Complete user-approval boundary
@@ -358,10 +360,10 @@ Accepting this design approves **all** of the following Proposed choices (Fixed 
 | Deliverable | Owns | Must not reopen |
 |-------------|------|-----------------|
 | **D0** | Contract freeze (this doc + later JSON) | Runtime behavior, P&L |
-| **D1** | Trusted reproducible runner/command; config dump; tie-break pin if needed; **verify mid/cross fill pricing and no extra spread deduction beyond `fill`** | Eligibility; all-leg spread; report pack; new cost framework |
+| **D1** | Harden `SurfaceRunner.run_single_config()` for the frozen twin configs; thin contract adapter only if needed; fill-pricing verify; tie-break pin if needed. Do **not** redesign search unless a shared defect blocks fixed-contract execution | Eligibility; all-leg spread; report pack; new cost framework; separate backtest engine |
 | **D2** | Joint Mom+CVG eligibility reusing `min_count_pct` (ceil formula); A1 expected-date status; no silent date loss; all-leg `max_leg_spread_pct`; focused tests | Parameter retune; new features; separate CVG threshold field |
 | **D3** | Decision report: dual return views + §10 metrics | Changing frozen knobs; `robust_score` go/no-go |
-| **D4** | Smoke, manual sample, full mid+cross run, reproducibility, closeout | Silent contract replacement; Sprint 007 matrix |
+| **D4** | Smoke, manual sample, full mid+cross run, reproducibility, closeout | Silent contract replacement; Sprint 007 matrix / separate economic path |
 
 ---
 

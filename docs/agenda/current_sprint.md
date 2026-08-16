@@ -7,15 +7,17 @@
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (design commit `1cdfad7`; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
 
+**Architecture (006):** end-to-end acceptance of the canonical **single-configuration** Surface path (`SurfaceRunner.run_single_config`) on the frozen D0 baseline—not a search platform. D1 hardens that path (any new command = thin contract adapter only). Sprint 007 may reuse the accepted runner/result schema for a bounded preregistered study; it must not retune the 006 baseline or add a separate economic execution path.
+
 ---
 
 ## 1. Sprint intent
 
-Bridge from trusted historical features to the **first economic backtest result we can genuinely trust**.
+Bridge from trusted historical features to the **first economic backtest result we can genuinely trust**, by accepting the canonical single-configuration Surface execution and evaluation path on the frozen D0 baseline.
 
 **Central question:** Does the frozen `42:8` Momentum+CVG signal produce believable economic results on the accepted real dataset after conservative transaction costs?
 
-A weak or negative strategy result is still a successful Sprint 006 outcome if the evidence is correct and complete. This is not another general infrastructure sprint.
+A weak or negative strategy result is still a successful Sprint 006 outcome if the evidence is correct and complete. This is not another general infrastructure sprint, and it is **not** a parameter-search sprint.
 
 ---
 
@@ -29,7 +31,7 @@ Sprint 005 closed with accepted, lineaged artifacts and a one-date `SurfaceRunne
 | Snapshot root | `C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886` |
 | Derived root | `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/` |
 | Features | Frozen 281-window grid; baseline `(42,8)` ready interval `2018-10-26` → `2026-07-10` |
-| Existing execution path | `SurfaceRunner` (`scripts/run_surface_search.py` → S1→S8 pipeline + surface metrics); to be validated and minimally repaired in D1 before acceptance as the baseline runner |
+| Existing execution path | Canonical: `SurfaceRunner.run_single_config()` → S1→S8 pipeline + surface metrics. The grid-search CLI (`scripts/run_surface_search.py` / `SurfaceSearch`) is **not** the Sprint 006 acceptance path |
 | Sprint 006 D0 baseline | Frozen in `configs/sprint006_baseline_v1.json` — do not retune after P&L |
 
 Do not reopen or redesign accepted Sprint 004/005 work.
@@ -102,7 +104,7 @@ Frozen in [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baselin
 
 ### D1 — Trusted baseline runner — **AWAITING DESIGN**
 
-Provide one supported, reproducible way to run the fixed baseline from accepted artifacts, with enough identity and configuration recording to reproduce the result. Reuse existing backtest machinery; do not create a new generalized framework. Includes verification that mid/cross `fill` pricing applies correctly with no stacked `cost_model` deduction.
+Exercise and harden the existing `SurfaceRunner.run_single_config()` path so the frozen D0 twin mid/cross configs run reproducibly from accepted snapshot/derived artifacts, with identity/config recording and fill-pricing verification (no stacked `cost_model` deduction). Any new command must be only a **thin frozen-contract adapter**—not a separate backtest implementation or generalized framework. Repairing or redesigning the parameter-search workflow is deferred unless a shared defect blocks fixed-contract execution.
 
 ### D2 — Eligibility and coverage correctness
 
@@ -137,7 +139,7 @@ Success is evidence quality, not a required Sharpe or positive-return threshold.
 
 ## 8. Sprint 007 handoff
 
-Sprint 007 begins only after the Sprint 006 baseline is trusted. Its possible role is bounded robustness testing, a small preregistered candidate set, walk-forward correctness, Tier B integer lots, and a realistic capital budget.
+Sprint 007 begins only after the Sprint 006 baseline is trusted. It may **reuse** the accepted single-config runner and result schema for a bounded, preregistered candidate study (and related robustness items such as walk-forward correctness or Tier B sizing). It must **not** retrospectively retune the Sprint 006 baseline or introduce a separate economic execution path.
 
 Sprint 006 does **not** pre-build those capabilities.
 
