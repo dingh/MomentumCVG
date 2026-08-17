@@ -1,8 +1,9 @@
 # Sprint 006 D1 — Trusted baseline runner plan
 
-**Status:** `PROPOSED — AWAITING ACCEPTANCE` (final wording revision: always mid+cross, overwrite refuse, proportional identity)
-**Mode:** Build (design only until accepted; no D1 implementation authorized by this draft alone)
+**Status:** `IMPLEMENTED — AWAITING REVIEW` (design accepted; implementation recorded in §12)
+**Mode:** Build (D1 implementation only; D2–D4 not authorized)
 **Repo HEAD at design:** `a1b7a3ccf5cf984841cd0c00062e1207e3b494a0` (clean working tree on `main`)
+**Repo HEAD at implementation start:** `b380d38325eda87036e3d6962a45dc3261ae7c21` (clean working tree on `main`)
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (unchanged; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
 **Naming convention:** `docs/tmp/sprint00N_dN_*_plan.md`
@@ -10,6 +11,8 @@
 ---
 
 ## Review summary
+
+**Implementation status:** The accepted design below is **implemented and awaiting review** (§12 records files, tests, and limits). The adapter (`src/backtest/sprint006_baseline.py`) plus one thin CLI (`scripts/run_sprint006_baseline.py`) map the frozen contract onto `SurfaceRunner.run_single_config()`, which remains the only economic engine. The single production change outside the adapter is the S5 cap tie-break pin. The frozen D0 JSON is unchanged, and **no real-data economic run was executed and no new P&L was inspected**.
 
 **Recommended design:** Keep `SurfaceRunner.run_single_config()` as the only economic execution engine. Add a **thin frozen-contract adapter** that loads the accepted D0 JSON, resolves accepted snapshot/derived paths (never the mutable producer cache root), maps only recognized contract fields into twin `BacktestRunConfig`s, and always runs **both** frozen contract fills—diagnostic mid and primary cross—through the existing single-config API. Persist existing result objects plus a small run-identity receipt; refuse to overwrite an existing run output directory or target artifacts. Do not repair or redesign the search CLI.
 
@@ -290,4 +293,40 @@ D1 deliberately keeps **one config → one `SurfaceRunResult`** as the atomic un
 
 ---
 
-**End of proposed D1 design.** Implementation requires explicit acceptance of this plan (including the Review-summary approval items). No implementation or real-data P&L execution occurred while producing this document.
+## 12. D1 implementation record (`IMPLEMENTED — AWAITING REVIEW`)
+
+Implemented at HEAD `b380d38` (clean tree) after design acceptance.
+
+### Files
+
+| File | Change |
+|------|--------|
+| `src/backtest/sprint006_baseline.py` (new) | Contract load/identity, recognized-field mapping → twin configs, accepted-path preflight, output writing, light receipt, `run_baseline` over `run_single_config` |
+| `scripts/run_sprint006_baseline.py` (new) | Thin CLI: `--contract`, `--output-dir`, `--dry-run`. No `--fill`; both frozen runs always execute |
+| `src/backtest/pipeline.py` | S5 per-side cap sort: secondary key `ticker` ascending (+ docstring) |
+| `tests/unit/test_sprint006_baseline_adapter.py` (new) | Identity, mapping, path behavior, dry-run, overwrite refusal, synthetic end-to-end, behavioral fill/`cost_model` |
+| `tests/contract/test_step5_select_and_size_contract.py` | Added equal-rank tie-break test |
+
+Unchanged as intended: `configs/sprint006_baseline_v1.json`, `surface_runner.py`, `option_surface.py`, `surface_metrics.py`, `surface_search.py`, `run_surface_search.py`.
+
+### Tests run
+
+| Command | Result |
+|---------|--------|
+| `pytest tests/unit/test_sprint006_baseline_adapter.py -q` | **33 passed** |
+| `pytest tests/contract/test_step5_select_and_size_contract.py tests/contract/test_orchestration_contract.py tests/unit/test_surface_runner_data_flow.py tests/contract/test_run_metrics_contract.py tests/contract/test_run_envelope_contract.py tests/unit/test_option_surface_{straddle,ironfly,ironcondor}.py -q` | **238 passed** |
+| `pytest -q` (full suite) | **1528 passed, 1 skipped** (skip pre-existing) |
+| `scripts/run_sprint006_baseline.py --dry-run` against the frozen contract | exit 0; accepted paths resolved; no execution, nothing written |
+
+The tie-break test is non-vacuous: the previous single-key sort selected the higher ticker for one input ordering.
+
+### Notes for review
+
+* **Contract digest is recorded, not compared.** The receipt stores the SHA-256 of the contract bytes on disk (`4012b4a4…` in a CRLF working copy); the D0 header value `3cd57f4d…` is the committed-LF digest. Per the accepted design, no line-ending normalisation machinery was added.
+* **Clean HEAD** is required only when writing artifacts; `--dry-run` performs no identity write-gate and no execution.
+* The CLI prints paths and row counts only — never economic metrics — so D1 execution cannot double as P&L inspection.
+* Still deferred (also listed in each receipt): joint Mom+CVG count eligibility, A1 expected-date/date-status table, all-leg spread on iron-fly bodies (**D2**); decision report (**D3**); smoke, manual sample, full-history execution (**D4**).
+
+---
+
+**End of D1 design and implementation record.** No real-data economic backtest was executed and no new aggregate P&L was inspected.

@@ -258,6 +258,25 @@ def test_overflow_marked_max_names_cap():
     assert out.loc[out["ticker"] == "S_hi", "exclusion_reason"].iloc[0] == EXCLUSION_MAX_NAMES_CAP
 
 
+def test_equal_rank_cap_tie_break_is_ticker_ascending():
+    # Same-side equal signal_rank_pct: the lower ticker wins the single slot,
+    # regardless of input row order (Sprint 006 D0 D-20 reproducibility pin).
+    rows = [
+        _s4_row("LB", "long", 0.90),
+        _s4_row("LA", "long", 0.90),
+        _s4_row("SB", "short", 0.10),
+        _s4_row("SA", "short", 0.10),
+    ]
+    cfg = make_contract_config(max_names_per_side=1)
+
+    for ordered in (rows, list(reversed(rows))):
+        out = step5_select_and_size(None, _s4_frame(ordered), cfg)
+        included = set(out.loc[out["included_in_portfolio"], "ticker"])
+        assert included == {"LA", "SA"}
+        assert out.loc[out["ticker"] == "LB", "exclusion_reason"].iloc[0] == EXCLUSION_MAX_NAMES_CAP
+        assert out.loc[out["ticker"] == "SB", "exclusion_reason"].iloc[0] == EXCLUSION_MAX_NAMES_CAP
+
+
 def test_rank_direction_long_descending_short_ascending():
     # cap = 1 ⇒ keep best signal per side: long = highest rank, short = lowest rank.
     structures = _s4_frame(

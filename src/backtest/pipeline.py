@@ -976,8 +976,9 @@ def step5_select_and_size(
         1. structure_ok != True            → 'no_tradeable_structure' (priority)
         2. structure_ok & earnings nearby  → 'earnings_exclusion'
         3. per side (independent pools, decision 003): rank by signal_rank_pct
-           (long descending, short ascending); keep top max_names_per_side →
-           included_in_portfolio = True; overflow → 'max_names_cap'
+           (long descending, short ascending), ties broken by ticker ascending;
+           keep top max_names_per_side → included_in_portfolio = True;
+           overflow → 'max_names_cap'
         4. a selected row with missing / non-positive max_loss_per_share →
            'invalid_max_loss', included_in_portfolio = False
 
@@ -1018,8 +1019,11 @@ def step5_select_and_size(
     selected_idx: List[object] = []
     for direction, side in eligible.groupby("direction", sort=False):
         # long: best signal is the HIGHEST rank (descending); short: LOWEST (ascending).
+        # Secondary key: ticker ascending, so equal-rank ties select reproducibly.
         ascending = direction != "long"
-        side_sorted = side.sort_values("signal_rank_pct", ascending=ascending)
+        side_sorted = side.sort_values(
+            ["signal_rank_pct", "ticker"], ascending=[ascending, True]
+        )
         selected_idx.extend(side_sorted.head(config.max_names_per_side).index.tolist())
         overflow = side_sorted.iloc[config.max_names_per_side:]
         if not overflow.empty:
