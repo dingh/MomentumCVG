@@ -217,6 +217,7 @@ class TestRunConfigMapping:
         assert mid.momentum_col == "mom_42_8_mean"
         assert mid.cvg_col == "cvg_42_8"
         assert mid.count_col == "mom_42_8_count"
+        assert mid.cvg_count_col == "cvg_count_42_8"
         assert mid.min_count_pct == 0.80
         assert mid.max_names_per_side == 25
         assert mid.spread_bottom_pct == 1.0
@@ -248,7 +249,7 @@ class TestRunConfigMapping:
             assert not hasattr(config, "cost_model_note")
             assert not hasattr(config, "tier_a_fallback_rule")
             assert not hasattr(config, "max_leg_spread_pct_intent")
-            assert not hasattr(config, "cvg_count_col")
+            assert config.cvg_count_col == "cvg_count_42_8"
 
     def test_missing_cross_run_rejected(self, tmp_path: Path):
         path = _write_contract(tmp_path, lambda p: p.__setitem__("runs", p["runs"][:1]))
@@ -392,6 +393,13 @@ class TestOverwriteRefusal:
             trade_log=pd.DataFrame({"trade_date": [TRADE_DATE], "ticker": ["LONG1"]}),
             date_summary=pd.DataFrame({"trade_date": [TRADE_DATE], "n_traded": [1]}),
             run_summary={"run_id": "overwrite_probe"},
+            date_status=pd.DataFrame(
+                {
+                    "trade_date": [TRADE_DATE],
+                    "status": ["traded"],
+                    "reason": [None],
+                }
+            ),
         )
         sb.write_run_outputs(result, run_dir)
         with pytest.raises(sb.ContractError, match="refusing to overwrite existing artifact"):
@@ -433,16 +441,42 @@ class TestRunBaselineOnSyntheticFixtures:
         assert len(receipt["contract"]["sha256"]) == 64
         assert receipt["command"][0] == "run_sprint006_baseline.py"
         assert [run["fill_label"] for run in receipt["runs"]] == ["mid", "cross"]
-        assert receipt["deferred"]
+        assert receipt["deferred"] == [
+            "decision-quality report and dual return views (D3)",
+            "real-data smoke, manual trade sample, and full-history execution (D4)",
+        ]
+        for run in receipt["runs"]:
+            assert "n_failed_dates" in run
+            assert "has_unresolved_failures" in run
+            assert "feature_dates_absent_from_a1" in run
+            assert "n_feature_dates_absent_from_a1" in run
+            assert set(run["outputs"]) >= {
+                "trade_log",
+                "date_summary",
+                "date_status",
+                "run_summary",
+            }
 
     def test_receipt_dumps_effective_configs_and_output_digests(self, outcome):
         receipt = json.loads(outcome["receipt_path"].read_text(encoding="utf-8"))
         for run in receipt["runs"]:
             assert run["effective_config"]["run_id"] == run["run_id"]
             assert run["effective_config"]["sizing_mode"] == "conceptual"
-            assert set(run["outputs"]) == {"trade_log", "date_summary", "run_summary"}
+            assert run["effective_config"]["cvg_count_col"] == "cvg_count_42_8"
+            assert set(run["outputs"]) == {
+                "trade_log",
+                "date_summary",
+                "date_status",
+                "run_summary",
+            }
             for artifact in run["outputs"].values():
                 assert len(artifact["sha256"]) == 64
+
+    def test_written_date_status_schema(self, outcome):
+        for run in outcome["runs"]:
+            status = pd.read_parquet(run["outputs"]["date_status"])
+            assert list(status.columns) == ["trade_date", "status", "reason"]
+            assert not status.empty
 
     def test_written_trade_log_reloads(self, outcome):
         for run in outcome["runs"]:

@@ -15,8 +15,13 @@ from __future__ import annotations
 from datetime import date
 
 import numpy as np
+import pytest
 
-from src.backtest.pipeline import step2_score_signals
+from src.backtest.pipeline import (
+    required_count_threshold,
+    step2_score_signals,
+    validate_feature_count_columns,
+)
 from tests.contract.conftest import SIGNALS_OUT_COLS, make_contract_config
 
 
@@ -72,3 +77,76 @@ def test_wrong_trade_date_yields_empty(features_four_tickers, universe_four_tick
     out = step2_score_signals(date(2024, 1, 12), features_four_tickers, universe_four_tickers, cfg)
     assert out.empty
     assert list(out.columns) == SIGNALS_OUT_COLS
+
+
+# =============================================================================
+# Sprint 006 D2 — joint count eligibility / ceil rule
+# =============================================================================
+
+def test_required_count_ceil_for_42_8():
+    assert required_count_threshold("mom_42_8_mean", 0.80) == 28
+
+
+def test_joint_cvg_count_failure_excludes_before_ranking(
+    features_four_tickers, universe_four_tickers
+):
+    feats = features_four_tickers.copy()
+    feats.loc[feats["ticker"] == "A", "cvg_count_42_8"] = 10
+    cfg = make_contract_config(
+        min_count_pct=0.80,
+        cvg_count_col="cvg_count_42_8",
+        long_top_pct=0.25,
+        short_bottom_pct=0.5,
+    )
+    out = step2_score_signals(date(2024, 1, 5), feats, universe_four_tickers, cfg)
+    assert "A" not in set(out["ticker"])
+    assert set(out["ticker"]) == {"B", "D"}
+
+
+def test_joint_mom_count_failure_excludes_before_ranking(
+    features_four_tickers, universe_four_tickers
+):
+    feats = features_four_tickers.copy()
+    feats.loc[feats["ticker"] == "D", "mom_42_8_count"] = 10
+    cfg = make_contract_config(
+        min_count_pct=0.80,
+        cvg_count_col="cvg_count_42_8",
+        long_top_pct=0.25,
+        short_bottom_pct=0.5,
+    )
+    out = step2_score_signals(date(2024, 1, 5), feats, universe_four_tickers, cfg)
+    assert "D" not in set(out["ticker"])
+
+
+def test_joint_both_counts_pass(features_four_tickers, universe_four_tickers):
+    cfg = make_contract_config(
+        min_count_pct=0.80,
+        cvg_count_col="cvg_count_42_8",
+        long_top_pct=0.25,
+        short_bottom_pct=0.5,
+    )
+    out = step2_score_signals(date(2024, 1, 5), features_four_tickers, universe_four_tickers, cfg)
+    assert set(out["ticker"]) == {"A", "B", "C", "D"}
+
+
+def test_missing_cvg_count_col_hard_fails(features_four_tickers, universe_four_tickers):
+    feats = features_four_tickers.drop(columns=["cvg_count_42_8"])
+    cfg = make_contract_config(cvg_count_col="cvg_count_42_8", min_count_pct=0.80)
+    with pytest.raises(ValueError, match="cvg_count_col"):
+        step2_score_signals(date(2024, 1, 5), feats, universe_four_tickers, cfg)
+
+
+def test_mom_only_path_ignores_absent_cvg_count(
+    features_four_tickers, universe_four_tickers
+):
+    feats = features_four_tickers.drop(columns=["cvg_count_42_8"])
+    cfg = make_contract_config(cvg_count_col=None, min_count_pct=0.80)
+    out = step2_score_signals(date(2024, 1, 5), feats, universe_four_tickers, cfg)
+    assert set(out["ticker"]) == {"A", "B", "C", "D"}
+
+
+def test_validate_feature_columns_missing_hard_fails(features_four_tickers):
+    feats = features_four_tickers.drop(columns=["cvg_count_42_8"])
+    cfg = make_contract_config(cvg_count_col="cvg_count_42_8")
+    with pytest.raises(ValueError, match="missing required configured columns"):
+        validate_feature_count_columns(feats, cfg)

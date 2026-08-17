@@ -1,11 +1,12 @@
-"""Sprint 006 D1 — thin frozen-contract adapter for the canonical Surface runner.
+"""Sprint 006 — thin frozen-contract adapter for the canonical Surface runner.
 
 This module maps the accepted D0 contract (``configs/sprint006_baseline_v1.json``)
 onto existing objects and nothing else:
 
     contract JSON → BacktestRunConfig (one per frozen run) + SurfaceDataPaths
                   → SurfaceRunner.run_single_config()
-                  → existing trade_log / date_summary / run_summary + a light receipt
+                  → existing trade_log / date_summary / date_status / run_summary
+                    + a light receipt
 
 It contains **no** signal, selection, pricing, sizing, settlement, or metric
 logic; ``SurfaceRunner.run_single_config`` remains the only economic engine.
@@ -46,19 +47,25 @@ MUTABLE_CACHE_ROOT = Path(r"C:/MomentumCVG_env/cache")
 # always run together.
 REQUIRED_FILL_LABELS = frozenset({"mid", "cross"})
 
-# Work that D1 explicitly does not deliver; recorded in the receipt so a reader
+# Work that D1/D2 explicitly do not deliver; recorded in the receipt so a reader
 # never mistakes these outputs for a complete Sprint 006 result.
 DEFERRED_TO_LATER_DELIVERABLES = (
-    "joint Momentum+CVG count eligibility (D2)",
-    "A1 expected-date calendar and date-status table (D2)",
-    "all-leg max_leg_spread_pct on iron-fly bodies (D2)",
     "decision-quality report and dual return views (D3)",
     "real-data smoke, manual trade sample, and full-history execution (D4)",
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUN_CONFIG_FIELD_NAMES = frozenset(f.name for f in fields(BacktestRunConfig))
-_FEATURE_COLUMN_FIELDS = ("momentum_col", "cvg_col", "count_col")
+_FEATURE_COLUMN_FIELDS = ("momentum_col", "cvg_col", "count_col", "cvg_count_col")
+_DATE_STATUS_RECEIPT_FIELDS = (
+    "n_expected_dates",
+    "n_traded_dates",
+    "n_valid_no_trade_dates",
+    "n_failed_dates",
+    "has_unresolved_failures",
+    "n_feature_dates_absent_from_a1",
+    "feature_dates_absent_from_a1",
+)
 _REQUIRED_ACCEPTED_INPUT_FILES = (
     "baseline_feature_file",
     "a1_surface_meta",
@@ -428,6 +435,7 @@ def write_run_outputs(result: SurfaceRunResult, run_dir: Path) -> Dict[str, Path
     targets = {
         "trade_log": run_dir / f"trade_log_{run_id}.parquet",
         "date_summary": run_dir / f"date_summary_{run_id}.parquet",
+        "date_status": run_dir / f"date_status_{run_id}.parquet",
         "run_summary": run_dir / f"run_summary_{run_id}.json",
     }
     for path in targets.values():
@@ -435,6 +443,7 @@ def write_run_outputs(result: SurfaceRunResult, run_dir: Path) -> Dict[str, Path
 
     result.trade_log.to_parquet(targets["trade_log"], index=False)
     result.date_summary.to_parquet(targets["date_summary"], index=False)
+    result.date_status.to_parquet(targets["date_status"], index=False)
     _write_json(_jsonable(dict(result.run_summary)), targets["run_summary"])
     return targets
 
@@ -443,13 +452,13 @@ def build_receipt(
     *,
     preflight_result: BaselinePreflight,
     repo_sha: str,
-    run_outputs: Sequence[Tuple[BacktestRunConfig, Dict[str, Path]]],
+    run_outputs: Sequence[Tuple[BacktestRunConfig, Dict[str, Path], Mapping[str, Any]]],
     command: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Assemble the light run receipt (identity, effective configs, outputs)."""
     contract = preflight_result.contract
     return {
-        "deliverable": "sprint006_d1",
+        "deliverable": "sprint006_d2",
         "experiment_id": EXPERIMENT_ID,
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "command": list(command) if command is not None else None,
@@ -477,8 +486,12 @@ def build_receipt(
                     }
                     for name, path in sorted(outputs.items())
                 },
+                **{
+                    key: _jsonable(run_summary.get(key))
+                    for key in _DATE_STATUS_RECEIPT_FIELDS
+                },
             }
-            for config, outputs in run_outputs
+            for config, outputs, run_summary in run_outputs
         ],
         "deferred": list(DEFERRED_TO_LATER_DELIVERABLES),
     }
@@ -505,11 +518,11 @@ def run_baseline(
     run_dir = create_run_dir(output_dir)
 
     runner = SurfaceRunner(data_paths=checked.data_paths)
-    run_outputs: List[Tuple[BacktestRunConfig, Dict[str, Path]]] = []
+    run_outputs: List[Tuple[BacktestRunConfig, Dict[str, Path], Dict[str, Any]]] = []
     row_counts: Dict[str, int] = {}
     for config in checked.configs:
         result = runner.run_single_config(config)
-        run_outputs.append((config, write_run_outputs(result, run_dir)))
+        run_outputs.append((config, write_run_outputs(result, run_dir), dict(result.run_summary)))
         row_counts[config.run_id] = int(len(result.trade_log))
 
     receipt = build_receipt(
@@ -529,6 +542,6 @@ def run_baseline(
                 "trade_log_rows": row_counts[config.run_id],
                 "outputs": outputs,
             }
-            for config, outputs in run_outputs
+            for config, outputs, _summary in run_outputs
         ],
     }

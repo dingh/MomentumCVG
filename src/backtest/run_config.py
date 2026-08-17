@@ -89,6 +89,7 @@ class BacktestRunConfig:
     # Minimum fraction of the observation window that must have valid data.
     # Tickers below this threshold are dropped before signal ranking.
     # e.g. 0.80 = require at least 80% of window weeks to have data.
+    # required_count = ceil(min_count_pct * window_size); window from momentum_col.
 
     long_top_pct: float
     # Fraction of the momentum cross-section selected as long-side candidates.
@@ -194,6 +195,10 @@ class BacktestRunConfig:
     # FillAssumption.mid()   → all legs filled at mid-price (optimistic baseline).
     # FillAssumption.cross() → buys at ask, sells at bid (conservative / market-order model).
     # Default is mid (zero spread cost) to match the historical research baseline.
+
+    cvg_count_col: Optional[str] = None
+    # Optional joint data-quality column applied with the same required_count as count_col.
+    # e.g. 'cvg_count_42_8'. None → momentum count_col only (legacy path).
 
     max_leg_spread_pct: Optional[float] = None
     # Maximum allowed bid-ask spread as a fraction of mid-price for any single leg,

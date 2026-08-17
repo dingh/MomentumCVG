@@ -529,8 +529,8 @@ def build_ironfly_from_surface(
         Fill assumption model.  Default is mid; use ``FillAssumption.cross()``
         for a conservative market-order model.
     max_leg_spread_pct:
-        If set, OTM quotes whose ``spread_pct > max_leg_spread_pct`` are excluded
-        before wing selection (liquidity filter).
+        If set, body and OTM quotes whose ``spread_pct > max_leg_spread_pct`` are
+        excluded before construction / wing selection (liquidity filter).
     max_spread_cost_ratio:
         If set, raises ``ValueError`` when the assembled strategy's
         ``spread_cost_ratio`` exceeds this threshold.
@@ -544,7 +544,10 @@ def build_ironfly_from_surface(
     body_strike  = Decimal(str(meta["body_strike"]))
 
     # ── Body legs (ATM short straddle core) ───────────────────────────────────
-    body_df       = quotes[quotes["is_body"]]          # bool column — no == True needed
+    body_df       = quotes[quotes["is_body"]].copy()   # bool column — no == True needed
+    if max_leg_spread_pct is not None:
+        body_df = body_df[body_df["spread_pct"] <= max_leg_spread_pct]
+
     body_call_row = body_df[body_df["side"] == "call"]
     body_put_row  = body_df[body_df["side"] == "put"]
     if body_call_row.empty or body_put_row.empty:

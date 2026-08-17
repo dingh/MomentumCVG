@@ -182,10 +182,10 @@ def features_four_tickers() -> pd.DataFrame:
     """
     td = pd.Timestamp("2024-01-05")
     rows = [
-        dict(date=td, ticker="A", mom_42_8_mean=4.0, cvg_42_8=1.0, mom_42_8_count=35),
-        dict(date=td, ticker="B", mom_42_8_mean=3.0, cvg_42_8=1.0, mom_42_8_count=35),
-        dict(date=td, ticker="C", mom_42_8_mean=2.0, cvg_42_8=1.0, mom_42_8_count=35),
-        dict(date=td, ticker="D", mom_42_8_mean=1.0, cvg_42_8=1.0, mom_42_8_count=35),
+        dict(date=td, ticker="A", mom_42_8_mean=4.0, cvg_42_8=1.0, mom_42_8_count=35, cvg_count_42_8=35),
+        dict(date=td, ticker="B", mom_42_8_mean=3.0, cvg_42_8=1.0, mom_42_8_count=35, cvg_count_42_8=35),
+        dict(date=td, ticker="C", mom_42_8_mean=2.0, cvg_42_8=1.0, mom_42_8_count=35, cvg_count_42_8=35),
+        dict(date=td, ticker="D", mom_42_8_mean=1.0, cvg_42_8=1.0, mom_42_8_count=35, cvg_count_42_8=35),
     ]
     df = pd.DataFrame(rows)
     df["date"] = pd.to_datetime(df["date"])

@@ -334,15 +334,25 @@ class TestIronFlySettle:
 
 class TestIronFlyFilters:
 
+    def test_max_leg_spread_pct_drops_illiquid_body(self):
+        # Body call spread_pct ≈ 12.5 %, put ≈ 13.3 %; 10 % rejects the ATM body.
+        db = _make_ironfly_db()
+        with pytest.raises(ValueError, match="Missing body call/put"):
+            build_ironfly_from_surface(
+                db, TICKER, ENTRY_DATE,
+                wing_target_delta=0.25,
+                max_leg_spread_pct=0.10,
+            )
+
     def test_max_leg_spread_pct_drops_illiquid_wings(self):
-        # OTM call spread_pct = 0.20/1.10 ≈ 18.2 %; 10 % threshold filters all wings.
-        # _choose_below_nearest then raises because the filtered df is empty.
+        # Body spreads ≈ 12–13 %; OTM wing spreads ≈ 18–20 %.
+        # 15 % keeps the body but filters all wings before selection.
         db = _make_ironfly_db()
         with pytest.raises(ValueError, match="No quotes with abs_delta"):
             build_ironfly_from_surface(
                 db, TICKER, ENTRY_DATE,
                 wing_target_delta=0.25,
-                max_leg_spread_pct=0.10,
+                max_leg_spread_pct=0.15,
             )
 
     def test_max_leg_spread_pct_wide_passes(self):

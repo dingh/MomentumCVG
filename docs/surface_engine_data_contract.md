@@ -202,7 +202,7 @@ one row per ticker passing momentum + CVG filters. `direction` ∈ {`long`, `sho
 **Invariants:**
 - **I1:** only rows with `date == trade_date` AND `ticker ∈ universe` are scored.
 - **I2:** rows with NaN `momentum_col` or `cvg_col` are dropped; no NaN in `signal_score` / `cvg_score` output.
-- **I3:** data-quality guard — `count_col >= min_count_pct × window_size`, where `window_size = max_lag − min_lag + 1` parsed from `mom_{max}_{min}_mean`.
+- **I3:** data-quality guard — `count_col >= ceil(min_count_pct × window_size)`, where `window_size = max_lag − min_lag + 1` parsed from `mom_{max}_{min}_mean`. When `cvg_count_col` is configured, the same threshold also applies to that column (joint Mom+CVG eligibility). Missing configured count columns hard-fail (no silent bypass).
 - **I4:** long pool = top `long_top_pct` by `signal_rank_pct` (`>= 1 − long_top_pct`); short pool = bottom `short_bottom_pct` (`<= short_bottom_pct`).
 - **I5 (disjoint):** long and short pools share no ticker (R0 rejects `long_top_pct + short_bottom_pct > 1`; S2 also asserts no overlap).
 - **I6:** output schema is exactly the six columns above.

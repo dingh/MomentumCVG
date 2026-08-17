@@ -185,13 +185,15 @@ class TestEmptyInputs:
         assert result.trade_log.empty
         assert list(result.date_summary.columns) == DATE_SUMMARY_COLUMNS
         assert result.date_summary.empty
+        assert result.date_status.empty
+        assert result.run_summary.get("n_expected_dates", 0) == 0
         assert result.run_summary.get("n_traded_rows", 0) == 0
         assert np.isnan(result.run_summary.get("mean_cycle_return_on_capital_at_risk"))
 
-    def test_empty_signals_date_skipped_without_s5_call(
+    def test_empty_signals_recorded_as_valid_no_trade(
         self, synthetic_runner: SurfaceRunner
     ):
-        """A date with no qualifying signals should not invoke S5."""
+        """A date with no qualifying signals must stay observable and skip S5."""
         calls: list[int] = []
 
         def _count(signals, structures, config):
@@ -213,5 +215,32 @@ class TestEmptyInputs:
         assert len(calls) == 0
         assert result.trade_log.empty
         assert result.date_summary.empty
+        assert list(result.date_status.columns) == ["trade_date", "status", "reason"]
+        assert len(result.date_status) == 1
+        assert result.date_status.iloc[0]["status"] == "valid_no_trade"
+        assert result.date_status.iloc[0]["reason"] == "empty_signals"
+        assert result.run_summary["n_valid_no_trade_dates"] == 1
+        assert result.run_summary["n_failed_dates"] == 0
+        assert result.run_summary["has_unresolved_failures"] is False
         assert result.run_summary.get("n_traded_rows", 0) == 0
         assert np.isnan(result.run_summary.get("mean_cycle_return_on_capital_at_risk"))
+
+    def test_no_included_names_is_valid_no_trade(self, synthetic_runner: SurfaceRunner):
+        def _all_excluded(signals, structures, config):
+            out = step5_select_and_size(signals, structures, config)
+            if not out.empty:
+                out = out.copy()
+                out["included_in_portfolio"] = False
+            return out
+
+        with patch(
+            "src.backtest.surface_runner.step5_select_and_size",
+            side_effect=_all_excluded,
+        ):
+            result = synthetic_runner.run_single_config(_make_config())
+
+        assert len(result.date_status) == 1
+        assert result.date_status.iloc[0]["status"] == "valid_no_trade"
+        assert result.date_status.iloc[0]["reason"] == "no_included_names"
+        assert result.run_summary["n_traded_dates"] == 0
+        assert result.run_summary["n_valid_no_trade_dates"] == 1

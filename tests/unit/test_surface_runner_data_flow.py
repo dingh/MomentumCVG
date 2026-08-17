@@ -188,6 +188,7 @@ def _build_features(tmp_path: Path) -> Path:
                 "mom_42_8_mean": 1.0,
                 "cvg_42_8": 1.0,
                 "mom_42_8_count": 35,
+                "cvg_count_42_8": 35,
             },
             {
                 "date": pd.Timestamp(TRADE_DATE),
@@ -195,6 +196,7 @@ def _build_features(tmp_path: Path) -> Path:
                 "mom_42_8_mean": 2.0,
                 "cvg_42_8": 1.0,
                 "mom_42_8_count": 35,
+                "cvg_count_42_8": 35,
             },
             {
                 "date": pd.Timestamp(TRADE_DATE),
@@ -202,6 +204,7 @@ def _build_features(tmp_path: Path) -> Path:
                 "mom_42_8_mean": 3.0,
                 "cvg_42_8": 1.0,
                 "mom_42_8_count": 35,
+                "cvg_count_42_8": 35,
             },
             {
                 "date": pd.Timestamp(TRADE_DATE),
@@ -209,6 +212,7 @@ def _build_features(tmp_path: Path) -> Path:
                 "mom_42_8_mean": 4.0,
                 "cvg_42_8": 1.0,
                 "mom_42_8_count": 35,
+                "cvg_count_42_8": 35,
             },
         ]
     )
@@ -367,3 +371,105 @@ class TestSurfaceRunnerS5Economics:
             run_result.date_summary.iloc[0]["cycle_pnl_total"]
             / run_result.date_summary.iloc[0]["cycle_capital_at_risk"]
         )
+
+
+class TestSurfaceRunnerDateStatus:
+    """Sprint 006 D2 — A1 expected calendar and date_status partition."""
+
+    def test_traded_date_status(self, run_result):
+        assert list(run_result.date_status.columns) == ["trade_date", "status", "reason"]
+        assert len(run_result.date_status) == 1
+        row = run_result.date_status.iloc[0]
+        assert row["trade_date"] == TRADE_DATE
+        assert row["status"] == "traded"
+        assert row["reason"] is None or (isinstance(row["reason"], float) and pd.isna(row["reason"]))
+        assert run_result.run_summary["n_expected_dates"] == 1
+        assert run_result.run_summary["n_traded_dates"] == 1
+        assert run_result.run_summary["has_unresolved_failures"] is False
+
+    def test_missing_feature_date_is_failed(self, tmp_path: Path):
+        extra_date = date(2024, 1, 12)
+        meta_path, quotes_path = _build_surface_parquets(tmp_path)
+        meta = pd.read_parquet(meta_path)
+        extra = meta.iloc[[0]].copy()
+        extra["entry_date"] = pd.Timestamp(extra_date)
+        extra["surface_valid"] = False
+        extra["failure_reason"] = "synthetic_a1_only"
+        pd.concat([meta, extra], ignore_index=True).to_parquet(meta_path, index=False)
+
+        liquidity_path = _build_liquidity_panel(tmp_path)
+        features_dir = _build_features(tmp_path).parent
+        runner = SurfaceRunner(
+            data_paths=SurfaceDataPaths(
+                cache_dir=tmp_path,
+                features_dir=features_dir,
+                liquidity_panel_path=liquidity_path,
+                surface_meta_path=meta_path,
+                surface_quotes_path=quotes_path,
+                earnings_path=None,
+            )
+        )
+        result = runner.run_single_config(
+            _make_config(start_date=TRADE_DATE, end_date=extra_date)
+        )
+        statuses = {
+            row["trade_date"]: (row["status"], row["reason"])
+            for _, row in result.date_status.iterrows()
+        }
+        assert statuses[TRADE_DATE][0] == "traded"
+        assert statuses[extra_date] == ("failed", "missing_features")
+        assert result.run_summary["n_failed_dates"] == 1
+        assert result.run_summary["has_unresolved_failures"] is True
+        assert set(result.date_status["trade_date"]) == {TRADE_DATE, extra_date}
+
+    def test_invalid_surface_only_date_remains_expected(self, tmp_path: Path):
+        """A1 dates that appear only on surface_valid=False rows stay in the calendar."""
+        only_invalid = date(2024, 1, 12)
+        meta_path, quotes_path = _build_surface_parquets(tmp_path)
+        meta = pd.read_parquet(meta_path)
+        extra = {
+            "ticker": "ONLYBAD",
+            "entry_date": pd.Timestamp(only_invalid),
+            "expiry_date": pd.Timestamp(EXPIRY_IRON),
+            "surface_valid": False,
+            "failure_reason": "synthetic_invalid_only",
+            "entry_spot": BODY,
+            "body_strike": BODY,
+            "exit_spot": BODY,
+            "spot_move_pct": 0.0,
+            "realized_volatility": 0.18,
+            "dte_actual": 7,
+        }
+        pd.concat([meta, pd.DataFrame([extra])], ignore_index=True).to_parquet(
+            meta_path, index=False
+        )
+        # Also give the invalid date feature coverage so it is not missing_features.
+        features_path = _build_features(tmp_path)
+        feats = pd.read_parquet(features_path)
+        extra_feat = feats.iloc[[0]].copy()
+        extra_feat["date"] = pd.Timestamp(only_invalid)
+        extra_feat["ticker"] = "ONLYBAD"
+        pd.concat([feats, extra_feat], ignore_index=True).to_parquet(
+            features_path, index=False
+        )
+
+        runner = SurfaceRunner(
+            data_paths=SurfaceDataPaths(
+                cache_dir=tmp_path,
+                features_dir=features_path.parent,
+                liquidity_panel_path=_build_liquidity_panel(tmp_path),
+                surface_meta_path=meta_path,
+                surface_quotes_path=quotes_path,
+                earnings_path=None,
+            )
+        )
+        result = runner.run_single_config(
+            _make_config(start_date=TRADE_DATE, end_date=only_invalid)
+        )
+        assert only_invalid in set(result.date_status["trade_date"])
+        row = result.date_status[
+            result.date_status["trade_date"] == only_invalid
+        ].iloc[0]
+        # ONLYBAD is not in the liquidity universe → empty signals on that date.
+        assert row["status"] == "valid_no_trade"
+        assert row["reason"] == "empty_signals"

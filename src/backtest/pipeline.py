@@ -36,6 +36,7 @@ Remaining open questions
 from __future__ import annotations
 
 import math
+import re
 from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -141,6 +142,49 @@ def step1_get_universe(
 
 
 # ---------------------------------------------------------------------------
+# Count eligibility helpers (Sprint 006 D2)
+# ---------------------------------------------------------------------------
+
+_MOM_WINDOW_RE = re.compile(r"^mom_(\d+)_(\d+)_mean$")
+
+
+def required_count_threshold(momentum_col: str, min_count_pct: float) -> int:
+    """Return ``ceil(min_count_pct * (max_lag - min_lag + 1))`` from ``mom_{max}_{min}_mean``."""
+    match = _MOM_WINDOW_RE.match(momentum_col)
+    if not match:
+        raise ValueError(
+            f"cannot derive window_size from momentum_col={momentum_col!r}; "
+            "expected pattern mom_{max_lag}_{min_lag}_mean"
+        )
+    max_lag, min_lag = int(match.group(1)), int(match.group(2))
+    window_size = max_lag - min_lag + 1
+    return math.ceil(min_count_pct * window_size)
+
+
+def required_feature_columns(config: "BacktestRunConfig") -> List[str]:
+    """Columns that must exist on the features frame before date processing."""
+    cols = [config.momentum_col, config.cvg_col, config.count_col]
+    if config.cvg_count_col:
+        cols.append(config.cvg_count_col)
+    return cols
+
+
+def validate_feature_count_columns(
+    features: pd.DataFrame,
+    config: "BacktestRunConfig",
+) -> None:
+    """Hard-fail when configured signal/count columns are absent (no silent bypass)."""
+    missing = [c for c in required_feature_columns(config) if c not in features.columns]
+    if missing:
+        raise ValueError(
+            "features missing required configured columns: "
+            + ", ".join(missing)
+        )
+    # Ensure the ceil threshold is derivable before the date loop starts.
+    required_count_threshold(config.momentum_col, config.min_count_pct)
+
+
+# ---------------------------------------------------------------------------
 # Step 2 — SCORE_SIGNALS  (strategy_def §3.3, §6.1)
 # ---------------------------------------------------------------------------
 
@@ -155,6 +199,7 @@ def step2_score_signals(
 
     Required columns in features:
         date, ticker, <momentum_col>, <cvg_col>, <count_col>
+        and <cvg_count_col> when configured
 
     Required columns in universe (output of step1):
         ticker
@@ -190,19 +235,23 @@ def step2_score_signals(
     if feat_slice.empty:
         return _EMPTY
 
-    # 4. Apply data quality filter via count_col.
-    #    Derive window_size from column name: 'mom_{max_lag}_{min_lag}_mean'
-    #    window_size = max_lag - min_lag + 1
-    if config.count_col in feat_slice.columns:
-        import re as _re
-        _m = _re.match(r"^mom_(\d+)_(\d+)_mean$", config.momentum_col)
-        if _m:
-            _max_lag, _min_lag = int(_m.group(1)), int(_m.group(2))
-            window_size = _max_lag - _min_lag + 1
-            count_threshold = config.min_count_pct * window_size
-            feat_slice = feat_slice[feat_slice[config.count_col] >= count_threshold]
-        if feat_slice.empty:
-            return _EMPTY
+    # 4. Data-quality filter via count_col (and cvg_count_col when configured).
+    #    required_count = ceil(min_count_pct * window_size); applied before ranking.
+    if config.count_col not in feat_slice.columns:
+        raise ValueError(
+            f"features missing required count_col={config.count_col!r}"
+        )
+    if config.cvg_count_col is not None and config.cvg_count_col not in feat_slice.columns:
+        raise ValueError(
+            f"features missing required cvg_count_col={config.cvg_count_col!r}"
+        )
+    required_count = required_count_threshold(config.momentum_col, config.min_count_pct)
+    eligible = feat_slice[config.count_col] >= required_count
+    if config.cvg_count_col is not None:
+        eligible = eligible & (feat_slice[config.cvg_count_col] >= required_count)
+    feat_slice = feat_slice[eligible]
+    if feat_slice.empty:
+        return _EMPTY
 
     # 5. Cross-sectional momentum ranking.
     feat_slice["signal_rank_pct"] = feat_slice[config.momentum_col].rank(

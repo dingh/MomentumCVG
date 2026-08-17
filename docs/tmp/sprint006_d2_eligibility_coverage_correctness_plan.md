@@ -1,7 +1,8 @@
 # Sprint 006 D2 — Eligibility and coverage correctness plan
 
-**Status:** `PROPOSED — AWAITING ACCEPTANCE`
-**Mode:** Build (this document is **design only**; D2 implementation is not authorized until this plan is accepted)
+**Status:** `IMPLEMENTED — AWAITING REVIEW`
+**Mode:** Build (D2 implementation complete; awaiting review — not accepted/complete)
+**Design accepted at:** `aa72a86649cf877e5dd617dc8f379a7ecbc0ad85`
 **Repo HEAD at design:** `9edab171dda22497856cd2274767f314e47ae4ab` (clean working tree on `main`)
 **Confirmed ancestors:** D1 implementation `241b0d3`, review fix `c6b1735`, D1 acceptance `9edab17`
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (unchanged; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
@@ -449,4 +450,14 @@ D2 design and implementation remain behind the Sprint 006 firewall: no new aggre
 
 ---
 
-**End of proposed D2 design.** Implementation requires acceptance of this plan (and the engineering approval items). No D2 code, frozen-config, sprint-status, or economic execution is authorized by drafting this document alone.
+## 14. Implementation record (`IMPLEMENTED — AWAITING REVIEW`)
+
+Design accepted at `aa72a86`. Implementation awaits review (not accepted/complete).
+
+**Production:** `run_config.py` (`cvg_count_col`); `pipeline.py` (ceil + joint filter + once-before-loop column validation); `surface_runner.py` (A1 calendar, `date_status`, partition assert); `option_surface.py` (iron-fly body spread only); `sprint006_baseline.py` (map/persist/receipt; D2 deferred items removed).
+
+**Tests run:** focused D2 suites **167 passed**; additional surface/metrics/envelope/step3 **93 passed**; full suite **1543 passed, 1 skipped**. Frozen `configs/sprint006_baseline_v1.json` untouched. No real-data economic run; no P&L inspected. Iron-condor and D3/D4 code untouched.
+
+---
+
+**End of D2 design + implementation record.** Status `IMPLEMENTED — AWAITING REVIEW`.
