@@ -1,8 +1,10 @@
 # Sprint 006 D2 — Eligibility and coverage correctness plan
 
-**Status:** `IMPLEMENTED — AWAITING REVIEW`
-**Mode:** Build (D2 implementation complete; awaiting review — not accepted/complete)
+**Status:** `ACCEPTED — D2 COMPLETE`
+**Mode:** Build (D2 accepted; next authorized activity is D3 design only — not D3–D4 implementation)
 **Design accepted at:** `aa72a86649cf877e5dd617dc8f379a7ecbc0ad85`
+**D2 implementation commit:** `922406849604b776005f73b1aaa989b676d260b6`
+**Accepted implementation:** `9224068`
 **Repo HEAD at design:** `9edab171dda22497856cd2274767f314e47ae4ab` (clean working tree on `main`)
 **Confirmed ancestors:** D1 implementation `241b0d3`, review fix `c6b1735`, D1 acceptance `9edab17`
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (unchanged; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
@@ -450,9 +452,9 @@ D2 design and implementation remain behind the Sprint 006 firewall: no new aggre
 
 ---
 
-## 14. Implementation record (`IMPLEMENTED — AWAITING REVIEW`)
+## 14. Implementation record (`ACCEPTED — D2 COMPLETE`)
 
-Design accepted at `aa72a86`. Implementation awaits review (not accepted/complete).
+Design accepted at `aa72a86`. Accepted implementation: `9224068`. Correctness review found no D2 blockers.
 
 **Production:** `run_config.py` (`cvg_count_col`); `pipeline.py` (ceil + joint filter + once-before-loop column validation); `surface_runner.py` (A1 calendar, `date_status`, partition assert); `option_surface.py` (iron-fly body spread only); `sprint006_baseline.py` (map/persist/receipt; D2 deferred items removed).
 
@@ -460,4 +462,4 @@ Design accepted at `aa72a86`. Implementation awaits review (not accepted/complet
 
 ---
 
-**End of D2 design + implementation record.** Status `IMPLEMENTED — AWAITING REVIEW`.
+**End of D2 design + implementation record.** D2 accepted. Next authorized activity: **D3 design only**.
