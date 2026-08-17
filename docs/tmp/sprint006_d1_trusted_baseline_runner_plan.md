@@ -3,7 +3,8 @@
 **Status:** `IMPLEMENTED — AWAITING REVIEW` (design accepted; implementation recorded in §12)
 **Mode:** Build (D1 implementation only; D2–D4 not authorized)
 **Repo HEAD at design:** `a1b7a3ccf5cf984841cd0c00062e1207e3b494a0` (clean working tree on `main`)
-**Repo HEAD at implementation start:** `b380d38325eda87036e3d6962a45dc3261ae7c21` (clean working tree on `main`)
+**Implementation starting point (parent commit):** `b380d38325eda87036e3d6962a45dc3261ae7c21` (clean working tree on `main`)
+**D1 implementation commit:** `241b0d313e237e9fcb90c60a1395888c529d2b48`
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (unchanged; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
 **Naming convention:** `docs/tmp/sprint00N_dN_*_plan.md`
@@ -295,7 +296,7 @@ D1 deliberately keeps **one config → one `SurfaceRunResult`** as the atomic un
 
 ## 12. D1 implementation record (`IMPLEMENTED — AWAITING REVIEW`)
 
-Implemented at HEAD `b380d38` (clean tree) after design acceptance.
+Implemented in commit `241b0d3`, whose parent (and clean starting point) was `b380d38`.
 
 ### Files
 
@@ -319,6 +320,10 @@ Unchanged as intended: `configs/sprint006_baseline_v1.json`, `surface_runner.py`
 | `scripts/run_sprint006_baseline.py --dry-run` against the frozen contract | exit 0; accepted paths resolved; no execution, nothing written |
 
 The tie-break test is non-vacuous: the previous single-key sort selected the higher ticker for one input ordering.
+
+### Review fix (follow-up commit)
+
+`create_run_dir` now also refuses a run output directory inside the Git repository root or inside the mutable producer cache root `C:/MomentumCVG_env/cache`; the existing overwrite refusal is unchanged. Two focused tests added (`TestOutputLocationRefusal`); adapter suite re-run at **35 passed**.
 
 ### Notes for review
 

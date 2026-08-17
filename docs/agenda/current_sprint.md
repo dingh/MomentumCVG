@@ -1,6 +1,6 @@
 # Current sprint — 006
 
-**Updated:** 2026-08-15
+**Updated:** 2026-08-16
 **Status:** `ACTIVE — D0 COMPLETE; D1 IMPLEMENTED — AWAITING REVIEW`
 **Mode:** Build. D0 accepted and frozen. D1–D4 each require a short deliverable design that is reviewed and accepted before implementation.
 **Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`)
@@ -219,4 +219,4 @@ The 12–18 hour budget is a review trigger, not an acceptance condition. A corr
 | 2026-08-09 | Sprint 005 closed — [`005_closeout.md`](../sprint_memos/005_closeout.md). Sprint 006 not started. |
 | 2026-08-12 | Proposed Sprint 006 agenda written into this document (`PROPOSED — AWAITING ACCEPTANCE`). HEAD at proposal: `1517b1b`. Refined with D0 experiment-freeze boundaries, deliverable-level implementation authorization, and minimal-implementation stop rules. |
 | 2026-08-15 | D0 accepted at design commit `1cdfad7` (including §13). Contract frozen as `configs/sprint006_baseline_v1.json` (SHA-256 of committed LF bytes `3cd57f4d…ef715`). Sprint status → `ACTIVE — D0 COMPLETE; D1 AWAITING DESIGN`. No runtime changes; no economic backtest; no P&L inspected. |
-| 2026-08-16 | D1 design accepted and implemented from HEAD `b380d38`: thin frozen-contract adapter + one CLI over `SurfaceRunner.run_single_config` (both mid and cross), light run receipt, overwrite refusal, S5 cap tie-break pinned to `ticker` ascending. Tests: 33 focused, 238 regression subset, full suite 1528 passed / 1 skipped. Frozen contract unchanged; no real-data economic run; no P&L inspected. D1 → `IMPLEMENTED — AWAITING REVIEW`. |
+| 2026-08-16 | D1 design accepted and implemented in commit `241b0d3` (parent `b380d38`): thin frozen-contract adapter + one CLI over `SurfaceRunner.run_single_config` (both mid and cross), light run receipt, overwrite refusal, S5 cap tie-break pinned to `ticker` ascending. Tests: 33 focused, 238 regression subset, full suite 1528 passed / 1 skipped. Frozen contract unchanged; no real-data economic run; no P&L inspected. D1 → `IMPLEMENTED — AWAITING REVIEW`. Review fix: run output directory must also be outside the repo and outside the mutable producer cache. |

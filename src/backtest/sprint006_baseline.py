@@ -405,8 +405,17 @@ def _write_json(payload: Mapping[str, Any], path: Path) -> Path:
 
 
 def create_run_dir(output_dir: Path | str) -> Path:
-    """Create the run output directory, refusing an existing one."""
+    """Create the run output directory, refusing an unsafe location or an existing one."""
     run_dir = Path(output_dir).resolve()
+    for label, forbidden_root in (
+        ("Git repository root", _REPO_ROOT),
+        ("mutable producer cache root", MUTABLE_CACHE_ROOT),
+    ):
+        if _is_inside(run_dir, forbidden_root.resolve()):
+            raise ContractError(
+                f"refusing a run output directory inside the {label} "
+                f"{forbidden_root}: {run_dir}"
+            )
     if run_dir.exists():
         raise ContractError(f"refusing to overwrite existing run output directory: {run_dir}")
     run_dir.mkdir(parents=True)

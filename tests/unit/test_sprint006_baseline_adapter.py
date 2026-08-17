@@ -364,6 +364,16 @@ class TestAcceptedPaths:
 # Overwrite refusal
 # =============================================================================
 
+class TestOutputLocationRefusal:
+    def test_output_dir_inside_repo_refused(self):
+        with pytest.raises(sb.ContractError, match="Git repository root"):
+            sb.create_run_dir(sb._REPO_ROOT / "runs" / "d1_probe")
+
+    def test_output_dir_inside_mutable_cache_refused(self):
+        with pytest.raises(sb.ContractError, match="mutable producer cache root"):
+            sb.create_run_dir(sb.MUTABLE_CACHE_ROOT / "runs" / "d1_probe")
+
+
 class TestOverwriteRefusal:
     def test_existing_run_dir_refused(self, tmp_path: Path):
         existing = tmp_path / "run"
