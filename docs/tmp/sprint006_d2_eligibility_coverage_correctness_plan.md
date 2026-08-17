@@ -18,25 +18,25 @@
 **Reused unchanged:** `SurfaceRunner.run_single_config` as engine; S1 universe; S3/S4/S5 selection/sizing/settle; Tier A economics; fill mid/cross; straddle body spread filter (already correct); D1 thin adapter architecture, path preflight, overwrite refusal, twin mid/cross execution; frozen JSON thresholds and periods.
 
 **Minimum runtime changes:**
-1. Optional explicit `cvg_count_col` on `BacktestRunConfig` + joint count filter in S2 using `math.ceil(min_count_pct × window_size)`.
+1. Optional explicit `cvg_count_col` on `BacktestRunConfig` + joint count filter in S2 using `math.ceil(min_count_pct × window_size)`; validate required feature/count columns once in the shared runner or S2 path before date processing.
 2. A1 expected-date loop + feature reconciliation + `date_status` on `SurfaceRunResult` (replace silent empty-signal `continue`).
-3. Iron-fly body `max_leg_spread_pct` filter (mirror straddle).
-4. Small D1 adapter deltas only: map `feature_window.cvg_count_col`, write `date_status_*.parquet`, record completeness / failed counts in receipt, update deferred list.
+3. Iron-fly body `max_leg_spread_pct` filter (mirror straddle). Iron-condor is untouched.
+4. Small D1 adapter deltas only: map `feature_window.cvg_count_col`, write `date_status_*.parquet`, record `n_failed_dates` / `has_unresolved_failures` plus exact feature-absent-from-A1 reconciliation evidence in the receipt, update deferred list. No adapter schema preflight; no `--dry-run` expansion.
 
 **Expected footprint:** ~4 production modules touched (`pipeline.py`, `surface_runner.py`, `option_surface.py`, `sprint006_baseline.py`) + focused tests (S2, orchestration/runner date-status, iron-fly body spread, adapter persistence). No new runner, CLI, status framework, or DQ subsystem. Frozen JSON untouched.
 
-**Date-status flow:** Runner builds `date_status` while iterating A1 dates → attaches to `SurfaceRunResult` → adapter `write_run_outputs` persists `date_status_<run_id>.parquet` beside existing artifacts → receipt lists the artifact and `unresolved_failed_count` / completeness flag. D3 reads that table; D2 does not compute return metrics.
+**Date-status flow:** Runner builds `date_status` (`trade_date`, `status`, `reason`) while iterating A1 dates → attaches to a successfully returned `SurfaceRunResult` → adapter `write_run_outputs` persists `date_status_<run_id>.parquet` beside existing artifacts → receipt lists the artifact plus `n_failed_dates` and `has_unresolved_failures`. D3 reads that table; D2 does not compute return metrics. Unexpected exceptions abort with no complete result.
 
-**Focused tests:** Synthetic S2 joint/ceil/missing-column cases; runner classification invariant (`expected = traded + valid_no_trade + failed`); empty-signal observability; iron-fly body spread; adapter write/receipt. Prefer extending existing modules over new frameworks.
+**Focused tests:** Synthetic S2 joint/ceil/missing-column cases; partition invariant on a returned result (`expected = traded + valid_no_trade + failed`); empty-signal observability; iron-fly body spread; adapter write/receipt. Prefer extending existing modules over new frameworks.
 
 **Material decisions needing human approval (engineering; D0 economics stay frozen):**
 1. Represent CVG count as optional `BacktestRunConfig.cvg_count_col` mapped from contract `feature_window.cvg_count_col` (recommended) — not naming-convention magic and not a generalized schema system.
-2. Build and attach `date_status` inside `SurfaceRunner` / `SurfaceRunResult` (recommended) — adapter only persists it.
-3. Classify known coverage/eligibility/no-structure outcomes into the taxonomy; let unexpected exceptions abort the run (recommended) rather than soft-swallowing them as `failed` rows.
-4. Minimal reason vocabulary below (§4.5) — no generalized diagnostic taxonomy.
+2. Build and attach `date_status` inside `SurfaceRunner` / `SurfaceRunResult` (recommended) — adapter only maps, orchestrates, and persists.
+3. Fail-fast on unexpected exceptions: abort the run; do not catch-and-continue, publish partial results, or invent synthetic `failed` rows for unprocessed dates. Representable reconciliation misses (A1 date absent from features) remain explicit `failed` rows. The date-partition invariant applies only to a successfully returned `SurfaceRunResult`.
+4. Minimal date-status schema and reason vocabulary below (§4.5) — no generalized diagnostic taxonomy; no optional candidate/included count columns.
 5. One coherent implementation commit (recommended) unless review finds a hard split benefit.
 
-**Explicitly excluded:** D3 metrics/reporting; D4 smoke/manual/full-history/P&L; frozen JSON changes; second CVG threshold; `SurfaceSearch` / Sprint 007; unrelated bugs/refactors; new frameworks.
+**Explicitly excluded:** D3 metrics/reporting; D4 smoke/manual/full-history/P&L; frozen JSON changes; second CVG threshold; iron-condor changes; `SurfaceSearch` / Sprint 007; unrelated bugs/refactors; new frameworks; adapter-level feature-schema preflight.
 
 ---
 
@@ -117,17 +117,17 @@
 | Reconcile expected A1 dates to feature dates | None | Explicit reconciliation |
 | Classify every expected date once | Silent attrition | Build `date_status` with invariant check |
 | Empty-signal / ineligible / no-structure observable | Partially (no-structure only if signals non-empty) | Stop empty-signal skip; classify |
-| Missing features / incomplete processing as `failed` | Missing features invisible; exceptions abort | Missing → `failed` row; unexpected exception still aborts run |
+| Missing features / incomplete processing as `failed` | Missing features invisible; exceptions abort | Missing features → `failed` row on returned result; unexpected exception aborts with no complete result |
 | `max_leg_spread_pct=0.50` on all four IF legs | Wings only | Filter body too |
 | Date-status on shared result/output path | Not present | Extend `SurfaceRunResult` + adapter write/receipt |
 
-Invariant D2 must enforce locally:
+Invariant D2 must enforce on every **successfully returned** `SurfaceRunResult`:
 
 ```text
 expected dates = traded + valid_no_trade + failed
 ```
 
-No missing expected dates; no duplicate membership across classes. `unresolved_failed_count > 0` ⇒ result must not be treated as complete (flag for D3/D4), but D2 does **not** require the future real-data run to be failure-free.
+No missing expected dates; no duplicate membership across classes. `has_unresolved_failures = (n_failed_dates > 0)` ⇒ any unresolved failure **blocks Sprint 006 acceptance**. D2 does **not** require the future real-data run to be failure-free; it must make failures observable. An unexpected exception aborts before a complete result exists, so the invariant does not apply to crashed runs.
 
 ---
 
@@ -160,15 +160,15 @@ to `BacktestRunConfig`.
 
 ### 4.2 Required-column handling
 
+Validate configured required feature/count columns **once** in the shared runner or S2 path **before** date processing. Do **not** duplicate that check in the Sprint 006 adapter or expand `--dry-run`.
+
 | Situation | Behavior |
 |-----------|----------|
-| `count_col` configured but absent from feature columns | **Hard fail the run** at feature-load / first use (do not silently skip the filter) |
+| `count_col` configured but absent from feature columns | **Hard fail the run** before the date loop (do not silently skip the filter) |
 | `cvg_count_col` set but absent | **Hard fail the run** the same way |
 | `cvg_count_col is None` | Mom-only path; do not look for a CVG count column |
 | Column present; row count below threshold / NaN count | Drop row from eligibility (existing pattern); may yield empty signals → `valid_no_trade` |
-| A1 expected date with **no feature rows at all** | `failed` / `missing_features` (not a schema hard-fail) |
-
-Optional cheap 006 preflight (adapter): when building twin configs, verify baseline feature parquet contains `momentum_col`, `cvg_col`, `count_col`, and `cvg_count_col`. Prevents a long silent wrong path before the engine starts. This is proportional because the failure mode is exactly “joint eligibility never applied.”
+| A1 expected date with **no feature rows at all** | `failed` / `missing_features` (representable reconciliation failure; not a schema hard-fail) |
 
 ### 4.3 Independent expected-date construction and feature reconciliation
 
@@ -177,9 +177,9 @@ Optional cheap 006 preflight (adapter): when building twin configs, verify basel
 1. From loaded A1 meta (`OptionSurfaceDB.meta_df`): sorted unique `entry_date_key` with `entry_date ∈ [config.start_date, config.end_date]` (**include** dates that appear only on `surface_valid=False` rows).
 2. Feature date set: unique `features.date` in the same closed interval.
 3. Reconciliation:
-   * Every expected A1 date gets exactly one status.
-   * Expected date ∉ feature dates → `failed` (`missing_features`) by default.
-   * Feature dates ∉ A1 → **not** expected members; record counts (and optionally a short list) in `run_summary` / receipt reconciliation evidence only.
+   * Every expected A1 date in a returned result gets exactly one status.
+   * Expected date ∉ feature dates → `failed` (`missing_features`).
+   * Feature dates ∉ A1 → **not** expected members; record the **exact sorted list and count** in run-level reconciliation evidence (`run_summary` / receipt). No truncated “examples.”
 
 Implement expected-date extraction as a small method on `SurfaceRunner` (or a tiny helper used by it) over already-loaded `self.surface_db.meta_df`. Do not add a calendar service.
 
@@ -198,11 +198,14 @@ Classification runs **per expected date**, after that date’s processing attemp
 * Feature rows exist for the date, required columns present, S1–S2 complete, and S2 returns empty (universe empty after join, all NaN scores, all fail joint count, or empty long+short pools after CVG retention) → reason `empty_signals`.
 * S2 non-empty, S3–S5 complete, and zero `included_in_portfolio=True` (all `no_tradeable_structure`, earnings exclusions with diagnostics retained, sizing rejects, etc.) → reason `no_included_names`.
 
-**`failed`:**
+**`failed` (representable, only on a returned result):**
 
 * Expected A1 date missing from feature date set → `missing_features`.
-* Required count/signal columns missing for the run → hard-fail whole run (schema), which makes the result incomplete (not a quiet per-date `valid_no_trade`).
-* Unexpected exception while processing a date → **abort the run** (do not soft-map to a `failed` row). A crashed run is incomplete by definition; inventing partial status after a hard error invites false completeness.
+
+**Hard-fail / abort (no complete result, therefore not acceptable):**
+
+* Required count/signal columns missing → hard-fail before date processing (schema).
+* Unexpected processing or programming exception → **abort the run**. Do **not** catch-and-continue, publish a partial result, or invent synthetic `failed` rows for dates that were never processed. A crashed run produces no complete `SurfaceRunResult` and cannot be accepted.
 
 **Not `failed`:** ordinary economic emptiness, universal structure failure on candidates, or long-only/short-zero books that still include ≥1 name (`traded`).
 
@@ -226,19 +229,19 @@ Keep a **small fixed vocabulary**, not a taxonomy framework:
 | `no_included_names` | S5 completed; zero included |
 | `none` / null | `traded` |
 
-`date_status` columns (minimal):
+Pinned `date_status` schema (exactly these columns):
 
-* `entry_date`
+* `trade_date` — sourced from A1 `entry_date`
 * `status` ∈ {`traded`,`valid_no_trade`,`failed`}
 * `reason` (as above)
-* optional counts useful to D3 without becoming a report: `n_candidates`, `n_included` (0 when no rows)
 
-Also attach to `run_summary`:
+Do **not** add `n_candidates` or `n_included`; existing trade outputs can supply those details if D3 needs them.
+
+Also attach to `run_summary` / receipt (no overlapping completeness flags):
 
 * `n_expected_dates`, `n_traded_dates`, `n_valid_no_trade_dates`, `n_failed_dates`
-* `unresolved_failed_count` (= `n_failed_dates`)
-* `date_status_complete` (= `unresolved_failed_count == 0`)
-* reconciliation: `n_feature_dates_absent_from_a1` (and maybe truncated examples)
+* `has_unresolved_failures` (= `n_failed_dates > 0`); any unresolved failure blocks Sprint 006 acceptance
+* reconciliation: `n_feature_dates_absent_from_a1` and the **exact sorted list** of those dates
 
 ### 4.6 Iron-fly all-leg spread enforcement
 
@@ -248,7 +251,7 @@ In `build_ironfly_from_surface`, when `max_leg_spread_pct is not None`:
 2. Keep existing OTM wing filter.
 3. If either body leg disappears → raise the existing style of construction error (captured by S3 as `structure_ok=False`), not a new error framework.
 
-Do **not** change wing-selection rule, delta target, settlement, or fill math. Do **not** retarget iron-condor in this deliverable beyond leaving its existing wing-only filter alone unless a shared helper naturally covers it without scope creep; Sprint 006 baseline is iron-fly only. Prefer editing the iron-fly body path explicitly.
+Do **not** change wing-selection rule, delta target, settlement, or fill math. Edit the **iron-fly body path only**. Iron-condor is **explicitly out of scope** for D2 (leave its existing wing-only filter unchanged; do not share or retarget helpers into condor).
 
 ### 4.7 Integration with `SurfaceRunResult`, writer, and receipt
 
@@ -257,10 +260,11 @@ A1 meta + features + config
         │
         ▼
 SurfaceRunner.run_single_config
+  - validate required columns once (before date loop)
   - expected_dates ← A1
   - reconcile vs feature dates
   - per date: classify + maybe append trade rows
-  - build date_status; assert partition invariant
+  - on success: build date_status; assert partition invariant
   - existing build_date_summary(trade_log) unchanged in role
         │
         ▼
@@ -273,15 +277,16 @@ sprint006_baseline.write_run_outputs
   + date_status_<run_id>.parquet
 run_receipt.json
   + per-run date_status artifact digest
-  + unresolved_failed_count / date_status_complete
+  + n_failed_dates / has_unresolved_failures
+  + exact feature-dates-absent-from-A1 list + count
   + deferred list updated (remove completed D2 items; keep D3/D4)
 ```
 
-Adapter changes stay thin:
+Adapter changes stay thin (contract mapping, execution orchestration, persistence only):
 
 * Map `feature_window.cvg_count_col` into configs (extend `_FEATURE_COLUMN_FIELDS` or equivalent explicit allow-list).
-* Persist `date_status`.
-* Do **not** redesign CLI, overwrite policy, path refusal, or twin-run orchestration.
+* Persist `date_status` and receipt fields above.
+* Do **not** redesign CLI, overwrite policy, path refusal, twin-run orchestration, or add feature-schema preflight / `--dry-run` expansion.
 
 `date_summary` remains trade_log-derived (may omit pure `valid_no_trade`/`failed` dates with no rows). **`date_status` is the authoritative coverage table.** D3 must not infer coverage solely from `date_summary`.
 
@@ -310,8 +315,8 @@ Adapter changes stay thin:
 
 | Option | Verdict |
 |--------|---------|
-| **A. Soft-classify known cases; abort on unexpected exceptions** (recommended) | Observable coverage without inventing false completeness after crashes |
-| B. Catch-all → mark `failed` and continue | Hides severe bugs; risks “complete” accounting after partial corruption |
+| **A. Soft-classify representable reconciliation/eligibility outcomes; abort on unexpected exceptions** (recommended) | Partition invariant holds on returned results; crashes yield no complete/acceptable result |
+| B. Catch-all → mark `failed` and continue | Rejected — hides bugs; invents synthetic coverage for unprocessed dates; risks false acceptance |
 
 ---
 
@@ -320,16 +325,16 @@ Adapter changes stay thin:
 | File | Change |
 |------|--------|
 | `src/backtest/run_config.py` | Add optional `cvg_count_col: Optional[str] = None` (+ light validation if needed) |
-| `src/backtest/pipeline.py` | Ceil required-count; joint filter when `cvg_count_col` set; hard-fail if configured count columns missing |
-| `src/backtest/surface_runner.py` | A1 expected dates; reconciliation; no silent empty skip; build `date_status`; extend `SurfaceRunResult`; summary counters / completeness flag |
-| `src/backtest/option_surface.py` | Iron-fly body `max_leg_spread_pct` filter |
-| `src/backtest/sprint006_baseline.py` | Map `cvg_count_col`; write `date_status_*.parquet`; receipt fields; trim D2 items from `DEFERRED_*` |
+| `src/backtest/pipeline.py` | Ceil required-count; joint filter when `cvg_count_col` set; hard-fail if configured count columns missing (shared path; may share the once-before-loop check with the runner) |
+| `src/backtest/surface_runner.py` | Once-before-loop required-column check and/or call into S2; A1 expected dates; reconciliation; no silent empty skip; build `date_status`; extend `SurfaceRunResult`; summary fields `n_failed_dates` / `has_unresolved_failures` + exact feature-absent-from-A1 list |
+| `src/backtest/option_surface.py` | Iron-fly body `max_leg_spread_pct` filter only (no iron-condor edits) |
+| `src/backtest/sprint006_baseline.py` | Map `cvg_count_col`; write `date_status_*.parquet`; receipt fields; trim D2 items from `DEFERRED_*`. No feature-schema preflight; no `--dry-run` expansion |
 | `tests/contract/test_step2_signals_contract.py` (and/or sibling) | Joint filter, ceil=28 for (42,8), missing-column hard-fail |
-| `tests/contract/test_orchestration_contract.py` / runner unit tests | Empty-signal → `valid_no_trade`; missing features → `failed`; partition invariant; update obsolete “skipped” assertion |
+| `tests/contract/test_orchestration_contract.py` / runner unit tests | Empty-signal → `valid_no_trade`; missing features → `failed`; partition invariant on returned result; update obsolete “skipped” assertion |
 | `tests/unit/test_option_surface_ironfly.py` | Body spread tight/wide cases |
-| `tests/unit/test_sprint006_baseline_adapter.py` | Maps `cvg_count_col`; writes date_status; receipt completeness keys |
+| `tests/unit/test_sprint006_baseline_adapter.py` | Maps `cvg_count_col`; writes date_status; receipt `n_failed_dates` / `has_unresolved_failures`; no adapter schema-preflight tests |
 | `docs/surface_engine_data_contract.md` §S2 I3 | **Minimal sync only:** document ceil + optional joint CVG count (avoid doc/code drift). No other doc churn |
-| **Do not edit** | `configs/sprint006_baseline_v1.json`; D3/D4 code; `surface_search.py` / search CLI; unrelated known bugs |
+| **Do not edit** | `configs/sprint006_baseline_v1.json`; iron-condor builders/tests for D2 scope; D3/D4 code; `surface_search.py` / search CLI; unrelated known bugs |
 
 Approximate effort: well inside the sprint’s 12–18h review trigger if scope stays as above.
 
@@ -346,9 +351,9 @@ Approximate effort: well inside the sprint’s 12–18h review trigger if scope 
 7. **Empty signals observable:** S2 empty → `valid_no_trade`/`empty_signals`; S5 not called; date not absent.
 8. **No-structure date:** signals exist, all `structure_ok=False` → `valid_no_trade`/`no_included_names` (with diagnostics on).
 9. **Traded date:** ≥1 included → `traded`.
-10. **Partition invariant:** for a synthetic multi-date fixture, `expected == traded ∪ valid_no_trade ∪ failed` and pairwise disjoint; violation fails the test / run guardrail.
-11. **Iron-fly body spread:** body `spread_pct` above threshold fails construction even if wings are liquid; below threshold still builds.
-12. **Adapter:** effective config includes `cvg_count_col`; `date_status_*.parquet` written; receipt shows artifact + `unresolved_failed_count` / `date_status_complete`; D2 items removed from deferred list.
+10. **Partition invariant:** for a synthetic multi-date fixture that returns successfully, `expected == traded ∪ valid_no_trade ∪ failed` and pairwise disjoint; violation fails the test / run guardrail. Crashed runs are not required to satisfy the invariant.
+11. **Iron-fly body spread:** body `spread_pct` above threshold fails construction even if wings are liquid; below threshold still builds. No iron-condor assertions in D2.
+12. **Adapter:** effective config includes `cvg_count_col`; `date_status_*.parquet` written with columns `trade_date`/`status`/`reason` only; receipt shows artifact + `n_failed_dates` / `has_unresolved_failures` + exact feature-absent-from-A1 list/count; D2 items removed from deferred list.
 13. **Regression subset after edits:** existing S2, orchestration, surface runner data-flow, option_surface straddle/ironfly, step5, sprint006 adapter suites.
 
 **Forbidden in D2 validation:** full-history real-data economic run; aggregate P&L/Sharpe inspection; proving real-data `failed` count is zero.
@@ -358,10 +363,10 @@ Approximate effort: well inside the sprint’s 12–18h review trigger if scope 
 ## 8. Ordered implementation steps
 
 1. Accept this plan (including the five engineering approval items in the Review summary).
-2. Add optional `cvg_count_col` + S2 ceil/joint filter + missing-column hard-fail; add S2 tests.
-3. Implement A1 expected-date loop + reconciliation + `date_status` on `SurfaceRunResult`; replace empty-signal skip; add orchestration/runner tests; enforce partition invariant.
-4. Implement iron-fly body spread filter + unit tests.
-5. Extend adapter mapping, output writer, receipt; update adapter tests and deferred list.
+2. Add optional `cvg_count_col` + S2 ceil/joint filter + once-before-loop missing-column hard-fail in runner/S2; add S2 tests.
+3. Implement A1 expected-date loop + reconciliation + `date_status` on `SurfaceRunResult`; replace empty-signal skip; add orchestration/runner tests; enforce partition invariant on returned results.
+4. Implement iron-fly body spread filter + unit tests (iron-condor untouched).
+5. Extend adapter mapping, output writer, receipt (`n_failed_dates` / `has_unresolved_failures` + exact absent-from-A1 list); update adapter tests and deferred list. No adapter schema preflight.
 6. Minimal S2 data-contract I3 doc sync (optional but recommended with the code change).
 7. Run focused pytest subset; record results in the implementation handoff (not this design doc).
 8. Stop. Do not start D3/D4 or real-data P&L.
@@ -375,20 +380,22 @@ Approximate effort: well inside the sprint’s 12–18h review trigger if scope 
 - [ ] Review summary approved, including the five engineering decisions
 - [ ] Frozen D0 JSON remains untouched; no P&L knobs reopened
 - [ ] Plan does not authorize D3/D4, search work, or real-data economic execution
-- [ ] Invariant `expected = traded + valid_no_trade + failed` is explicit
-- [ ] Status boundaries and minimal reasons are explicit enough to implement without reinterpretation
+- [ ] Invariant `expected = traded + valid_no_trade + failed` is explicit for successfully returned results
+- [ ] Fail-fast abort policy (no partial publication / synthetic failed rows) is explicit
+- [ ] Status boundaries, pinned `date_status` schema, and minimal reasons are explicit enough to implement without reinterpretation
 
 ### D2 implementation acceptance (after coding)
 
 - [ ] Joint Mom+CVG eligibility uses `min_count_pct` only and `ceil` → 28 for `(42,8)`
 - [ ] Configured `cvg_count_col` is mapped from the frozen contract and enforced in S2
-- [ ] Missing configured count columns hard-fail (no silent bypass)
+- [ ] Missing configured count columns hard-fail once in runner/S2 before date processing (no silent bypass; no adapter schema preflight)
 - [ ] Expected dates come from A1 (including `surface_valid=False`-only dates) within the frozen interval
-- [ ] Every expected date classified exactly once; partition invariant held
+- [ ] Every expected date in a returned result is classified exactly once; partition invariant held
 - [ ] Empty-signal / no-included / missing-feature cases are observable with the agreed reasons
-- [ ] `unresolved_failed_count > 0` marks the result incomplete in summary/receipt
-- [ ] Iron-fly applies `max_leg_spread_pct` to body and wings
-- [ ] `date_status` available on `SurfaceRunResult` and persisted by the existing adapter path
+- [ ] `n_failed_dates` and `has_unresolved_failures` are recorded; any unresolved failure blocks Sprint 006 acceptance
+- [ ] Unexpected exceptions abort with no complete/acceptable result
+- [ ] Iron-fly applies `max_leg_spread_pct` to body and wings; iron-condor unchanged
+- [ ] `date_status` (`trade_date`, `status`, `reason`) available on `SurfaceRunResult` and persisted by the existing adapter path
 - [ ] Focused pytest subset green
 - [ ] No frozen JSON edits; no D3 metrics; no D4 real-data P&L
 
@@ -403,11 +410,12 @@ Approximate effort: well inside the sprint’s 12–18h review trigger if scope 
 * D3 decision report, calendar zero-fill Sharpe/drawdown, yearly packs, attribution, costs, concentration
 * D4 smoke, manual sample, full-history mid/cross execution, P&L inspection, or proving zero real-data failures
 * New runner/CLI/status framework/publication/DQ platform
-* Redesigning the D1 adapter beyond persistence/mapping needed for D2
+* Redesigning the D1 adapter beyond persistence/mapping needed for D2; adapter feature-schema preflight; `--dry-run` expansion
 * `SurfaceSearch` / `run_surface_search.py` repair; Sprint 007 study matrix
-* Iron-condor comparison / KB-001; earnings filters; Tier B; new features
+* Iron-condor body/wing spread changes, iron-condor comparison / KB-001; earnings filters; Tier B; new features
 * Unrelated refactors or known-bug fixes that do not block the frozen D2 outcomes
 * Redundant evidence documents beyond this plan + later implementation notes in the usual place
+* Partial-result publication or synthetic `failed` rows for dates left unprocessed after an unexpected exception
 
 ---
 
@@ -417,12 +425,13 @@ Approximate effort: well inside the sprint’s 12–18h review trigger if scope 
 |-----------|-----------------------------|--------------------|
 | Joint count AND + explicit `cvg_count_col` | Trading names with thin CVG coverage while looking “eligible” | Direct frozen-contract economic correctness; few lines in S2 |
 | Ceil required-count | Threshold drift vs frozen rule on non-integer products | One `math.ceil` call; pins D0 literally |
-| Hard-fail missing configured count columns | Silent disable of eligibility when a column is absent | Cheap schema check; prevents false baseline |
-| A1 expected calendar + partition assert | Silent date loss / double-counting | Core DoD; local assert after building `date_status` |
-| Completeness flag from `unresolved_failed_count` | Treating incomplete coverage as an accepted full result | One summary/receipt field; D3/D4 consume it |
+| Once-before-loop hard-fail for missing configured count columns (runner/S2) | Silent disable of eligibility when a column is absent | Cheap shared check; prevents false baseline without adapter duplication |
+| A1 expected calendar + partition assert on returned results | Silent date loss / double-counting | Core DoD; local assert after building `date_status` |
+| `n_failed_dates` + `has_unresolved_failures` | Treating a returned result with coverage failures as Sprint 006–acceptable | Two explicit fields; blocks acceptance without overlapping completeness flags |
+| Fail-fast abort on unexpected exceptions | False “complete” coverage after a crash | No catch-and-continue; no synthetic failed rows |
 | Iron-fly body spread filter | Illiquid ATM shorts entering the book while wings are filtered | Matches straddle behavior; small builder change + unit test |
 
-Omit: resumable run managers, generalized diagnostic ontologies, CRLF digest frameworks, catch-all exception→`failed` swallowers, new CLIs.
+Omit: resumable run managers, generalized diagnostic ontologies, CRLF digest frameworks, catch-all exception→`failed` swallowers, adapter schema preflights, new CLIs, iron-condor retargeting.
 
 ---
 
