@@ -1,8 +1,8 @@
 # Current sprint — 006
 
 **Updated:** 2026-08-16
-**Status:** `ACTIVE — D0 COMPLETE; D1 IMPLEMENTED — AWAITING REVIEW`
-**Mode:** Build. D0 accepted and frozen. D1–D4 each require a short deliverable design that is reviewed and accepted before implementation.
+**Status:** `ACTIVE — D0/D1 COMPLETE; D2 AWAITING DESIGN`
+**Mode:** Build. D0 accepted and frozen. D1 accepted (`241b0d3` + review fix `c6b1735`). Next authorized activity is **D2 design only** (not D2 implementation). D2–D4 each require a short deliverable design that is reviewed and accepted before implementation.
 **Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`)
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (design commit `1cdfad7`; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
@@ -39,7 +39,7 @@ Do not reopen or redesign accepted Sprint 004/005 work.
 ```text
 Sprint 004: trusted immutable input snapshot          ← CLOSED
 Sprint 005: trusted full-history weekly Mom/CVG        ← CLOSED
-Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D0 complete)
+Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D0/D1 complete; D2 awaiting design)
 Sprint 007: bounded robustness (only after 006 trusted)
 ```
 
@@ -102,9 +102,9 @@ Design each deliverable immediately before implementing it. **D0** freezes every
 
 Frozen in [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json). Plan: [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md).
 
-### D1 — Trusted baseline runner — **IMPLEMENTED — AWAITING REVIEW**
+### D1 — Trusted baseline runner — **ACCEPTED — COMPLETE**
 
-Design and implementation record: [`docs/tmp/sprint006_d1_trusted_baseline_runner_plan.md`](../tmp/sprint006_d1_trusted_baseline_runner_plan.md).
+Design and implementation record: [`docs/tmp/sprint006_d1_trusted_baseline_runner_plan.md`](../tmp/sprint006_d1_trusted_baseline_runner_plan.md) (`ACCEPTED — D1 COMPLETE`). Accepted implementation: `241b0d3` + review fix `c6b1735`. Scope remains D1 only; D2–D4 limitations stay deferred. No accepted real-data economic backtest or aggregate P&L was run or reviewed in D1.
 
 Exercise and harden the existing `SurfaceRunner.run_single_config()` path so the frozen D0 twin mid/cross configs run reproducibly from accepted snapshot/derived artifacts, with identity/config recording and fill-pricing verification (no stacked `cost_model` deduction). Any new command must be only a **thin frozen-contract adapter**—not a separate backtest implementation or generalized framework. Repairing or redesigning the parameter-search workflow is deferred unless a shared defect blocks fixed-contract execution.
 
@@ -219,4 +219,5 @@ The 12–18 hour budget is a review trigger, not an acceptance condition. A corr
 | 2026-08-09 | Sprint 005 closed — [`005_closeout.md`](../sprint_memos/005_closeout.md). Sprint 006 not started. |
 | 2026-08-12 | Proposed Sprint 006 agenda written into this document (`PROPOSED — AWAITING ACCEPTANCE`). HEAD at proposal: `1517b1b`. Refined with D0 experiment-freeze boundaries, deliverable-level implementation authorization, and minimal-implementation stop rules. |
 | 2026-08-15 | D0 accepted at design commit `1cdfad7` (including §13). Contract frozen as `configs/sprint006_baseline_v1.json` (SHA-256 of committed LF bytes `3cd57f4d…ef715`). Sprint status → `ACTIVE — D0 COMPLETE; D1 AWAITING DESIGN`. No runtime changes; no economic backtest; no P&L inspected. |
-| 2026-08-16 | D1 design accepted and implemented in commit `241b0d3` (parent `b380d38`): thin frozen-contract adapter + one CLI over `SurfaceRunner.run_single_config` (both mid and cross), light run receipt, overwrite refusal, S5 cap tie-break pinned to `ticker` ascending. Tests: 33 focused, 238 regression subset, full suite 1528 passed / 1 skipped. Frozen contract unchanged; no real-data economic run; no P&L inspected. D1 → `IMPLEMENTED — AWAITING REVIEW`. Review fix: run output directory must also be outside the repo and outside the mutable producer cache. |
+| 2026-08-16 | D1 design accepted and implemented in commit `241b0d3` (parent `b380d38`): thin frozen-contract adapter + one CLI over `SurfaceRunner.run_single_config` (both mid and cross), light run receipt, overwrite refusal, S5 cap tie-break pinned to `ticker` ascending. Tests: 33 focused, 238 regression subset, full suite 1528 passed / 1 skipped. Frozen contract unchanged; no real-data economic run; no P&L inspected. D1 → `IMPLEMENTED — AWAITING REVIEW`. Review fix `c6b1735`: run output directory must also be outside the repo and outside the mutable producer cache. |
+| 2026-08-16 | D1 reviewed and accepted (`241b0d3` + `c6b1735`). Sprint status → `ACTIVE — D0/D1 COMPLETE; D2 AWAITING DESIGN`. Accepted scope remains D1 only; D2–D4 deferred. No accepted real-data economic backtest or aggregate P&L in D1. Next authorized activity: D2 design only (not implementation). |

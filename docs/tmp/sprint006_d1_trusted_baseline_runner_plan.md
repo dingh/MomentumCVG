@@ -1,10 +1,12 @@
 # Sprint 006 D1 — Trusted baseline runner plan
 
-**Status:** `IMPLEMENTED — AWAITING REVIEW` (design accepted; implementation recorded in §12)
-**Mode:** Build (D1 implementation only; D2–D4 not authorized)
+**Status:** `ACCEPTED — D1 COMPLETE`
+**Mode:** Build (D1 complete; next authorized activity is D2 design only — not D2–D4 implementation)
 **Repo HEAD at design:** `a1b7a3ccf5cf984841cd0c00062e1207e3b494a0` (clean working tree on `main`)
 **Implementation starting point (parent commit):** `b380d38325eda87036e3d6962a45dc3261ae7c21` (clean working tree on `main`)
 **D1 implementation commit:** `241b0d313e237e9fcb90c60a1395888c529d2b48`
+**D1 review fix commit:** `c6b173567a2b2cca979a8fec3d4bd17305458591`
+**Accepted implementation:** `241b0d3` + review fix `c6b1735`
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (unchanged; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
 **Naming convention:** `docs/tmp/sprint00N_dN_*_plan.md`
@@ -13,7 +15,7 @@
 
 ## Review summary
 
-**Implementation status:** The accepted design below is **implemented and awaiting review** (§12 records files, tests, and limits). The adapter (`src/backtest/sprint006_baseline.py`) plus one thin CLI (`scripts/run_sprint006_baseline.py`) map the frozen contract onto `SurfaceRunner.run_single_config()`, which remains the only economic engine. The single production change outside the adapter is the S5 cap tie-break pin. The frozen D0 JSON is unchanged, and **no real-data economic run was executed and no new P&L was inspected**.
+**Acceptance status:** D1 has been **reviewed and accepted** (`ACCEPTED — D1 COMPLETE`). Accepted implementation is `241b0d3` plus review fix `c6b1735`. Accepted scope remains D1 only; D2–D4 limitations stay deferred. Next authorized activity is **D2 design only**, not D2 implementation. The adapter (`src/backtest/sprint006_baseline.py`) plus one thin CLI (`scripts/run_sprint006_baseline.py`) map the frozen contract onto `SurfaceRunner.run_single_config()`, which remains the only economic engine. The single production change outside the adapter is the S5 cap tie-break pin. The frozen D0 JSON is unchanged. **No accepted real-data economic backtest or aggregate P&L was run or reviewed during D1.**
 
 **Recommended design:** Keep `SurfaceRunner.run_single_config()` as the only economic execution engine. Add a **thin frozen-contract adapter** that loads the accepted D0 JSON, resolves accepted snapshot/derived paths (never the mutable producer cache root), maps only recognized contract fields into twin `BacktestRunConfig`s, and always runs **both** frozen contract fills—diagnostic mid and primary cross—through the existing single-config API. Persist existing result objects plus a small run-identity receipt; refuse to overwrite an existing run output directory or target artifacts. Do not repair or redesign the search CLI.
 
@@ -294,9 +296,9 @@ D1 deliberately keeps **one config → one `SurfaceRunResult`** as the atomic un
 
 ---
 
-## 12. D1 implementation record (`IMPLEMENTED — AWAITING REVIEW`)
+## 12. D1 implementation record (`ACCEPTED — D1 COMPLETE`)
 
-Implemented in commit `241b0d3`, whose parent (and clean starting point) was `b380d38`.
+Accepted implementation: `241b0d3` (parent / clean starting point `b380d38`) plus review fix `c6b1735`.
 
 ### Files
 
@@ -325,13 +327,15 @@ The tie-break test is non-vacuous: the previous single-key sort selected the hig
 
 `create_run_dir` now also refuses a run output directory inside the Git repository root or inside the mutable producer cache root `C:/MomentumCVG_env/cache`; the existing overwrite refusal is unchanged. Two focused tests added (`TestOutputLocationRefusal`); adapter suite re-run at **35 passed**.
 
-### Notes for review
+### Acceptance notes
 
+* **Reviewed and accepted.** Status `ACCEPTED — D1 COMPLETE`. Sprint agenda → `ACTIVE — D0/D1 COMPLETE; D2 AWAITING DESIGN`.
+* **Accepted commits:** `241b0d3` + `c6b1735`. Scope remains D1 only.
 * **Contract digest is recorded, not compared.** The receipt stores the SHA-256 of the contract bytes on disk (`4012b4a4…` in a CRLF working copy); the D0 header value `3cd57f4d…` is the committed-LF digest. Per the accepted design, no line-ending normalisation machinery was added.
 * **Clean HEAD** is required only when writing artifacts; `--dry-run` performs no identity write-gate and no execution.
 * The CLI prints paths and row counts only — never economic metrics — so D1 execution cannot double as P&L inspection.
-* Still deferred (also listed in each receipt): joint Mom+CVG count eligibility, A1 expected-date/date-status table, all-leg spread on iron-fly bodies (**D2**); decision report (**D3**); smoke, manual sample, full-history execution (**D4**).
+* Still deferred (also listed in each receipt): joint Mom+CVG count eligibility, A1 expected-date/date-status table, all-leg spread on iron-fly bodies (**D2**); decision report (**D3**); smoke, manual sample, full-history execution (**D4**). Next authorized activity: **D2 design only**.
 
 ---
 
-**End of D1 design and implementation record.** No real-data economic backtest was executed and no new aggregate P&L was inspected.
+**End of D1 design and implementation record.** D1 accepted. No accepted real-data economic backtest or aggregate P&L was run or reviewed during D1.
