@@ -1,8 +1,8 @@
 # Current sprint — 006
 
-**Updated:** 2026-08-16
-**Status:** `ACTIVE — D0/D1/D2 COMPLETE; D3 AWAITING DESIGN`
-**Mode:** Build. D0 accepted and frozen. D1 accepted (`241b0d3` + review fix `c6b1735`). D2 accepted (`9224068`; design `aa72a86`). Next authorized activity is **D3 design only** (not D3 implementation). D3–D4 each require a short deliverable design that is reviewed and accepted before implementation.
+**Updated:** 2026-08-17
+**Status:** `ACTIVE — D0/D1/D2 COMPLETE; D3 DESIGN UNDER REVIEW`
+**Mode:** Build. D0 accepted and frozen. D1 accepted (`241b0d3` + review fix `c6b1735`). D2 accepted (`9224068`; design `aa72a86`). D3 design proposed: [`docs/tmp/sprint006_d3_decision_diagnostic_report_plan.md`](../tmp/sprint006_d3_decision_diagnostic_report_plan.md) (`PROPOSED — AWAITING ACCEPTANCE`). Next authorized activity is **D3 design review**; D3 implementation is not authorized until the plan is accepted. D4 still requires a short deliverable design that is reviewed and accepted before implementation.
 **Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`)
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (design commit `1cdfad7`; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
@@ -39,7 +39,7 @@ Do not reopen or redesign accepted Sprint 004/005 work.
 ```text
 Sprint 004: trusted immutable input snapshot          ← CLOSED
 Sprint 005: trusted full-history weekly Mom/CVG        ← CLOSED
-Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D0/D1/D2 complete; D3 awaiting design)
+Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D0/D1/D2 complete; D3 design under review)
 Sprint 007: bounded robustness (only after 006 trusted)
 ```
 
@@ -112,9 +112,9 @@ Exercise and harden the existing `SurfaceRunner.run_single_config()` path so the
 
 Plan / implementation record: [`docs/tmp/sprint006_d2_eligibility_coverage_correctness_plan.md`](../tmp/sprint006_d2_eligibility_coverage_correctness_plan.md) (`ACCEPTED — D2 COMPLETE`). Accepted implementation: `9224068` (design `aa72a86`). Joint Mom+CVG count eligibility (`ceil` → 28 for `(42,8)`), A1 expected-date `date_status` accounting, iron-fly all-leg `max_leg_spread_pct`, and thin adapter persistence of `date_status`. Scope remains D2 only; D3–D4 deferred. No accepted real-data economic backtest or aggregate P&L.
 
-### D3 — Decision-quality evaluation report — **AWAITING DESIGN**
+### D3 — Decision-quality evaluation report — **PROPOSED — AWAITING ACCEPTANCE**
 
-Produce the economic and operational evidence needed to judge the baseline: overall and yearly behavior, transaction-cost impact, long/short attribution, concentration, drawdown, trading activity, and data coverage. Support a decision — not a general analytics platform.
+Plan: [`docs/tmp/sprint006_d3_decision_diagnostic_report_plan.md`](../tmp/sprint006_d3_decision_diagnostic_report_plan.md). Decision-quality report generator plus the minimum diagnostic observability needed to understand the frozen baseline (candidate view, leg log, compact funnel). Not a general analytics platform. Implementation is not authorized until this plan is accepted. Real-data economic execution and conclusion remain D4.
 
 ### D4 — Verification, full execution, and closeout
 
@@ -223,3 +223,4 @@ The 12–18 hour budget is a review trigger, not an acceptance condition. A corr
 | 2026-08-16 | D1 reviewed and accepted (`241b0d3` + `c6b1735`). Sprint status → `ACTIVE — D0/D1 COMPLETE; D2 AWAITING DESIGN`. Accepted scope remains D1 only; D2–D4 deferred. No accepted real-data economic backtest or aggregate P&L in D1. Next authorized activity: D2 design only (not implementation). |
 | 2026-08-16 | D2 design accepted at `aa72a86` and implemented: joint Mom+CVG ceil eligibility, A1 `date_status` on `SurfaceRunResult`, iron-fly body spread gate, adapter persistence/receipt fields. Frozen JSON untouched; no real-data economic run; no P&L inspected. Sprint status → `ACTIVE — D0/D1 COMPLETE; D2 IMPLEMENTED — AWAITING REVIEW`. |
 | 2026-08-16 | D2 reviewed and accepted (`9224068`). Correctness review found no D2 blockers. Sprint status → `ACTIVE — D0/D1/D2 COMPLETE; D3 AWAITING DESIGN`. Scope remains D2 only; D3–D4 deferred. No accepted real-data economic backtest or aggregate P&L. Next authorized activity: D3 design only (not implementation). |
+| 2026-08-17 | D3 design proposed: [`sprint006_d3_decision_diagnostic_report_plan.md`](../tmp/sprint006_d3_decision_diagnostic_report_plan.md) (`PROPOSED — AWAITING ACCEPTANCE`). HEAD at proposal: `62bdf38`. Sprint status → `ACTIVE — D0/D1/D2 COMPLETE; D3 DESIGN UNDER REVIEW`. No D3 code, frozen-config change, real-data run, or P&L inspection. Implementation is not authorized until the plan is accepted. |
