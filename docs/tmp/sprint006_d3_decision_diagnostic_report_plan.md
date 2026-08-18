@@ -2,7 +2,8 @@
 
 **Status:** `PROPOSED — AWAITING ACCEPTANCE`
 **Mode:** Build (this document is **design only**; D3 implementation is not authorized until this plan is accepted)
-**Repo HEAD at design:** `62bdf3840e49829e5fa73b59f1bfb945401ba3c4` (clean working tree on `main`)
+**Original proposal:** `688c2a3` (`docs: propose Sprint 006 D3 decision diagnostic report plan`)
+**This revision:** design-only correction of `688c2a3`; implementation still not authorized
 **Confirmed ancestors:** D2 acceptance `62bdf38`; D2 implementation `9224068`; D1 `241b0d3` + `c6b1735`
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (unchanged; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
@@ -16,20 +17,20 @@
 
 **What D3 will build.** A small, deterministic evaluation pack on top of the already-accepted single-configuration Surface path. After a frozen mid+cross run, D3 writes one machine-readable decision report and one compact Markdown rendering, plus three thin diagnostic tables: a candidate view derived from the existing `trade_log`, a per-leg reconstruction log for constructable post-signal names, and a compact stage-count funnel.
 
-**Why it is needed.** D1/D2 make the run reproducible and stop dates from disappearing. They do not yet answer whether the baseline is economically credible, whether results are concentrated in a few names or weeks, or whether D4 can reconstruct a trade from signal through settlement. Existing `run_summary` metrics are search-oriented (`robust_score`, Sharpe only on dates that appear in the trade log) and are **not** the D0 decision report.
+**Why it is needed.** D1/D2 make the run reproducible and stop dates from disappearing. They do not yet answer whether the baseline is economically credible, whether results are concentrated in a few names or years, or whether D4 can reconstruct a trade from signal through settlement. Existing `run_summary` metrics are search-oriented (`robust_score`, Sharpe only on dates that appear in the trade log) and are **not** the D0 decision report.
 
 **What we will have after D3.** For both fills (cross primary, mid diagnostic) and both windows (full history `2018-10-26`→`2026-07-10`, primary `2020-01-01`→`2026-07-10`):
 
 * Conditional-on-traded and calendar-aligned return/risk numbers using the frozen D0 formulas.
-* Yearly splits, long/short attribution, mid-versus-cross cost overlap, concentration, activity, coverage, and structure-failure counts.
+* Yearly splits, long/short attribution, drawdown, top-five ticker share of absolute P&L, activity, coverage, and a small structure-failure classification.
+* A fill-assumption sensitivity block comparing mid and cross, with required overlap counts and mean spread-cost diagnostics. Cross-minus-mid is **not** a pure transaction-cost number: fills can also change sizing, inclusion, and selected structures.
 * A candidate table that says, for each post-signal name, whether it traded, failed structure construction, or was excluded by portfolio rules — without treating those as failed dates.
-* A leg log that lets D4 check fills, strikes, expiry payoff, and P&L arithmetic on included trades.
-* A funnel that counts how many names survive each existing pipeline stage, including long/short splits where that split exists.
-* Two compact primary-cross sensitivities: drop the highest-|PnL| ticker; drop the best P&L week.
+* A leg log that lets D4 check fills, strikes, expiry payoff, and P&L arithmetic on included trades, with short-iron-fly wing/body signs preserved.
+* A funnel that counts how many names survive each existing pipeline stage. Zero means the stage ran and nobody survived; null means the stage was not evaluated (for example, missing-feature dates).
 
-If any expected date is `failed`, the pack is written but **must not** be presented as a complete result.
+If any expected date is `failed`, the pack is written but **must not** be presented as a complete result. If a date classified as `traded` has broken or missing economics, or if included-trade legs fail to reconcile, report generation **aborts** — it does not drop the date or publish a quieter partial metric.
 
-**What D3 will not answer.** It will not say whether Momentum ranks the full PIT universe, whether CVG adds incremental predictive value, or whether a different parameter set would be better. The persisted candidates have already passed the Momentum-tail and CVG filters, so those questions would be selection-biased. D3 does not run the accepted real dataset, does not inspect live P&L during this design, and does not declare a go/no-go from a numeric threshold.
+**What D3 will not answer.** It will not say whether Momentum ranks the full PIT universe, whether CVG adds incremental predictive value, or whether a different parameter set would be better. The persisted candidates have already passed the Momentum-tail and CVG filters, so those questions would be selection-biased. D3 does not run the accepted real dataset, does not inspect live P&L during this design, does not declare a go/no-go from a numeric threshold, and does not compute drop-a-ticker or drop-a-week counterfactuals.
 
 **What remains for D4 and Sprint 007.** D4 executes the frozen command on accepted real artifacts, hand-checks the D0 sample using the new reconstruction tables, and records the conclusion. Sprint 007 is still the later bounded robustness / candidate study — not this pack.
 
@@ -42,19 +43,19 @@ If any expected date is `failed`, the pack is written but **must not** be presen
 | Path | Why read | Fact used for D3 |
 |------|----------|------------------|
 | `AGENTS.md` | Session rules | SurfaceRunner is canonical; inspect/plan before edits |
-| `docs/agenda/current_sprint.md` | Authorization | `ACTIVE — D0/D1/D2 COMPLETE; D3 AWAITING DESIGN`; D3 design only |
+| `docs/agenda/current_sprint.md` | Authorization | `ACTIVE — D0/D1/D2 COMPLETE; D3 DESIGN UNDER REVIEW`; design only |
 | `configs/sprint006_baseline_v1.json` | Frozen metrics + windows | Cross primary; dual views; report blocks; periods; `include_diagnostics=true` |
 | D0 plan §8.1 / §10 | Exact formulas | Conditional NaN vs calendar 0-fill; win rate; profit factor; Sharpe √52; no `robust_score` go/no-go |
 | D1 plan / `sprint006_baseline.py` | Output path | Twin mid/cross; overwrite refusal; receipt digests; D3 still listed as deferred |
 | D2 plan / `surface_runner.py` | Calendar authority | `date_status` partition; empty-signal `valid_no_trade`; `_assembly` dropped before persist |
 | `surface_metrics.py` | What exists today | Date summary from trade_log only; Sharpe on finite cycle dates; `robust_score` search heuristic |
-| `pipeline.py` S2–S5 | Candidate grain | S2 output = post-tail+CVG names; S3 keeps `structure_ok=False`; S5 exclusion vocabulary; settle uses `_assembly` |
-| `option_surface.py` / `src/core/models.py` | Leg economics | Fill via `buy_price`/`sell_price`; `entry_cost` signed cash; payoff = signed intrinsic; `Position.pnl = exit_value - entry_cost` |
+| `pipeline.py` S2–S5 | Candidate grain | S2 output = post-tail+CVG names; S3 keeps `structure_ok=False`; S5 exclusion vocabulary; settle uses `_assembly`; trade `quantity` is signed by strategy direction |
+| `option_surface.py` / `src/core/models.py` | Leg economics | Fill via `buy_price`/`sell_price`; `entry_cost` signed cash; payoff = signed intrinsic; iron-fly unit signs already encode long wings / short bodies; `Position.pnl = exit_value - entry_cost` |
 | `scripts/run_sprint006_baseline.py` | Command | One CLI; `--dry-run` does not execute; stdout is paths/row counts |
 | `tests/contract/test_run_metrics_contract.py` | Metric tests | Pins current S8 search metrics, not D0 dual views |
-| Git HEAD | Preconditions | `62bdf38`, `main`, working tree clean |
+| Git | Preconditions | Original D3 proposal `688c2a3`; D2 acceptance `62bdf38` |
 
-**Git state at design:** HEAD `62bdf38` (`docs(sprint006): accept D2 eligibility and coverage correctness`). No code changes and no economic execution for this design.
+**Git state at this revision:** design-only correction of `688c2a3`. No code changes and no economic execution.
 
 ---
 
@@ -71,7 +72,8 @@ If any expected date is `failed`, the pack is written but **must not** be presen
 | Side CAR splits | `long_cycle_*` / `short_cycle_*` on included rows |
 | Drawdown helper | `_compute_max_drawdown` on a simple-return series |
 | Fill model and settle | `FillAssumption`; `assembly.settle`; `pnl_total = abs(quantity) × pnl_per_share` |
-| Structure-failure raw text | `failure_reason` on `structure_ok=False` rows |
+| Signed trade quantity | `_signed_quantity`: long `+abs`, short `−abs`; S5 already scales P&L by `abs(quantity)` |
+| Structure-failure raw text | `failure_reason` on `structure_ok=False` rows (`metadata_error:…` prefix plus builder `ValueError`/`KeyError` text) |
 | Portfolio exclusion vocabulary | `no_tradeable_structure`, `max_names_cap`, `invalid_max_loss`, fair-share / no-short-credit codes |
 | Receipt + overwrite refusal | Adapter writes parquet/JSON with SHA-256; refuses existing run dir |
 
@@ -91,6 +93,7 @@ If any expected date is `failed`, the pack is written but **must not** be presen
 
 * Real-data smoke, manual sample, full-history execution, written conclusion → **D4**
 * Momentum IC / CVG increment / full-universe buckets → **out of scope** (selection-biased on this artifact)
+* Drop-ticker / drop-week counterfactuals → **out of scope** (not in D0; ambiguous calendar/capital semantics)
 * Sprint 007 study matrix → **out of scope**
 
 ---
@@ -100,12 +103,12 @@ If any expected date is `failed`, the pack is written but **must not** be presen
 | D3 requirement | Current capability | Action |
 |----------------|--------------------|--------|
 | Frozen dual-view decision report | Partial CAR on trade_log dates only | New evaluation functions joining `date_status` + `date_summary` + `trade_log` |
-| Cross primary / mid diagnostic | Twin runs exist | One report covering both; label roles |
+| Cross primary / mid diagnostic | Twin runs exist | One report covering both; label roles; mid-versus-cross as fill-assumption sensitivity |
 | Candidate diagnostic view | `trade_log` is the grain | Derive columns; do not re-select |
-| Leg log | Transient `_assembly` | Serialize before drop; no pricing change |
-| Funnel | Stages exist in the loop | Capture aggregates at those calls; do not reimplement ranking |
-| Compact robustness | Metric functions will exist | Two primary-cross exclusions; reuse the same calculators |
+| Leg log | Transient `_assembly` | Serialize before drop; scale portfolio qty by `abs(trade.quantity)`; no pricing change |
+| Funnel | Stages exist in the loop | Capture aggregates at those calls; null for unexecuted stages; do not reimplement ranking |
 | Completeness | `has_unresolved_failures` | Headline/report flag; block “complete result” presentation |
+| Broken traded-date economics | Not checked today | Abort report generation; do not drop or 0-fill the date |
 | Deterministic outputs + digests | Adapter pattern | Extend `write_run_outputs` / receipt; no new CLI |
 
 ---
@@ -136,7 +139,7 @@ existing artifacts (trade_log, date_summary, date_status, run_summary)
         │
         ▼
 sprint006_evaluation.build_decision_report(mid_result, cross_result, contract periods)
-        │
+        │  aborts if traded-date economics or leg/trade reconciliation fails
         ▼
 decision_report.json + decision_report.md
 receipt digests updated; D3 removed from deferred (D4 remains)
@@ -163,31 +166,51 @@ Filter `date_status.trade_date` and all joined rows to the window. **`date_statu
 * **Diagnostic view:** `sprint006_baseline_v1_mid`
 * Report both. Do not rank or select by `robust_score`.
 
-#### Completeness
+#### Completeness vs report-generation preconditions
 
-For each window × fill:
+Keep:
 
 ```text
 result_complete = (n_failed_dates == 0)
 has_unresolved_failures = (n_failed_dates > 0)
 ```
 
-Any unresolved failure **blocks Sprint 006 acceptance** and **blocks presenting that window as a complete result**. Still emit diagnostic counts and the incomplete banner. Do not 0-fill or drop `failed` dates to manufacture a complete series.
+Any unresolved `failed` date **blocks Sprint 006 acceptance** and **blocks presenting that window as a complete result**. Still emit diagnostic counts and the incomplete banner. Do not 0-fill or drop `failed` dates to manufacture a complete series.
+
+**Mandatory report-generation preconditions** (narrow; not a new status taxonomy). Before computing View A/B, win rate, profit factor, yearly, or attribution, `build_decision_report` must verify:
+
+1. Every `date_status=traded` date has **exactly one** matching `date_summary` row with:
+   * finite `cycle_pnl_total`
+   * **positive** finite `cycle_capital_at_risk` (the date-summary capital column; do not accept 0 or non-finite)
+   * finite `cycle_return_on_capital_at_risk`
+2. Every `date_status=valid_no_trade` date has **no** `trade_log` rows with `included_in_portfolio==True`.
+3. For every included constructable trade that has a leg log, the §4.4 identities hold.
+
+If any check fails, **abort report generation** with a clear error naming the date (and ticker/direction for leg mismatches). Do **not**:
+
+* drop the date from Sharpe/CAR
+* zero-fill a broken traded date
+* emit a quieter partial metric pack
+* flip `result_complete` as a substitute for aborting
+
+`result_complete` remains only “no failed dates.” Broken traded-date economics and failed leg/trade reconciliation are **implementation defects**, not extra date-status values.
+
+Do not add a generalized validator framework or additional completeness flags.
 
 #### View A — Conditional deployed-capital (traded dates only)
 
 Join `date_status` to `date_summary` on `trade_date`.
 
-* `traded`: `cycle_return_on_capital_at_risk = Σ pnl_total / Σ capital_at_risk_dollars` (already on `date_summary`; do not recompute trade PnL).
+* `traded`: `cycle_return_on_capital_at_risk = Σ pnl_total / Σ capital_at_risk_dollars` (already on `date_summary`; do not recompute trade PnL). After a successful report, **every** traded date in the window has finite CAR — do not filter to “finite only” as a way to skip broken rows.
 * `valid_no_trade`: **NaN**; **excluded** from mean, Sharpe, and drawdown.
 * `failed`: window is incomplete.
 
 Report:
 
 * `n_traded_dates`, `n_valid_no_trade_dates`, `n_failed_dates`, `n_expected_dates`
-* `mean_cycle_car` = mean of finite traded cycle returns
-* `annualized_sharpe` = mean/std(ddof=1)×√52 on that finite series; **NaN** if fewer than 2 finite points or std=0
-* `max_drawdown` on that finite series (existing helper; do **not** insert zeros for excluded dates)
+* `mean_cycle_car` = mean of traded cycle returns (all of them, after the precondition)
+* `annualized_sharpe` = mean/std(ddof=1)×√52 on that series; **NaN** if fewer than 2 traded dates or std=0
+* `max_drawdown` on that series (existing helper; do **not** insert zeros for excluded no-trade dates)
 
 Label every View A number **conditional on traded dates**.
 
@@ -212,9 +235,9 @@ If compounded ≤ −1, annualized_return is NaN (cannot raise a non-positive we
 
 #### Weekly outcomes (conditional traded book weeks)
 
-* **Win rate:** fraction of **finite traded** book-return weeks with `cycle_return_on_capital_at_risk > 0`. Do not treat NaN or 0-fill weeks as wins.
+* **Win rate:** fraction of **traded** book-return weeks with `cycle_return_on_capital_at_risk > 0`. After the precondition those returns are finite. Do not treat calendar 0-fill weeks as wins.
 * **No-trade frequency:** `n_valid_no_trade_dates / n_expected_dates` (separate; not mixed into win rate).
-* **Profit factor:** `sum(positive cycle_pnl_total) / abs(sum(negative cycle_pnl_total))` on traded dates with finite `cycle_pnl_total`. If denom=0 and numer>0 → `+Infinity`; if both 0 → NaN.
+* **Profit factor:** `sum(positive cycle_pnl_total) / abs(sum(negative cycle_pnl_total))` on traded dates. If denom=0 and numer>0 → `+Infinity`; if both 0 → NaN.
 
 JSON has no `Infinity`. Serialize finite numbers as JSON numbers; `+Infinity` as the string `"Infinity"`; NaN as JSON `null`. Do not reuse adapter `_jsonable`’s silent inf→null for this field.
 
@@ -232,32 +255,45 @@ On included rows in the window (conditional traded dates):
 
 Do not 0-fill a missing side into the other side’s attribution.
 
-#### Mid versus cross costs
+#### Mid versus cross fill-assumption sensitivity
 
-Align on `trade_date`:
+Relabel this block **Mid versus cross fill-assumption sensitivity**. It is **not** a pure transaction-cost attribution.
+
+Cross-minus-mid date-level CAR or P&L can include changes in:
+
+* Entry economics
+* Max loss and sizing
+* Portfolio inclusion
+* Potentially selected structures
+
+Keep the D0-required overlap and spread-cost diagnostics. Align on `trade_date`:
 
 * `n_dates_both_traded`, `n_dates_cross_only`, `n_dates_mid_only`
-* On **both-traded** dates: mean(cross CAR − mid CAR), mean(cross `cycle_pnl_total` − mid `cycle_pnl_total`)
+* On **both-traded** dates: mean(cross CAR − mid CAR), mean(cross `cycle_pnl_total` − mid `cycle_pnl_total`), labeled as fill-assumption deltas
 * Mean `spread_cost_ratio` and `leg_spread_to_credit_ratio` among included rows per fill (already on trade_log)
 * Candidate overlap: count of `(trade_date, ticker, direction)` included in both vs one fill only
 
 Disclose unmatched dates/candidates explicitly. Never silently inner-join away a fill’s unique dates.
 
+Do **not** add exact leg-signature matching or a more complex attribution system in D3.
+
 #### Concentration (primary window, primary fill = cross)
 
 Among included rows: ticker share of `sum(|pnl_total|)`. Report top five tickers, their shares, and the top-five sum share.
 
+This, plus yearly results, long/short attribution, and drawdown, is the D3 answer to stability and dominance. Do **not** add drop-highest-ticker or drop-best-week sensitivities.
+
 #### Activity / data
 
 * Average included names per **traded** date, overall and by side (`long_n_traded`, `short_n_traded` from `date_summary`)
-* Turnover: mean included names per **expected** date (0 on `valid_no_trade`)
-* Joint feature coverage: from funnel (below) — `n_feature_covered_dates / n_expected_dates`; mean jointly-eligible names on feature-covered dates
-* Structure-failure histogram: counts of `failure_reason` where `structure_ok==False` (raw strings; no new ontology)
+* Turnover: mean included names per **expected** date (0 on `valid_no_trade`, including missing-feature dates that did not construct a book)
+* Joint feature coverage: from funnel (below) — `n_feature_covered_dates / n_expected_dates`; mean jointly-eligible names over dates where that count is **not null**
+* Structure-failure counts: histogram of the §4.3 structure `reason_code` values (`metadata_error`, `missing_quotes_or_body`, `wing_or_liquidity_selection`, `other_structure`). Do **not** histogram full raw exception strings.
 * Date-class counts (repeat from `date_status`)
 
 #### Frozen limitations (verbatim intent)
 
-Hold-to-expiry; no earnings filter; below-nearest 0.15-delta wings; Tier A not integer lots; long-only fallback dates possible; mid is diagnostic only; `robust_score` is not a decision metric.
+Hold-to-expiry; no earnings filter; below-nearest 0.15-delta wings; Tier A not integer lots; long-only fallback dates possible; mid is a fill-assumption diagnostic, not a pure cost attribution; `robust_score` is not a decision metric.
 
 #### Output files (one pair per run directory, covering both fills)
 
@@ -266,7 +302,7 @@ Hold-to-expiry; no earnings filter; below-nearest 0.15-delta wings; Tier A not i
 | `decision_report.json` | Deterministic machine-readable pack |
 | `decision_report.md` | Compact human rendering of the same numbers |
 
-No charts, dashboards, or extra scores.
+No charts, dashboards, or extra scores. If report generation aborts, do not write these files as a successful D3 deliverable and do not publish a `sprint006_d3` receipt claiming a complete report.
 
 JSON skeleton (normative keys; omit invented extras):
 
@@ -277,21 +313,20 @@ windows: { full_history, primary }
 fills: { cross (primary), mid (diagnostic) }
 per fill × window:
   date_class_counts
-  view_a_conditional { mean_cycle_car, sharpe, drawdown, n_finite }
+  view_a_conditional { mean_cycle_car, sharpe, drawdown, n_traded }
   view_b_calendar { compounded, annualized_return, sharpe, drawdown }
   weekly { win_rate, profit_factor, no_trade_frequency }
   yearly[]
   long_short
   activity
-  structure_failure_histogram
+  structure_failure_counts
   funnel_totals
-cross_vs_mid { overlap counts, deltas, unmatched }
+fill_assumption_sensitivity { overlap counts, labeled deltas, unmatched }
 concentration_primary_cross_top5
-sensitivities_primary_cross { drop_top_ticker, drop_best_week }
 limitations[]
 ```
 
-Markdown is a short decision memo: incomplete banner (if any), headline table for both windows × both views on **cross**, then mid diagnostic, yearly, attribution, costs, concentration, sensitivities, activity/funnel, limitations. No narrative go/no-go sentence in D3 (that is D4).
+Markdown is a short decision memo: incomplete banner (if any), headline table for both windows × both views on **cross**, then mid diagnostic, yearly, attribution, fill-assumption sensitivity, concentration, activity/funnel, limitations. No narrative go/no-go sentence in D3 (that is D4).
 
 ### 4.3 Candidate-level diagnostic view
 
@@ -310,16 +345,16 @@ Derived columns (keep all identifying trade_log keys; do not duplicate the full 
 | `stage` | `traded` if included; else `structure_failed` if `structure_ok!=True`; else `portfolio_excluded` |
 | `reason_code` | Small normalized code (below); `null` when `stage=traded` |
 | `reason_raw` | `failure_reason` if `structure_failed` else `exclusion_reason` |
-| `outcome_status` | `available` if D4 can reconstruct this row’s fate from persisted artifacts; else `unavailable` |
+
+Do **not** add `outcome_status` or any replacement “availability” column. Explanation of a no-trade is already `reason_code` + `reason_raw`. Economic presence is already nullable P&L fields plus `decision_status`.
 
 **Date taxonomy stays separate.** A structure rejection or cap/sizing exclusion is a **candidate-level `no_trade`**, not a `failed` date. Dates with only such rows are `valid_no_trade` / `no_included_names` on `date_status`.
 
-**`reason_code` (closed set; no framework):**
+**`reason_code` for `stage=portfolio_excluded`** — existing S5 vocabulary, unchanged:
 
 | `reason_code` | When |
 |---------------|------|
-| `no_tradeable_structure` | `stage=structure_failed` |
-| `max_names_cap` | exclusion_reason that value |
+| `max_names_cap` | `exclusion_reason` that value |
 | `invalid_max_loss` | that value |
 | `premium_exceeds_fair_share` | that value |
 | `max_loss_exceeds_fair_share` | that value |
@@ -327,14 +362,20 @@ Derived columns (keep all identifying trade_log keys; do not duplicate the full 
 | `earnings_exclusion` | that value (unused on frozen earnings-off runs; still map if present) |
 | `other_exclusion` | any other non-null exclusion (should not occur; still observable) |
 
-Retain `reason_raw` so D4 sees the original `metadata_error:…` / builder exception text.
+**`reason_code` for `stage=structure_failed`** — small stable classification of existing S3 messages. Do **not** map every structure failure to `no_tradeable_structure` (that string remains the S5 `exclusion_reason` on those rows). Do **not** histogram the full raw exception, which embeds ticker, date, and numeric thresholds.
 
-**`outcome_status`:**
+Match the **stable prefix** of `failure_reason` (`reason_raw`):
 
-* `available` — (`stage=traded` and finite `pnl_total` and matching leg-log rows) **or** (`stage=structure_failed` and `reason_raw` present) **or** (`stage=portfolio_excluded` and `reason_raw` present)
-* `unavailable` — traded row missing settlement and/or legs; or any row missing the reason needed to explain a no-trade
+| `reason_code` | Current-code prefix / pattern |
+|---------------|-------------------------------|
+| `metadata_error` | starts with `metadata_error:` (S3 wrap of missing metadata or `surface_valid=False`) |
+| `missing_quotes_or_body` | starts with `No quote surface rows`, `No eligible quotes`, `Missing body call/put`, or `Missing tradeable body call/put` |
+| `wing_or_liquidity_selection` | starts with `No quotes with abs_delta` **or** `Iron fly spread_cost_ratio=` (threshold exceed after wing construction) |
+| `other_structure` | any other `structure_failed` `failure_reason` |
 
-**Combined mid/cross candidate file:** **do not** create a merged candidate parquet. Cost overlap lives in the report’s `cross_vs_mid` block (date and `(date, ticker, direction)` counts). Merging two fills into one candidate table invites false “same trade” identity. Per-run `candidate_view_<run_id>.parquet` is enough.
+This is prefix matching on messages already raised in `pipeline.py` S3 and `option_surface.py`. It is not a generalized error ontology. Retain `reason_raw` unchanged for D4.
+
+**Combined mid/cross candidate file:** **do not** create a merged candidate parquet. Overlap lives in the report’s fill-assumption-sensitivity block (date and `(date, ticker, direction)` counts). Merging two fills into one candidate table invites false “same trade” identity. Per-run `candidate_view_<run_id>.parquet` is enough.
 
 ### 4.4 Minimal leg log
 
@@ -349,6 +390,13 @@ Retain `reason_raw` so D4 sees the original `metadata_error:…` / builder excep
 
 Do not invent OCC ids, quote timestamps, or fees.
 
+S5 stores `trade.quantity` with **strategy direction** (`_signed_quantity`: short names are negative). Iron-fly `unit_quantity` (`OptionLeg.quantity`) **already** encodes long wings (+) and short bodies (−). Scaling by signed `trade.quantity` would reverse short-iron-fly legs. Use magnitude only:
+
+```text
+portfolio_quantity = abs(trade.quantity) * unit_quantity   # included; else null
+pnl_total_leg      = abs(trade.quantity) * pnl_per_unit    # included; else null
+```
+
 | Column | Source | Notes |
 |--------|--------|-------|
 | `run_id`, `fill_label` | config | |
@@ -361,12 +409,21 @@ Do not invent OCC ids, quote timestamps, or fees.
 | `bid`, `ask`, `mid` | quote | |
 | `fill_price` | `fill.buy_price` if unit_quantity>0 else `fill.sell_price` | same as `_build_strategy_entry_cost` |
 | `included_in_portfolio` | S5 | |
-| `portfolio_quantity` | `trade.quantity * unit_quantity` if included else **null** | no counterfactual size |
+| `portfolio_quantity` | `abs(trade.quantity) * unit_quantity` if included else **null** | no counterfactual size |
 | `exit_spot` | row | needed for intrinsic |
 | `expiry_payoff_per_unit` | `intrinsic(exit_spot) * unit_quantity` | signed unit payoff (exists for constructable rows) |
 | `entry_cash_per_unit` | `+fill_price * |unit_quantity|` if long else `−fill_price * |unit_quantity|` | matches assembly `entry_cost` sum |
 | `pnl_per_unit` | `expiry_payoff_per_unit - entry_cash_per_unit` | unit economics |
 | `pnl_total_leg` | `abs(trade.quantity) * pnl_per_unit` if included else **null** | only actual trades |
+
+An included short iron fly must retain unit and portfolio signs:
+
+```text
+long put wing      positive
+short put body     negative
+short call body    negative
+long call wing     positive
+```
 
 **Reconciliation (included trades; per ticker/date/direction):**
 
@@ -377,7 +434,7 @@ sum(pnl_per_unit)            = trade_log.pnl_per_share            = exit_value -
 sum(pnl_total_leg)           = trade_log.pnl_total                = abs(quantity) * pnl_per_share
 ```
 
-Tolerance: exact Decimal→float round-trip at 1e-8 relative or 1e-6 absolute, whichever is larger. Fail the D3 report completeness check (and the unit test) on mismatch — do not silently skip.
+Tolerance: exact Decimal→float round-trip at 1e-8 relative or 1e-6 absolute, whichever is larger. Mismatch **aborts report generation** (implementation defect). It does not change `result_complete`.
 
 Non-included constructable rows still get unit entry/payoff (needed to see whether a cap-excluded name was economically well-formed) but **null** `portfolio_quantity` and `pnl_total_leg`.
 
@@ -388,47 +445,52 @@ Non-included constructable rows still get unit entry/payoff (needed to see wheth
 | Count | Definition | Source (existing boundary) | Long/short split? |
 |-------|------------|----------------------------|-------------------|
 | `n_expected` | 1 | `date_status` row | no |
-| `n_feature_covered` | 1 iff date ∈ feature date set | already computed in runner | no |
-| `n_universe` | S1 tickers | `len(universe)` after `_step1_universe` | no |
-| `n_jointly_eligible` | universe ∩ feature row, finite mom+cvg, both counts ≥ `required_count` | **same filter S2 already applies before ranking** — extract a shared helper used by S2 and this count | no (pre-direction) |
-| `n_post_signal` | S2 output rows | `len(signals)` | yes |
-| `n_constructable` | `structure_ok==True` | S3/S5 frame | yes |
-| `n_included` | `included_in_portfolio==True` | S5 | yes |
+| `n_feature_covered` | 1 iff date ∈ feature date set else 0 | already computed in runner | no |
+| `n_universe` | S1 tickers, or **null** if S1 not run | `len(universe)` after `_step1_universe` | no |
+| `n_jointly_eligible` | universe ∩ feature row, finite mom+cvg, both counts ≥ `required_count`, or **null** if S2 not run | **same filter S2 already applies before ranking** — extract a shared helper used by S2 and this count | no (pre-direction) |
+| `n_post_signal` | S2 output rows, or **null** if S2 not run | `len(signals)` | yes, when evaluated |
+| `n_constructable` | `structure_ok==True`, or **null** if S3 not run | S3/S5 frame | yes, when evaluated |
+| `n_included` | `included_in_portfolio==True`, or **null** if S5 not run | S5 | yes, when evaluated |
 | `date_status`, `date_reason` | D2 taxonomy | `date_status` | no |
 
-On `missing_features` dates: all name counts 0; do not call S1/S2 (today’s fail-fast path already skips processing). On `empty_signals`: `n_post_signal=0` after S2; later name counts 0.
+**Null vs zero.** Zero means the stage **ran** and no names survived. Null means the stage was **not evaluated**.
+
+Missing-feature dates (today’s fail-fast skip of S1–S5):
+
+```text
+n_expected = 1
+n_feature_covered = 0
+n_universe = n_jointly_eligible = n_post_signal = n_constructable = n_included = null
+```
+
+Evaluated `empty_signals` dates (S2 ran, produced no names):
+
+```text
+n_post_signal = 0
+n_constructable = 0
+n_included = 0
+```
+
+`n_universe` / `n_jointly_eligible` remain whatever S1/S2 actually counted on that date (typically ≥ 0, not null).
 
 **Coverage denominator:** `n_expected_dates` in the reporting window from `date_status`.
 
-**Joint coverage rate:** `n_feature_covered_dates / n_expected_dates`. Mean jointly-eligible names is a **conditional** mean over feature-covered dates, labeled as such.
+**Joint coverage rate:** `n_feature_covered_dates / n_expected_dates`. Funnel **averages exclude null/unexecuted values**; they must not treat missing-feature nulls as zeros. Mean jointly-eligible names is a labeled mean over dates where `n_jointly_eligible` is not null.
 
-**Do not** re-read features in the evaluation module to recount eligibility. The runner captures the integers; D3 only sums them.
+**Do not** re-read features in the evaluation module to recount eligibility. The runner captures the integers (and nulls); D3 only sums/averages them.
 
-**Shared helper (narrow):** pull S2’s pre-rank filter into something like `eligible_feature_cross_section(...)` returning the filtered slice. `step2_score_signals` ranks that slice unchanged. Funnel uses `len(slice)`. This is not a second eligibility implementation.
+**Shared helper (narrow):** pull S2’s pre-rank filter into something like `eligible_feature_cross_section(...)` returning the filtered slice. `step2_score_signals` ranks that slice unchanged. Funnel uses `len(slice)` when S2 ran. This is not a second eligibility implementation.
 
 **Selection-bias notice (must appear on funnel and candidate view):** “post-signal candidate” means already in the Momentum tail and kept by the within-side CVG filter. These counts cannot support full-universe Momentum IC or CVG increment tests.
 
-### 4.6 Small robustness addition (recommend include)
-
-On **primary window, primary fill (cross), complete result only**:
-
-1. Drop the ticker with largest `sum(|pnl_total|)` among included rows (tie: ticker ascending).
-2. Drop the traded date with largest `cycle_pnl_total` (tie: earliest date).
-
-Recompute **only**: View A mean cycle CAR + Sharpe + drawdown; View B compounded + annualized + Sharpe + drawdown; `n_traded_dates` remaining. Four-row table: baseline, drop-ticker, drop-week, and the dropped identity.
-
-**Why cheap:** same evaluation functions on a filtered frame. **Why useful:** tells whether headline CAR/Sharpe is a one-name or one-week artifact without Sprint 007 infrastructure.
-
-Do **not** compute these if `result_complete` is false. Do not add best-month/year, bootstrap, or rolling regimes.
-
-### 4.7 Integration with adapter / receipt
+### 4.6 Integration with adapter / receipt
 
 Extend `write_run_outputs` per `run_id`:
 
 * existing: `trade_log_`, `date_summary_`, `date_status_`, `run_summary_`
 * new: `candidate_view_`, `leg_log_`, `funnel_summary_`
 
-Once per run directory (after both fills):
+Once per run directory (after both fills, and only if `build_decision_report` succeeds):
 
 * `decision_report.json`, `decision_report.md`
 
@@ -451,8 +513,11 @@ Do not redesign overwrite policy, output-dir location rules, twin orchestration,
 | New report CLI | Rejected: D0/D1 already require one documented command |
 | Offline D3 from parquet only (no runner change) | Rejected for legs/funnel: `_assembly` is already gone; jointly-eligible counts are not in trade_log |
 | Merged mid/cross candidate parquet | Rejected: identity hazards; overlap belongs in the report |
-| Catch-all reason taxonomy | Rejected: closed `reason_code` + raw text is enough |
-| Defer drop-ticker / drop-week | Not chosen: cost is a filter + existing calculators; semantics are unambiguous with the stated tie-breaks |
+| Histogram raw `failure_reason` strings | Rejected: ticker/date/numeric fragments explode into one-off buckets |
+| Map every structure failure to `no_tradeable_structure` | Rejected: hides metadata vs quotes vs wing-selection |
+| `outcome_status` available/unavailable | Rejected: a reason string is not an economic outcome |
+| Drop-highest-\|PnL\| ticker / drop-best-week | Rejected: not in D0; counterfactual calendar and capital semantics are ambiguous |
+| Exact mid/cross leg-signature attribution | Rejected: D3 keeps overlap counts; a fuller attribution system is out of scope |
 
 ---
 
@@ -461,12 +526,12 @@ Do not redesign overwrite policy, output-dir location rules, twin orchestration,
 | File | Change |
 |------|--------|
 | `src/backtest/pipeline.py` | Extract pre-rank eligible slice helper; S2 calls it (behavior-preserving) |
-| `src/backtest/surface_runner.py` | Capture funnel counts; serialize legs before `_assembly` drop; attach frames to `SurfaceRunResult` |
-| `src/backtest/sprint006_evaluation.py` (**new**) | Dual-view metrics, candidate derivation, report JSON/MD, sensitivities, completeness |
-| `src/backtest/sprint006_baseline.py` | Persist new artifacts; build report after both runs; receipt/deferred updates |
-| `tests/unit/test_sprint006_evaluation.py` (**new**) | View A/B NaN vs 0; win rate; profit factor Infinity; window filter; overlap disclosure; sensitivities |
-| `tests/unit/test_sprint006_leg_log.py` (**new** or fold into evaluation tests) | Leg/trade reconciliation; no legs for structure_failed; null portfolio qty when excluded |
-| Existing runner / orchestration / adapter tests | Funnel counts; new output names; receipt keys; empty-signal funnel |
+| `src/backtest/surface_runner.py` | Capture funnel counts (null when unexecuted); serialize legs before `_assembly` drop; attach frames to `SurfaceRunResult` |
+| `src/backtest/sprint006_evaluation.py` (**new**) | Dual-view metrics, candidate derivation, report JSON/MD, traded-date preconditions, structure `reason_code` mapping |
+| `src/backtest/sprint006_baseline.py` | Persist new artifacts; build report after both runs; abort without a misleading report file; receipt/deferred updates |
+| `tests/unit/test_sprint006_evaluation.py` (**new**) | View A/B NaN vs 0; win rate; profit factor Infinity; window filter; overlap disclosure; abort on broken traded dates; funnel null vs zero |
+| `tests/unit/test_sprint006_leg_log.py` (**new** or fold into evaluation tests) | Leg/trade reconciliation; short-iron-fly sign preservation; no legs for structure_failed; null portfolio qty when excluded |
+| Existing runner / orchestration / adapter tests | Funnel counts; new output names; receipt keys; empty-signal and missing-feature funnel |
 | `docs/surface_engine_data_contract.md` | Minimal pointer that D3 report uses `date_status` as calendar (optional, with implementation) |
 | **Do not edit** | `configs/sprint006_baseline_v1.json`; iron-condor; `surface_search.py`; D4 execution; frozen thresholds |
 
@@ -480,17 +545,21 @@ Approximate effort: inside the 12–18h review trigger if scope stays as above.
 
 1. View A: `valid_no_trade` excluded (NaN, not 0) from Sharpe/drawdown/mean.
 2. View B: same date contributes 0; compounded matches hand Π(1+r)−1.
-3. Failed date in window → `result_complete=false`; View B not presented as complete.
-4. `ceil`/`joint` funnel: jointly-eligible count matches helper; post-signal count ≤ jointly-eligible.
-5. Empty S2 → `date_status=valid_no_trade/empty_signals`, funnel `n_post_signal=0`, no candidate rows.
-6. Structure fail → candidate `stage=structure_failed`, `decision_status=no_trade`, no leg rows, date may still be `valid_no_trade`.
-7. Cap exclusion → `stage=portfolio_excluded`, legs present with null `pnl_total_leg`.
-8. Included iron fly: four legs; unit sums match `entry_cost_per_share`, payoff, `pnl_per_share`, `pnl_total`.
-9. Win rate ignores 0-fill weeks; profit factor `"Infinity"` when no losses.
-10. Mid/cross overlap: unmatched dates listed, not dropped.
-11. Top-5 |PnL| shares sum to ≤ 1; drop-ticker / drop-week identities deterministic on a tie.
-12. Adapter writes pinned schemas; receipt lists new files; deferred is D4 only.
-13. Regression: existing S2, S5, orchestration, runner, option_surface, adapter, S8 search-metric tests still pass (`robust_score` path untouched).
+3. Failed date in window → `result_complete=false`; View B not presented as complete; report still generates **if** traded-date preconditions hold.
+4. `traded` date missing `date_summary`, or with non-finite PnL/CAR, or with non-positive capital → **abort**; the date is not dropped and no partial metric pack is written.
+5. `valid_no_trade` date with an included portfolio row → **abort**.
+6. `ceil`/`joint` funnel: jointly-eligible count matches helper; post-signal count ≤ jointly-eligible when both are non-null.
+7. Missing-feature date: `n_feature_covered=0`; `n_universe`…`n_included` are null; funnel averages exclude those nulls.
+8. Empty S2 → `date_status=valid_no_trade/empty_signals`, funnel `n_post_signal=0` (and downstream zeros), no candidate rows.
+9. Structure fail → candidate `stage=structure_failed`, `decision_status=no_trade`, `reason_code` one of the four structure classes, `reason_raw` retained, no leg rows; date may still be `valid_no_trade`.
+10. Cap exclusion → `stage=portfolio_excluded`, existing exclusion `reason_code`, legs present with null `pnl_total_leg`.
+11. Included short iron fly: four legs; `unit_quantity` and `portfolio_quantity` signs are `+ − − +`; `portfolio_quantity = abs(trade.quantity) * unit_quantity`; unit sums match `entry_cost_per_share`, payoff, `pnl_per_share`, `pnl_total`.
+12. Leg/trade mismatch → abort report generation; `result_complete` is not used as the signal.
+13. Win rate ignores calendar 0-fill weeks; profit factor `"Infinity"` when no losses.
+14. Mid/cross fill-assumption sensitivity: unmatched dates listed, not dropped; block is labeled as fill-assumption, not pure cost.
+15. Top-5 \|PnL\| shares sum to ≤ 1.
+16. Adapter writes pinned schemas; receipt lists new files; deferred is D4 only.
+17. Regression: existing S2, S5, orchestration, runner, option_surface, adapter, S8 search-metric tests still pass (`robust_score` path untouched).
 
 **Forbidden in D3 validation:** accepted real-data run; reading aggregate P&L from snapshot/derived artifacts; proving real-data `failed` count is zero.
 
@@ -499,9 +568,9 @@ Approximate effort: inside the 12–18h review trigger if scope stays as above.
 ## 8. Ordered implementation steps
 
 1. Accept this plan.
-2. **Commit 1:** `sprint006_evaluation.py` dual-view calculators + tests on synthetic date_status/date_summary/trade_log. No runner change.
-3. **Commit 2:** eligible-slice helper; runner funnel + leg serialization; reconciliation tests. Economics of S2/S5 unchanged (diff S2 only by helper extraction).
-4. **Commit 3:** adapter persistence, JSON/MD report, receipt, candidate_view derivation, sensitivities, deferred-list, optional data-contract sentence.
+2. **Commit 1:** `sprint006_evaluation.py` dual-view calculators, traded-date preconditions, and tests on synthetic date_status/date_summary/trade_log. No runner change.
+3. **Commit 2:** eligible-slice helper; runner funnel (null vs zero) + leg serialization (`abs(trade.quantity)` scaling); short-iron-fly sign and reconciliation tests. Economics of S2/S5 unchanged (diff S2 only by helper extraction).
+4. **Commit 3:** adapter persistence, JSON/MD report, receipt, candidate_view derivation (no `outcome_status`), structure `reason_code` mapping, deferred-list, optional data-contract sentence.
 5. Focused pytest subset; stop. Do not start D4 or real-data P&L.
 
 ---
@@ -513,25 +582,27 @@ Approximate effort: inside the 12–18h review trigger if scope stays as above.
 - [ ] Plain-language summary approved
 - [ ] Frozen D0 formulas/windows/fills unchanged
 - [ ] Candidate vs date taxonomies separated; post-signal grain explicit
-- [ ] Leg log limited to real fields + stated reconciliations
-- [ ] Funnel counts sourced from existing boundaries
-- [ ] Drop-ticker / drop-week included as compact primary-cross sensitivities
+- [ ] Leg log uses `abs(trade.quantity) * unit_quantity`; short-iron-fly signs specified
+- [ ] Funnel null vs zero specified; averages skip unexecuted stages
+- [ ] Traded-date economic preconditions abort rather than drop dates
+- [ ] No `outcome_status`; no drop-ticker / drop-week sensitivities
 - [ ] D4 / Sprint 007 / real-data execution not authorized
 
 ### D3 implementation acceptance (after coding)
 
 - [ ] One documented command still runs both fills through `run_single_config` and writes the report pack
 - [ ] `date_status` is the calendar; failed dates block complete presentation
+- [ ] Broken traded-date economics abort report generation
 - [ ] View A NaN vs View B 0 implemented and tested
-- [ ] Cross/mid overlap disclosed
-- [ ] Candidate view derived only from `trade_log`
-- [ ] Leg/trade identities reconcile on included synthetic trades
-- [ ] Funnel does not reimplement ranking/CVG tails
+- [ ] Mid/cross block labeled as fill-assumption sensitivity; overlap disclosed
+- [ ] Candidate view derived only from `trade_log`; no `outcome_status`
+- [ ] Leg/trade identities reconcile on included synthetic trades; short iron fly keeps `+ − − +`
+- [ ] Funnel does not reimplement ranking/CVG tails; missing-feature counts are null
 - [ ] New files digested in the receipt
 - [ ] Frozen JSON untouched; no real-data P&L inspection
 - [ ] Focused tests green
 
-**Stop** when that evidence exists. Pause if work expands into dashboards, full-universe signal research, a second runner, or the 12–18h review trigger without a remaining D3 blocker.
+**Stop** when that evidence exists. Pause if work expands into dashboards, full-universe signal research, a second runner, drop-ticker/week counterfactuals, or the 12–18h review trigger without a remaining D3 blocker.
 
 ---
 
@@ -539,16 +610,18 @@ Approximate effort: inside the 12–18h review trigger if scope stays as above.
 
 * Full-universe Momentum buckets, rank IC, or Momentum×CVG outcome grids
 * Candidates rejected before Momentum-tail / CVG filters
-* Counterfactual portfolio P&L or sizing
+* Counterfactual portfolio P&L or sizing, including drop-highest-ticker and drop-best-week
 * Parameter search or improvement recommendations
 * New fees, commissions, or fill assumptions
+* Exact mid/cross leg-signature matching or a cost-attribution system
 * Regime models, ML, charts, dashboards
 * Numeric profitability thresholds or go/no-go from `robust_score`
+* `outcome_status` or another availability abstraction
+* Generalized error ontologies or validator/preflight frameworks
 * Real-data economic execution and written conclusion (**D4**)
 * Sprint 007 robustness / candidate studies
 * Iron-condor, `SurfaceSearch`, frozen JSON edits, unrelated refactors
 * Catch-and-continue for unexpected exceptions (D2 fail-fast stands)
-* Generalized schema/validator/preflight frameworks
 
 ---
 
@@ -558,13 +631,17 @@ Approximate effort: inside the 12–18h review trigger if scope stays as above.
 |-----------|-------------------|---------------------------|
 | Calendar = `date_status` | Silent date loss in Sharpe/CAR | One join; D2 already built the table |
 | `result_complete` requires zero failed dates | Presenting an incomplete backtest as trusted | One flag already on the run |
+| Abort if a `traded` date lacks finite positive-capital economics | Silently dropping broken traded dates from performance | Narrow precondition; no new status enum |
+| Abort if `valid_no_trade` has included rows | Calendar 0-fill hiding real trades | One inclusion check |
 | View A NaN vs View B 0 | Misleading Sharpe from mixing no-trade with zeros or dropping zeros from calendar | Frozen D0 rule; cheap to test |
-| Mid/cross overlap counts | Cost delta computed on a silent inner join | Small counter |
-| Leg/trade sum checks | Wrong fill/payoff serialization that D4 would hand-check blindly | Local equality on included rows |
+| Mid/cross overlap counts | Fill-assumption delta computed on a silent inner join | Small counter |
+| Leg/trade sum checks abort the report | Wrong fill/payoff serialization that D4 would hand-check blindly | Local equality on included rows |
+| `portfolio_quantity = abs(trade.quantity) * unit_quantity` | Reversed short-iron-fly wings/bodies | Matches S5’s existing `abs(quantity)` P&L scale |
+| Funnel null vs zero | Averaging unexecuted stages as if they produced no names | Capture at existing skip boundaries |
 | Receipt digests for new files | Unreproducible diagnostic tables | Existing adapter pattern |
 | No stdout economic metrics | D3 implementation accidentally becoming P&L inspection | Keep D1 print contract |
 
-Omit: extra preflight, schema registries, retry/publication systems, generalized diagnostic ontologies.
+Omit: extra preflight, schema registries, retry/publication systems, generalized diagnostic ontologies, drop-ticker/week machinery.
 
 ---
 
@@ -572,9 +649,9 @@ Omit: extra preflight, schema registries, retry/publication systems, generalized
 
 **Three commits**, matching the natural review boundaries:
 
-1. Evaluation calculations and tests (no engine change).
-2. Leg-log extraction, funnel counts, S2 helper extract, reconciliation tests.
-3. Report files, adapter/receipt, documentation.
+1. Evaluation calculations, traded-date preconditions, and tests (no engine change).
+2. Leg-log extraction (`abs(trade.quantity)`), funnel counts with null vs zero, S2 helper extract, reconciliation and short-iron-fly sign tests.
+3. Report files, adapter/receipt, candidate view without `outcome_status`, documentation.
 
 Do not squash into one commit: commit 1 is independently reviewable without touching settle/assembly.
 
@@ -586,4 +663,4 @@ This design does not authorize running accepted snapshot/derived artifacts throu
 
 ---
 
-**End of proposed D3 design.** Implementation requires acceptance of this plan. No D3 code, frozen-config, or economic execution is authorized by drafting this document alone.
+**End of proposed D3 design.** Implementation requires acceptance of this plan. No D3 code, frozen-config, or economic execution is authorized by drafting or correcting this document alone.
