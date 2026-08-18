@@ -3,7 +3,7 @@
 **Status:** `PROPOSED — AWAITING ACCEPTANCE`
 **Mode:** Build (this document is **design only**; D3 implementation is not authorized until this plan is accepted)
 **Original proposal:** `688c2a3` (`docs: propose Sprint 006 D3 decision diagnostic report plan`)
-**This revision:** design-only correction of `688c2a3`; implementation still not authorized
+**This revision:** design-only correction of `688c2a3` (including follow-ups `22611ef` and this gap close); implementation still not authorized
 **Confirmed ancestors:** D2 acceptance `62bdf38`; D2 implementation `9224068`; D1 `241b0d3` + `c6b1735`
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (unchanged; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
@@ -25,10 +25,11 @@
 * Yearly splits, long/short attribution, drawdown, top-five ticker share of absolute P&L, activity, coverage, and a small structure-failure classification.
 * A fill-assumption sensitivity block comparing mid and cross, with required overlap counts and mean spread-cost diagnostics. Cross-minus-mid is **not** a pure transaction-cost number: fills can also change sizing, inclusion, and selected structures.
 * A candidate table that says, for each post-signal name, whether it traded, failed structure construction, or was excluded by portfolio rules — without treating those as failed dates.
-* A leg log that lets D4 check fills, strikes, expiry payoff, and P&L arithmetic on included trades, with short-iron-fly wing/body signs preserved.
-* A funnel that counts how many names survive each existing pipeline stage. Zero means the stage ran and nobody survived; null means the stage was not evaluated (for example, missing-feature dates).
+* A leg log that lets D4 check fills, strikes, expiry payoff, and P&L arithmetic on included trades, with short-iron-fly wing/body signs preserved. Every included straddle has exactly two matching legs and every included iron fly has exactly four. Missing, incomplete, duplicate, or unexpected leg rows abort report generation.
+* A funnel that counts how many names survive each existing pipeline stage. Zero means the stage ran and nobody survived; null means the stage was not evaluated (for example, `failed` / `missing_features` dates).
+* Turnover that treats `valid_no_trade` as zero selected names. Failed dates, including `missing_features`, are not economic no-trades and block a complete turnover result.
 
-If any expected date is `failed`, the pack is written but **must not** be presented as a complete result. If a date classified as `traded` has broken or missing economics, or if included-trade legs fail to reconcile, report generation **aborts** — it does not drop the date or publish a quieter partial metric.
+If any expected date is `failed`, the pack is written but **must not** be presented as a complete result — including turnover. If a date classified as `traded` has broken or missing economics, or if any included trade has missing, incomplete, duplicate, or unexpected legs, or if entry/payoff/P&L identities fail to reconcile, report generation **aborts** — it does not drop the date or publish a quieter partial metric.
 
 **What D3 will not answer.** It will not say whether Momentum ranks the full PIT universe, whether CVG adds incremental predictive value, or whether a different parameter set would be better. The persisted candidates have already passed the Momentum-tail and CVG filters, so those questions would be selection-biased. D3 does not run the accepted real dataset, does not inspect live P&L during this design, does not declare a go/no-go from a numeric threshold, and does not compute drop-a-ticker or drop-a-week counterfactuals.
 
@@ -105,9 +106,9 @@ If any expected date is `failed`, the pack is written but **must not** be presen
 | Frozen dual-view decision report | Partial CAR on trade_log dates only | New evaluation functions joining `date_status` + `date_summary` + `trade_log` |
 | Cross primary / mid diagnostic | Twin runs exist | One report covering both; label roles; mid-versus-cross as fill-assumption sensitivity |
 | Candidate diagnostic view | `trade_log` is the grain | Derive columns; do not re-select |
-| Leg log | Transient `_assembly` | Serialize before drop; scale portfolio qty by `abs(trade.quantity)`; no pricing change |
+| Leg log | Transient `_assembly` | Serialize before drop; scale portfolio qty by `abs(trade.quantity)`; require 2/4 matching legs on every included trade; abort on missing/incomplete/duplicate/unexpected rows |
 | Funnel | Stages exist in the loop | Capture aggregates at those calls; null for unexecuted stages; do not reimplement ranking |
-| Completeness | `has_unresolved_failures` | Headline/report flag; block “complete result” presentation |
+| Completeness | `has_unresolved_failures` | Headline/report flag; block “complete result” presentation (including turnover) |
 | Broken traded-date economics | Not checked today | Abort report generation; do not drop or 0-fill the date |
 | Deterministic outputs + digests | Adapter pattern | Extend `write_run_outputs` / receipt; no new CLI |
 
@@ -139,7 +140,8 @@ existing artifacts (trade_log, date_summary, date_status, run_summary)
         │
         ▼
 sprint006_evaluation.build_decision_report(mid_result, cross_result, contract periods)
-        │  aborts if traded-date economics or leg/trade reconciliation fails
+        │  aborts if traded-date economics fail, included-trade legs are
+        │  missing/incomplete/duplicate/unexpected, or identities fail to reconcile
         ▼
 decision_report.json + decision_report.md
 receipt digests updated; D3 removed from deferred (D4 remains)
@@ -184,7 +186,7 @@ Any unresolved `failed` date **blocks Sprint 006 acceptance** and **blocks prese
    * **positive** finite `cycle_capital_at_risk` (the date-summary capital column; do not accept 0 or non-finite)
    * finite `cycle_return_on_capital_at_risk`
 2. Every `date_status=valid_no_trade` date has **no** `trade_log` rows with `included_in_portfolio==True`.
-3. For every included constructable trade that has a leg log, the §4.4 identities hold.
+3. Every included trade satisfies the §4.4 leg-log completeness and identity checks (no optional subset).
 
 If any check fails, **abort report generation** with a clear error naming the date (and ticker/direction for leg mismatches). Do **not**:
 
@@ -193,7 +195,7 @@ If any check fails, **abort report generation** with a clear error naming the da
 * emit a quieter partial metric pack
 * flip `result_complete` as a substitute for aborting
 
-`result_complete` remains only “no failed dates.” Broken traded-date economics and failed leg/trade reconciliation are **implementation defects**, not extra date-status values.
+`result_complete` remains only “no failed dates.” Broken traded-date economics and failed included-trade leg completeness/reconciliation are **implementation defects**, not extra date-status values.
 
 Do not add a generalized validator framework or additional completeness flags.
 
@@ -286,7 +288,11 @@ This, plus yearly results, long/short attribution, and drawdown, is the D3 answe
 #### Activity / data
 
 * Average included names per **traded** date, overall and by side (`long_n_traded`, `short_n_traded` from `date_summary`)
-* Turnover: mean included names per **expected** date (0 on `valid_no_trade`, including missing-feature dates that did not construct a book)
+* Turnover (complete only when `result_complete`):
+  * `traded` dates contribute that date’s included-name count
+  * `valid_no_trade` dates contribute **zero** selected names
+  * `failed` dates, including `missing_features`, are **not** economic no-trades and **must not** be entered as zero (or any other turnover contribution)
+  * If any date in the window is `failed`, do **not** present a complete turnover result; diagnostic traded/`valid_no_trade` counts may still be shown, labeled incomplete
 * Joint feature coverage: from funnel (below) — `n_feature_covered_dates / n_expected_dates`; mean jointly-eligible names over dates where that count is **not null**
 * Structure-failure counts: histogram of the §4.3 structure `reason_code` values (`metadata_error`, `missing_quotes_or_body`, `wing_or_liquidity_selection`, `other_structure`). Do **not** histogram full raw exception strings.
 * Date-class counts (repeat from `date_status`)
@@ -381,7 +387,19 @@ This is prefix matching on messages already raised in `pipeline.py` S3 and `opti
 
 **When to capture:** in `run_single_config`, after S5, **before** dropping `_assembly`. Economic path unchanged.
 
-**Who appears:** constructable post-signal candidates only (`structure_ok==True` and `_assembly` present). Structure failures have no legs — they stay on the candidate view with `stage=structure_failed`.
+**Who appears:** constructable post-signal candidates (`structure_ok==True` and `_assembly` present). Structure failures have no legs — they stay on the candidate view with `stage=structure_failed`. Non-included constructable rows may still be serialized (unit economics only).
+
+**Included-trade completeness (mandatory; not optional).** Every `included_in_portfolio==True` trade must:
+
+* Have `structure_ok==True`. An included row that is not constructable **aborts** report generation.
+* Have matching leg-log rows keyed by `(run_id, fill_label, trade_date, ticker, direction)`:
+  * included straddle (`instrument_type` `long_straddle` or `short_straddle`): **exactly 2** rows, `leg_index` `{0,1}`
+  * included iron fly (`instrument_type` `iron_fly`): **exactly 4** rows, `leg_index` `{0,1,2,3}`
+* Abort on **missing** (zero matching rows), **incomplete** (fewer than required, or missing `leg_index` values), **duplicate** (repeated `leg_index` or extra copies of the same key), or **unexpected** (wrong count for the instrument, extra unmatched included-trade keys, or any included instrument other than straddle/iron fly).
+
+Do not skip an included trade because it “has no leg log.” There is no such exemption.
+
+Then all §4.4 entry, payoff, and P&L identities must reconcile for **every** included trade. Failure **aborts** report generation. This is direct equality checking, not a generalized validation framework.
 
 **Deterministic `leg_index`:** `enumerate(strategy.legs)` as already built:
 
@@ -434,7 +452,7 @@ sum(pnl_per_unit)            = trade_log.pnl_per_share            = exit_value -
 sum(pnl_total_leg)           = trade_log.pnl_total                = abs(quantity) * pnl_per_share
 ```
 
-Tolerance: exact Decimal→float round-trip at 1e-8 relative or 1e-6 absolute, whichever is larger. Mismatch **aborts report generation** (implementation defect). It does not change `result_complete`.
+Tolerance: exact Decimal→float round-trip at 1e-8 relative or 1e-6 absolute, whichever is larger. Missing/incomplete/duplicate/unexpected included-trade legs, or identity mismatch, **aborts report generation** (implementation defect). It does not change `result_complete`.
 
 Non-included constructable rows still get unit entry/payoff (needed to see whether a cap-excluded name was economically well-formed) but **null** `portfolio_quantity` and `pnl_total_leg`.
 
@@ -455,7 +473,7 @@ Non-included constructable rows still get unit entry/payoff (needed to see wheth
 
 **Null vs zero.** Zero means the stage **ran** and no names survived. Null means the stage was **not evaluated**.
 
-Missing-feature dates (today’s fail-fast skip of S1–S5):
+Missing-feature dates (`date_status=failed`, `reason=missing_features`; today’s fail-fast skip of S1–S5). These are **failed** dates, not `valid_no_trade`:
 
 ```text
 n_expected = 1
@@ -475,7 +493,7 @@ n_included = 0
 
 **Coverage denominator:** `n_expected_dates` in the reporting window from `date_status`.
 
-**Joint coverage rate:** `n_feature_covered_dates / n_expected_dates`. Funnel **averages exclude null/unexecuted values**; they must not treat missing-feature nulls as zeros. Mean jointly-eligible names is a labeled mean over dates where `n_jointly_eligible` is not null.
+**Joint coverage rate:** `n_feature_covered_dates / n_expected_dates`. Funnel **averages exclude null/unexecuted values**; they must not treat `failed` / `missing_features` nulls as zeros. Mean jointly-eligible names is a labeled mean over dates where `n_jointly_eligible` is not null. Funnel nulls on failed dates are coverage diagnostics; they are not turnover zeros.
 
 **Do not** re-read features in the evaluation module to recount eligibility. The runner captures the integers (and nulls); D3 only sums/averages them.
 
@@ -529,8 +547,8 @@ Do not redesign overwrite policy, output-dir location rules, twin orchestration,
 | `src/backtest/surface_runner.py` | Capture funnel counts (null when unexecuted); serialize legs before `_assembly` drop; attach frames to `SurfaceRunResult` |
 | `src/backtest/sprint006_evaluation.py` (**new**) | Dual-view metrics, candidate derivation, report JSON/MD, traded-date preconditions, structure `reason_code` mapping |
 | `src/backtest/sprint006_baseline.py` | Persist new artifacts; build report after both runs; abort without a misleading report file; receipt/deferred updates |
-| `tests/unit/test_sprint006_evaluation.py` (**new**) | View A/B NaN vs 0; win rate; profit factor Infinity; window filter; overlap disclosure; abort on broken traded dates; funnel null vs zero |
-| `tests/unit/test_sprint006_leg_log.py` (**new** or fold into evaluation tests) | Leg/trade reconciliation; short-iron-fly sign preservation; no legs for structure_failed; null portfolio qty when excluded |
+| `tests/unit/test_sprint006_evaluation.py` (**new**) | View A/B NaN vs 0; win rate; profit factor Infinity; window filter; overlap disclosure; abort on broken traded dates; funnel null vs zero; turnover 0 only on `valid_no_trade`; incomplete turnover when any date is `failed` |
+| `tests/unit/test_sprint006_leg_log.py` (**new** or fold into evaluation tests) | Leg/trade reconciliation; short-iron-fly sign preservation; abort on zero/incomplete/duplicate/unexpected included-trade legs; no legs for structure_failed; null portfolio qty when excluded |
 | Existing runner / orchestration / adapter tests | Funnel counts; new output names; receipt keys; empty-signal and missing-feature funnel |
 | `docs/surface_engine_data_contract.md` | Minimal pointer that D3 report uses `date_status` as calendar (optional, with implementation) |
 | **Do not edit** | `configs/sprint006_baseline_v1.json`; iron-condor; `surface_search.py`; D4 execution; frozen thresholds |
@@ -545,16 +563,16 @@ Approximate effort: inside the 12–18h review trigger if scope stays as above.
 
 1. View A: `valid_no_trade` excluded (NaN, not 0) from Sharpe/drawdown/mean.
 2. View B: same date contributes 0; compounded matches hand Π(1+r)−1.
-3. Failed date in window → `result_complete=false`; View B not presented as complete; report still generates **if** traded-date preconditions hold.
+3. Failed date in window → `result_complete=false`; View B and turnover are not presented as complete; report still generates **if** traded-date and included-trade leg preconditions hold.
 4. `traded` date missing `date_summary`, or with non-finite PnL/CAR, or with non-positive capital → **abort**; the date is not dropped and no partial metric pack is written.
 5. `valid_no_trade` date with an included portfolio row → **abort**.
 6. `ceil`/`joint` funnel: jointly-eligible count matches helper; post-signal count ≤ jointly-eligible when both are non-null.
-7. Missing-feature date: `n_feature_covered=0`; `n_universe`…`n_included` are null; funnel averages exclude those nulls.
-8. Empty S2 → `date_status=valid_no_trade/empty_signals`, funnel `n_post_signal=0` (and downstream zeros), no candidate rows.
+7. Failed / `missing_features` date: `n_feature_covered=0`; `n_universe`…`n_included` are null; funnel averages exclude those nulls; turnover does **not** treat the date as a zero-name economic no-trade; a complete turnover result is not presented.
+8. Empty S2 → `date_status=valid_no_trade/empty_signals`, funnel `n_post_signal=0` (and downstream zeros), no candidate rows; turnover contributes 0 selected names.
 9. Structure fail → candidate `stage=structure_failed`, `decision_status=no_trade`, `reason_code` one of the four structure classes, `reason_raw` retained, no leg rows; date may still be `valid_no_trade`.
 10. Cap exclusion → `stage=portfolio_excluded`, existing exclusion `reason_code`, legs present with null `pnl_total_leg`.
 11. Included short iron fly: four legs; `unit_quantity` and `portfolio_quantity` signs are `+ − − +`; `portfolio_quantity = abs(trade.quantity) * unit_quantity`; unit sums match `entry_cost_per_share`, payoff, `pnl_per_share`, `pnl_total`.
-12. Leg/trade mismatch → abort report generation; `result_complete` is not used as the signal.
+12. Included-trade leg completeness: **abort** report generation (and do not write a partial metric pack) when an included trade has zero matching legs, fewer than 2 (straddle) or 4 (iron fly) legs, duplicate `leg_index`/extra copies, an unexpected count or instrument, or `structure_ok!=True`. Identity mismatch also aborts. `result_complete` is not used as the signal.
 13. Win rate ignores calendar 0-fill weeks; profit factor `"Infinity"` when no losses.
 14. Mid/cross fill-assumption sensitivity: unmatched dates listed, not dropped; block is labeled as fill-assumption, not pure cost.
 15. Top-5 \|PnL\| shares sum to ≤ 1.
@@ -582,9 +600,10 @@ Approximate effort: inside the 12–18h review trigger if scope stays as above.
 - [ ] Plain-language summary approved
 - [ ] Frozen D0 formulas/windows/fills unchanged
 - [ ] Candidate vs date taxonomies separated; post-signal grain explicit
-- [ ] Leg log uses `abs(trade.quantity) * unit_quantity`; short-iron-fly signs specified
+- [ ] Leg log uses `abs(trade.quantity) * unit_quantity`; short-iron-fly signs specified; every included trade requires 2 or 4 matching legs
 - [ ] Funnel null vs zero specified; averages skip unexecuted stages
 - [ ] Traded-date economic preconditions abort rather than drop dates
+- [ ] Turnover: `valid_no_trade` is zero names; `failed` / `missing_features` is not economic no-trade and blocks a complete turnover result
 - [ ] No `outcome_status`; no drop-ticker / drop-week sensitivities
 - [ ] D4 / Sprint 007 / real-data execution not authorized
 
@@ -593,11 +612,13 @@ Approximate effort: inside the 12–18h review trigger if scope stays as above.
 - [ ] One documented command still runs both fills through `run_single_config` and writes the report pack
 - [ ] `date_status` is the calendar; failed dates block complete presentation
 - [ ] Broken traded-date economics abort report generation
+- [ ] Included trades abort on missing, incomplete, duplicate, or unexpected legs; identities reconcile
 - [ ] View A NaN vs View B 0 implemented and tested
 - [ ] Mid/cross block labeled as fill-assumption sensitivity; overlap disclosed
 - [ ] Candidate view derived only from `trade_log`; no `outcome_status`
 - [ ] Leg/trade identities reconcile on included synthetic trades; short iron fly keeps `+ − − +`
-- [ ] Funnel does not reimplement ranking/CVG tails; missing-feature counts are null
+- [ ] Funnel does not reimplement ranking/CVG tails; `failed` / `missing_features` counts are null, not turnover zeros
+- [ ] Complete turnover is not presented when any date is `failed`
 - [ ] New files digested in the receipt
 - [ ] Frozen JSON untouched; no real-data P&L inspection
 - [ ] Focused tests green
@@ -633,6 +654,8 @@ Approximate effort: inside the 12–18h review trigger if scope stays as above.
 | `result_complete` requires zero failed dates | Presenting an incomplete backtest as trusted | One flag already on the run |
 | Abort if a `traded` date lacks finite positive-capital economics | Silently dropping broken traded dates from performance | Narrow precondition; no new status enum |
 | Abort if `valid_no_trade` has included rows | Calendar 0-fill hiding real trades | One inclusion check |
+| Abort if an included trade lacks exactly 2 (straddle) or 4 (iron fly) matching legs, or identities fail | Publishing a report D4 cannot reconstruct | Direct count + equality checks; no validator framework |
+| Do not 0-fill `failed` / `missing_features` into turnover | Treating a coverage failure as an economic no-trade | Same completeness flag already on the run |
 | View A NaN vs View B 0 | Misleading Sharpe from mixing no-trade with zeros or dropping zeros from calendar | Frozen D0 rule; cheap to test |
 | Mid/cross overlap counts | Fill-assumption delta computed on a silent inner join | Small counter |
 | Leg/trade sum checks abort the report | Wrong fill/payoff serialization that D4 would hand-check blindly | Local equality on included rows |
@@ -650,7 +673,7 @@ Omit: extra preflight, schema registries, retry/publication systems, generalized
 **Three commits**, matching the natural review boundaries:
 
 1. Evaluation calculations, traded-date preconditions, and tests (no engine change).
-2. Leg-log extraction (`abs(trade.quantity)`), funnel counts with null vs zero, S2 helper extract, reconciliation and short-iron-fly sign tests.
+2. Leg-log extraction (`abs(trade.quantity)`), exact 2/4 included-trade leg counts, funnel counts with null vs zero, S2 helper extract, reconciliation and abort tests.
 3. Report files, adapter/receipt, candidate view without `outcome_status`, documentation.
 
 Do not squash into one commit: commit 1 is independently reviewable without touching settle/assembly.
