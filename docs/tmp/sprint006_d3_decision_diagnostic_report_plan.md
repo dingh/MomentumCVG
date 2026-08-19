@@ -139,7 +139,7 @@ existing artifacts (trade_log, date_summary, date_status, run_summary)
 + funnel_summary (from loop counts)
         │
         ▼
-sprint006_evaluation.build_decision_report(mid_result, cross_result, contract periods)
+surface_decision_report.build_decision_report(mid_result, cross_result, contract periods)
         │  aborts if traded-date economics fail, included-trade legs are
         │  missing/incomplete/duplicate/unexpected, or identities fail to reconcile
         ▼
@@ -545,9 +545,9 @@ Do not redesign overwrite policy, output-dir location rules, twin orchestration,
 |------|--------|
 | `src/backtest/pipeline.py` | Extract pre-rank eligible slice helper; S2 calls it (behavior-preserving) |
 | `src/backtest/surface_runner.py` | Capture funnel counts (null when unexecuted); serialize legs before `_assembly` drop; attach frames to `SurfaceRunResult` |
-| `src/backtest/sprint006_evaluation.py` (**new**) | Dual-view metrics, candidate derivation, report JSON/MD, traded-date preconditions, structure `reason_code` mapping |
+| `src/backtest/surface_decision_report.py` (**new**) | Dual-view metrics, candidate derivation, report JSON/MD, traded-date preconditions, structure `reason_code` mapping |
 | `src/backtest/sprint006_baseline.py` | Persist new artifacts; build report after both runs; abort without a misleading report file; receipt/deferred updates |
-| `tests/unit/test_sprint006_evaluation.py` (**new**) | View A/B NaN vs 0; win rate; profit factor Infinity; window filter; overlap disclosure; abort on broken traded dates; funnel null vs zero; turnover 0 only on `valid_no_trade`; incomplete turnover when any date is `failed` |
+| `tests/unit/test_surface_decision_report.py` (**new**) | View A/B NaN vs 0; win rate; profit factor Infinity; window filter; overlap disclosure; abort on broken traded dates; funnel null vs zero; turnover 0 only on `valid_no_trade`; incomplete turnover when any date is `failed` |
 | `tests/unit/test_sprint006_leg_log.py` (**new** or fold into evaluation tests) | Leg/trade reconciliation; short-iron-fly sign preservation; abort on zero/incomplete/duplicate/unexpected included-trade legs; no legs for structure_failed; null portfolio qty when excluded |
 | Existing runner / orchestration / adapter tests | Funnel counts; new output names; receipt keys; empty-signal and missing-feature funnel |
 | `docs/surface_engine_data_contract.md` | Minimal pointer that D3 report uses `date_status` as calendar (optional, with implementation) |
@@ -586,7 +586,7 @@ Approximate effort: inside the 12–18h review trigger if scope stays as above.
 ## 8. Ordered implementation steps
 
 1. Accept this plan.
-2. **Commit 1:** `sprint006_evaluation.py` dual-view calculators, traded-date preconditions, and tests on synthetic date_status/date_summary/trade_log. No runner change.
+2. **Commit 1:** `surface_decision_report.py` dual-view calculators, traded-date preconditions, and tests on synthetic date_status/date_summary/trade_log. No runner change.
 3. **Commit 2:** eligible-slice helper; runner funnel (null vs zero) + leg serialization (`abs(trade.quantity)` scaling); short-iron-fly sign and reconciliation tests. Economics of S2/S5 unchanged (diff S2 only by helper extraction).
 4. **Commit 3:** adapter persistence, JSON/MD report, receipt, candidate_view derivation (no `outcome_status`), structure `reason_code` mapping, deferred-list, optional data-contract sentence.
 5. Focused pytest subset; stop. Do not start D4 or real-data P&L.
