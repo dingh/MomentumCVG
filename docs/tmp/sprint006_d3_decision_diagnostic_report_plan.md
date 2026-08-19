@@ -1,9 +1,10 @@
 # Sprint 006 D3 — Decision-quality report and diagnostic observability plan
 
-**Status:** `PROPOSED — AWAITING ACCEPTANCE`
-**Mode:** Build (this document is **design only**; D3 implementation is not authorized until this plan is accepted)
+**Status:** `ACCEPTED — D3 IMPLEMENTATION IN PROGRESS (COMMIT 1)`
+**Mode:** Build. Design commit `b924330` is **accepted**. D3 implementation is in progress; **only Commit 1** (pure `surface_decision_report` calculations and tests) is authorized by this acceptance step. Commits 2–3 remain deferred.
 **Original proposal:** `688c2a3` (`docs: propose Sprint 006 D3 decision diagnostic report plan`)
-**This revision:** design-only correction of `688c2a3` (including follow-ups `22611ef` and this gap close); implementation still not authorized
+**Accepted design:** `b924330` (`docs: use domain name for D3 report module`)
+**This revision:** design-only corrections through `b924330`; Commit 1 implementation authorized
 **Confirmed ancestors:** D2 acceptance `62bdf38`; D2 implementation `9224068`; D1 `241b0d3` + `c6b1735`
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (unchanged; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
