@@ -676,6 +676,23 @@ def _values_close(left: float, right: float) -> bool:
     return abs(left - right) <= max(_LEG_ABS_TOL, _LEG_REL_TOL * max(abs(left), abs(right)))
 
 
+def _finite_leg_numeric_series(
+    matched: pd.DataFrame,
+    *,
+    trade_date: date,
+    ticker: str,
+    direction: str,
+    column: str,
+) -> pd.Series:
+    values = pd.to_numeric(matched[column], errors="coerce")
+    finite_mask = np.isfinite(values.to_numpy(dtype=float))
+    if not bool(finite_mask.all()):
+        raise DecisionMetricsError(
+            f"included trade {trade_date} {ticker} {direction} has non-finite {column}"
+        )
+    return values
+
+
 def _trade_key(
     row: pd.Series,
     *,
@@ -784,10 +801,42 @@ def assert_included_trade_legs(
                 f"leg rows; expected {len(required)}"
             )
 
-        entry_sum = float(pd.to_numeric(matched["entry_cash_per_unit"], errors="coerce").sum())
-        payoff_sum = float(pd.to_numeric(matched["expiry_payoff_per_unit"], errors="coerce").sum())
-        pnl_unit_sum = float(pd.to_numeric(matched["pnl_per_unit"], errors="coerce").sum())
-        pnl_total_sum = float(pd.to_numeric(matched["pnl_total_leg"], errors="coerce").sum())
+        entry_sum = float(
+            _finite_leg_numeric_series(
+                matched,
+                trade_date=trade_date,
+                ticker=ticker,
+                direction=direction,
+                column="entry_cash_per_unit",
+            ).sum()
+        )
+        payoff_sum = float(
+            _finite_leg_numeric_series(
+                matched,
+                trade_date=trade_date,
+                ticker=ticker,
+                direction=direction,
+                column="expiry_payoff_per_unit",
+            ).sum()
+        )
+        pnl_unit_sum = float(
+            _finite_leg_numeric_series(
+                matched,
+                trade_date=trade_date,
+                ticker=ticker,
+                direction=direction,
+                column="pnl_per_unit",
+            ).sum()
+        )
+        pnl_total_sum = float(
+            _finite_leg_numeric_series(
+                matched,
+                trade_date=trade_date,
+                ticker=ticker,
+                direction=direction,
+                column="pnl_total_leg",
+            ).sum()
+        )
 
         entry_cost = float(pd.to_numeric(trade.get("entry_cost_per_share"), errors="coerce"))
         pnl_share = float(pd.to_numeric(trade.get("pnl_per_share"), errors="coerce"))

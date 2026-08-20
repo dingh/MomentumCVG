@@ -123,6 +123,18 @@ def test_reconciliation_mismatch_aborts():
         assert_included_trade_legs(trades, legs, run_id="t", fill_label="mid")
 
 
+def test_nan_leg_value_aborts_even_if_other_leg_reconciles():
+    trades = pd.DataFrame([_included_trade_row()])
+    legs = pd.DataFrame(
+        [
+            _leg_row(leg_index=0, entry_cash_per_unit=2.1, expiry_payoff_per_unit=1.0, pnl_per_unit=-1.1, pnl_total_leg=-110.0),
+            _leg_row(leg_index=1, entry_cash_per_unit=float("nan"), expiry_payoff_per_unit=1.0, pnl_per_unit=-1.1, pnl_total_leg=-110.0),
+        ]
+    )
+    with pytest.raises(DecisionMetricsError, match="non-finite entry_cash_per_unit"):
+        assert_included_trade_legs(trades, legs, run_id="t", fill_label="mid")
+
+
 def test_matching_straddle_legs_pass():
     trades = pd.DataFrame([_included_trade_row()])
     legs = pd.DataFrame(
