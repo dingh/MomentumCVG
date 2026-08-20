@@ -1395,20 +1395,22 @@ def render_decision_report_markdown(report: Mapping[str, Any]) -> str:
         lines.append(f"## {title}")
         lines.append("")
         lines.append(
-            "| window | view | mean_CAR / compounded | sharpe | drawdown | n_traded / complete |"
+            "| window | view | mean_CAR / compounded | annualized_return | sharpe | drawdown | n_traded / complete |"
         )
-        lines.append("|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|")
         for window_name, _, _ in REPORT_WINDOWS:
             block = report["by_fill"][fill_key][window_name]
             a = block["view_a_conditional"]
             b = block["view_b_calendar"]
             lines.append(
                 f"| {window_name} | A conditional | {_fmt_metric(a['mean_cycle_car'])} | "
+                f"n/a | "
                 f"{_fmt_metric(a['sharpe'])} | {_fmt_metric(a['drawdown'])} | "
                 f"{_fmt_metric(a['n_traded'])} |"
             )
             lines.append(
                 f"| {window_name} | B calendar | {_fmt_metric(b['compounded'])} | "
+                f"{_fmt_metric(b.get('annualized_return'))} | "
                 f"{_fmt_metric(b['sharpe'])} | {_fmt_metric(b['drawdown'])} | "
                 f"{_fmt_metric(b['complete'])} |"
             )
@@ -1448,8 +1450,8 @@ def render_decision_report_markdown(report: Mapping[str, Any]) -> str:
     lines.append("")
     yearly = report["by_fill"]["cross"]["primary"]["yearly"]
     if yearly:
-        lines.append("| year | n_expected | n_traded | compounded | sharpe |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("| year | n_expected | n_traded | compounded | annualized_return | sharpe | drawdown |")
+        lines.append("|---|---|---|---|---|---|---|")
         for row in yearly:
             counts = row.get("date_class_counts", {})
             view_b = row.get("view_b", {})
@@ -1457,7 +1459,9 @@ def render_decision_report_markdown(report: Mapping[str, Any]) -> str:
                 f"| {row.get('year')} | {counts.get('n_expected_dates')} | "
                 f"{counts.get('n_traded_dates')} | "
                 f"{_fmt_metric(view_b.get('compounded_return'))} | "
-                f"{_fmt_metric(view_b.get('annualized_sharpe'))} |"
+                f"{_fmt_metric(view_b.get('annualized_return'))} | "
+                f"{_fmt_metric(view_b.get('annualized_sharpe'))} | "
+                f"{_fmt_metric(view_b.get('max_drawdown'))} |"
             )
     else:
         lines.append("_No yearly rows in the primary window._")
@@ -1489,8 +1493,19 @@ def render_decision_report_markdown(report: Mapping[str, Any]) -> str:
         f"turnover_complete={_fmt_metric(turnover.get('complete'))}, "
         f"mean_turnover_names={_fmt_metric(turnover.get('mean_included_names'))}"
     )
+    lines.append("")
+    top5 = conc.get("top5", [])
+    if top5:
+        lines.append("| ticker | abs_pnl | share |")
+        lines.append("|---|---|---|")
+        for entry in top5:
+            lines.append(
+                f"| {entry.get('ticker')} | {_fmt_metric(entry.get('abs_pnl'))} | "
+                f"{_fmt_metric(entry.get('share'))} |"
+            )
+        lines.append("")
     lines.append(
-        f"- top-5 |PnL| share (primary cross): {_fmt_metric(conc.get('top5_share_sum'))}"
+        f"top-5 |PnL| aggregate share (primary cross): {_fmt_metric(conc.get('top5_share_sum'))}"
     )
     lines.append("")
 
@@ -1531,9 +1546,12 @@ def render_decision_report_markdown(report: Mapping[str, Any]) -> str:
     lines.append("")
     lines.append(
         "| window | both traded | mid-only dates | cross-only dates | "
-        "mid-only candidates | cross-only candidates |"
+        "mid-only candidates | cross-only candidates | "
+        "mean cross-minus-mid CAR | mean cross-minus-mid PnL | "
+        "mean spread_cost_ratio cross | mean spread_cost_ratio mid | "
+        "mean leg_spread_to_credit cross | mean leg_spread_to_credit mid |"
     )
-    lines.append("|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
     for window_name, _, _ in REPORT_WINDOWS:
         sens = report["fill_assumption_sensitivity"][window_name]
         lines.append(
@@ -1541,7 +1559,13 @@ def render_decision_report_markdown(report: Mapping[str, Any]) -> str:
             f"{_fmt_metric(sens.get('n_dates_mid_only'))} | "
             f"{_fmt_metric(sens.get('n_dates_cross_only'))} | "
             f"{_fmt_metric(sens.get('n_candidates_mid_only'))} | "
-            f"{_fmt_metric(sens.get('n_candidates_cross_only'))} |"
+            f"{_fmt_metric(sens.get('n_candidates_cross_only'))} | "
+            f"{_fmt_metric(sens.get('mean_cross_minus_mid_car_both_traded'))} | "
+            f"{_fmt_metric(sens.get('mean_cross_minus_mid_pnl_both_traded'))} | "
+            f"{_fmt_metric(sens.get('mean_spread_cost_ratio_cross'))} | "
+            f"{_fmt_metric(sens.get('mean_spread_cost_ratio_mid'))} | "
+            f"{_fmt_metric(sens.get('mean_leg_spread_to_credit_ratio_cross'))} | "
+            f"{_fmt_metric(sens.get('mean_leg_spread_to_credit_ratio_mid'))} |"
         )
     lines.append("")
 

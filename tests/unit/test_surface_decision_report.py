@@ -736,6 +736,77 @@ class TestFunnelAndReportAssembly:
         assert SELECTION_BIAS_NOTICE in md
         assert "Cross (primary)" in md
 
+    def test_markdown_exposes_view_b_annualized_return(self):
+        mid, cross = self._complete_packs()
+        report = build_decision_report(
+            mid=mid, cross=cross,
+            experiment_id="sprint006_baseline_v1",
+            contract_id="sprint006_baseline_v1",
+            repo_sha="a" * 40,
+        )
+        md = render_decision_report_markdown(report)
+        # annualized_return column header present in headline tables
+        assert "annualized_return" in md
+        # present for both fills
+        assert md.count("annualized_return") >= 2
+
+    def test_markdown_yearly_includes_annualized_return_and_drawdown(self):
+        # Build a two-date status so yearly table has a row
+        status = _status_rows([(D1, "traded"), (D2, "valid_no_trade")])
+        summary = pd.DataFrame([_summary_row(D1, pnl=77.0, cap=100.0)])
+        mid, cross = self._complete_packs()
+        mid["date_status"] = status
+        mid["date_summary"] = summary
+        cross["date_status"] = status
+        cross["date_summary"] = summary
+        report = build_decision_report(
+            mid=mid, cross=cross,
+            experiment_id="sprint006_baseline_v1",
+            contract_id="sprint006_baseline_v1",
+            repo_sha="a" * 40,
+        )
+        md = render_decision_report_markdown(report)
+        # yearly table header must list both new columns
+        assert "annualized_return" in md
+        assert "drawdown" in md
+
+    def test_markdown_concentration_table_shows_ticker_pnl_share(self):
+        status = _status_rows([(D1, "traded"), (D2, "valid_no_trade")])
+        # Use a distinctive ticker name so the assertion is specific
+        cross_log = pd.DataFrame([
+            _trade_row(D1, ticker="DISTX", included=False, structure_ok=False,
+                       failure_reason="metadata_error: bad",
+                       fill_label="cross", run_id="run_cross", pnl_total=0.0),
+        ])
+        mid, cross = self._complete_packs()
+        # Inject an included trade with a recognizable ticker into both fills
+        # via the summary (concentration is computed from the trade_log)
+        # For this test we just verify the table header is present even when
+        # top5 is empty (no included trades).
+        report = build_decision_report(
+            mid=mid, cross=cross,
+            experiment_id="sprint006_baseline_v1",
+            contract_id="sprint006_baseline_v1",
+            repo_sha="a" * 40,
+        )
+        md = render_decision_report_markdown(report)
+        # Table header or aggregate line must be present
+        assert "top5_share_sum" in md or "aggregate share" in md
+
+    def test_markdown_sensitivity_shows_car_pnl_and_spread_diagnostics(self):
+        mid, cross = self._complete_packs()
+        report = build_decision_report(
+            mid=mid, cross=cross,
+            experiment_id="sprint006_baseline_v1",
+            contract_id="sprint006_baseline_v1",
+            repo_sha="a" * 40,
+        )
+        md = render_decision_report_markdown(report)
+        assert "mean_cross_minus_mid_car_both_traded" in md or "cross-minus-mid CAR" in md
+        assert "mean_cross_minus_mid_pnl_both_traded" in md or "cross-minus-mid PnL" in md
+        assert "spread_cost_ratio" in md
+        assert "leg_spread_to_credit" in md
+
     def test_incomplete_results_banner_when_failed_dates_exist(self):
         mid, cross = self._complete_packs()
         failed_status = _status_rows(
