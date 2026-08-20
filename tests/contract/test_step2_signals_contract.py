@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from src.backtest.pipeline import (
+    eligible_feature_cross_section,
     required_count_threshold,
     step2_score_signals,
     validate_feature_count_columns,
@@ -150,3 +151,31 @@ def test_validate_feature_columns_missing_hard_fails(features_four_tickers):
     cfg = make_contract_config(cvg_count_col="cvg_count_42_8")
     with pytest.raises(ValueError, match="missing required configured columns"):
         validate_feature_count_columns(feats, cfg)
+
+
+def test_eligible_helper_is_s2_pre_rank_set(features_four_tickers, universe_four_tickers):
+    cfg = make_contract_config(
+        min_count_pct=0.80,
+        cvg_count_col="cvg_count_42_8",
+        long_top_pct=0.25,
+        short_bottom_pct=0.5,
+    )
+    eligible = eligible_feature_cross_section(
+        date(2024, 1, 5), features_four_tickers, universe_four_tickers, cfg
+    )
+    out = step2_score_signals(
+        date(2024, 1, 5), features_four_tickers, universe_four_tickers, cfg
+    )
+    assert set(out["ticker"]).issubset(set(eligible["ticker"]))
+    assert set(eligible["ticker"]) == {"A", "B", "C", "D"}
+    assert len(out) <= len(eligible)
+
+    feats = features_four_tickers.copy()
+    feats.loc[feats["ticker"] == "A", "cvg_count_42_8"] = 10
+    eligible_excl = eligible_feature_cross_section(
+        date(2024, 1, 5), feats, universe_four_tickers, cfg
+    )
+    out_excl = step2_score_signals(date(2024, 1, 5), feats, universe_four_tickers, cfg)
+    assert "A" not in set(eligible_excl["ticker"])
+    assert set(out_excl["ticker"]) == set(out_excl["ticker"]) & set(eligible_excl["ticker"])
+    assert "A" not in set(out_excl["ticker"])

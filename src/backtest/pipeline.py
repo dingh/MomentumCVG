@@ -188,6 +188,52 @@ def validate_feature_count_columns(
 # Step 2 — SCORE_SIGNALS  (strategy_def §3.3, §6.1)
 # ---------------------------------------------------------------------------
 
+def eligible_feature_cross_section(
+    trade_date: date,
+    features: pd.DataFrame,
+    universe: pd.DataFrame,
+    config: "BacktestRunConfig",
+) -> pd.DataFrame:
+    """
+    Return the pre-rank feature rows S2 currently scores.
+
+    A name is jointly feature-eligible when it is in the S1 universe and the
+    trade-date feature slice, momentum and CVG are finite, and both observation
+    counts meet ``required_count`` (CVG count only when configured).
+    """
+    trade_ts = pd.Timestamp(trade_date)
+    feat_slice = features[features["date"] == trade_ts].copy()
+    if feat_slice.empty:
+        return feat_slice
+
+    universe_tickers = (
+        universe[["ticker"]]
+        if universe is not None and not universe.empty and "ticker" in universe.columns
+        else pd.DataFrame(columns=["ticker"])
+    )
+    feat_slice = feat_slice.merge(universe_tickers, on="ticker", how="inner")
+    if feat_slice.empty:
+        return feat_slice
+
+    feat_slice = feat_slice.dropna(subset=[config.momentum_col, config.cvg_col])
+    if feat_slice.empty:
+        return feat_slice
+
+    if config.count_col not in feat_slice.columns:
+        raise ValueError(
+            f"features missing required count_col={config.count_col!r}"
+        )
+    if config.cvg_count_col is not None and config.cvg_count_col not in feat_slice.columns:
+        raise ValueError(
+            f"features missing required cvg_count_col={config.cvg_count_col!r}"
+        )
+    required_count = required_count_threshold(config.momentum_col, config.min_count_pct)
+    eligible = feat_slice[config.count_col] >= required_count
+    if config.cvg_count_col is not None:
+        eligible = eligible & (feat_slice[config.cvg_count_col] >= required_count)
+    return feat_slice[eligible].copy()
+
+
 def step2_score_signals(
     trade_date: date,
     features: pd.DataFrame,
@@ -219,37 +265,7 @@ def step2_score_signals(
         columns=["ticker", "direction", "signal_score", "signal_rank_pct", "cvg_score", "cvg_rank_pct"]
     )
 
-    # 1. Slice features to rows where date == trade_date.
-    trade_ts = pd.Timestamp(trade_date)
-    feat_slice = features[features["date"] == trade_ts].copy()
-    if feat_slice.empty:
-        return _EMPTY
-
-    # 2. Inner join with universe on ticker.
-    feat_slice = feat_slice.merge(universe[["ticker"]], on="ticker", how="inner")
-    if feat_slice.empty:
-        return _EMPTY
-
-    # 3. Drop rows where momentum_col or cvg_col is NaN.
-    feat_slice = feat_slice.dropna(subset=[config.momentum_col, config.cvg_col])
-    if feat_slice.empty:
-        return _EMPTY
-
-    # 4. Data-quality filter via count_col (and cvg_count_col when configured).
-    #    required_count = ceil(min_count_pct * window_size); applied before ranking.
-    if config.count_col not in feat_slice.columns:
-        raise ValueError(
-            f"features missing required count_col={config.count_col!r}"
-        )
-    if config.cvg_count_col is not None and config.cvg_count_col not in feat_slice.columns:
-        raise ValueError(
-            f"features missing required cvg_count_col={config.cvg_count_col!r}"
-        )
-    required_count = required_count_threshold(config.momentum_col, config.min_count_pct)
-    eligible = feat_slice[config.count_col] >= required_count
-    if config.cvg_count_col is not None:
-        eligible = eligible & (feat_slice[config.cvg_count_col] >= required_count)
-    feat_slice = feat_slice[eligible]
+    feat_slice = eligible_feature_cross_section(trade_date, features, universe, config)
     if feat_slice.empty:
         return _EMPTY
 

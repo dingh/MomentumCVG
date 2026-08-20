@@ -1,7 +1,7 @@
 # Sprint 006 D3 — Decision-quality report and diagnostic observability plan
 
-**Status:** `ACCEPTED — D3 IMPLEMENTATION IN PROGRESS (COMMIT 1)`
-**Mode:** Build. Design commit `b924330` is **accepted**. D3 implementation is in progress; **only Commit 1** (pure `surface_decision_report` calculations and tests) is authorized by this acceptance step. Commits 2–3 remain deferred.
+**Status:** `ACCEPTED — D3 IMPLEMENTATION IN PROGRESS (COMMIT 2)`
+**Mode:** Build. Design commit `b924330` is **accepted**. Commit 1 (`361b333`) is accepted. Commit 2 (funnel, leg log, shared S2 helper, included-trade checks) is implemented. Commit 3 remains deferred.
 **Original proposal:** `688c2a3` (`docs: propose Sprint 006 D3 decision diagnostic report plan`)
 **Accepted design:** `b924330` (`docs: use domain name for D3 report module`)
 **This revision:** design-only corrections through `b924330`; Commit 1 implementation authorized

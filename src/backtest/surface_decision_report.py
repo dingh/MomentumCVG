@@ -662,3 +662,171 @@ def evaluate_fill_window(
         "concentration": compute_top5_abs_pnl_concentration(log),
         "activity": compute_activity(status, summary),
     }
+
+
+_STRADDLE_INSTRUMENTS = {"long_straddle", "short_straddle"}
+_IRON_FLY_INSTRUMENTS = {"iron_fly"}
+_LEG_REL_TOL = 1e-8
+_LEG_ABS_TOL = 1e-6
+
+
+def _values_close(left: float, right: float) -> bool:
+    if not np.isfinite(left) or not np.isfinite(right):
+        return False
+    return abs(left - right) <= max(_LEG_ABS_TOL, _LEG_REL_TOL * max(abs(left), abs(right)))
+
+
+def _trade_key(
+    row: pd.Series,
+    *,
+    run_id: str | None,
+    fill_label: str | None,
+) -> tuple:
+    rid = row["run_id"] if "run_id" in row.index and pd.notna(row.get("run_id")) else run_id
+    fill = (
+        row["fill_label"]
+        if "fill_label" in row.index and pd.notna(row.get("fill_label"))
+        else fill_label
+    )
+    return (
+        rid,
+        fill,
+        _to_date(row["trade_date"]),
+        str(row["ticker"]),
+        str(row["direction"]),
+    )
+
+
+def assert_included_trade_legs(
+    trade_log: pd.DataFrame,
+    leg_log: pd.DataFrame,
+    *,
+    run_id: str | None = None,
+    fill_label: str | None = None,
+) -> None:
+    """
+    Abort when an included trade has missing, incomplete, duplicate, or
+    unexpected legs, or when unit economics fail to reconcile.
+
+    Does not change D2 ``result_complete`` (failed-date coverage) semantics.
+    """
+    log = _ensure_trade_date_column(trade_log)
+    legs = _ensure_trade_date_column(leg_log) if leg_log is not None else pd.DataFrame()
+
+    if log.empty or "included_in_portfolio" not in log.columns:
+        return
+
+    included = log[log["included_in_portfolio"] == True].copy()  # noqa: E712
+    if included.empty:
+        return
+
+    if not legs.empty:
+        legs = legs.copy()
+        legs["trade_date"] = [_to_date(v) for v in legs["trade_date"]]
+
+    included_keys = set()
+    for _, trade in included.iterrows():
+        key = _trade_key(trade, run_id=run_id, fill_label=fill_label)
+        included_keys.add(key)
+        trade_date = key[2]
+        ticker = key[3]
+        direction = key[4]
+
+        if trade.get("structure_ok") != True:  # noqa: E712
+            raise DecisionMetricsError(
+                f"included trade {trade_date} {ticker} {direction} has structure_ok!=True"
+            )
+
+        instrument = str(trade.get("instrument_type") or "")
+        if instrument in _STRADDLE_INSTRUMENTS:
+            required = {0, 1}
+        elif instrument in _IRON_FLY_INSTRUMENTS:
+            required = {0, 1, 2, 3}
+        else:
+            raise DecisionMetricsError(
+                f"included trade {trade_date} {ticker} {direction} has "
+                f"unsupported instrument_type={instrument!r}"
+            )
+
+        if legs.empty:
+            matched = legs
+        else:
+            mask = (
+                (legs["trade_date"] == trade_date)
+                & (legs["ticker"].astype(str) == ticker)
+                & (legs["direction"].astype(str) == direction)
+            )
+            if "run_id" in legs.columns and key[0] is not None:
+                mask = mask & (legs["run_id"].astype(str) == str(key[0]))
+            if "fill_label" in legs.columns and key[1] is not None:
+                mask = mask & (legs["fill_label"].astype(str) == str(key[1]))
+            matched = legs.loc[mask]
+
+        if matched.empty:
+            raise DecisionMetricsError(
+                f"included trade {trade_date} {ticker} {direction} has no matching leg rows"
+            )
+
+        indices = [int(v) for v in matched["leg_index"].tolist()]
+        if len(indices) != len(set(indices)):
+            raise DecisionMetricsError(
+                f"included trade {trade_date} {ticker} {direction} has duplicate leg_index values"
+            )
+        observed = set(indices)
+        if observed != required:
+            raise DecisionMetricsError(
+                f"included trade {trade_date} {ticker} {direction} has unexpected "
+                f"leg_index set {sorted(observed)}; expected {sorted(required)}"
+            )
+        if len(matched) != len(required):
+            raise DecisionMetricsError(
+                f"included trade {trade_date} {ticker} {direction} has {len(matched)} "
+                f"leg rows; expected {len(required)}"
+            )
+
+        entry_sum = float(pd.to_numeric(matched["entry_cash_per_unit"], errors="coerce").sum())
+        payoff_sum = float(pd.to_numeric(matched["expiry_payoff_per_unit"], errors="coerce").sum())
+        pnl_unit_sum = float(pd.to_numeric(matched["pnl_per_unit"], errors="coerce").sum())
+        pnl_total_sum = float(pd.to_numeric(matched["pnl_total_leg"], errors="coerce").sum())
+
+        entry_cost = float(pd.to_numeric(trade.get("entry_cost_per_share"), errors="coerce"))
+        pnl_share = float(pd.to_numeric(trade.get("pnl_per_share"), errors="coerce"))
+        pnl_total = float(pd.to_numeric(trade.get("pnl_total"), errors="coerce"))
+        if "exit_value" in trade.index and pd.notna(trade.get("exit_value")):
+            exit_value = float(pd.to_numeric(trade.get("exit_value"), errors="coerce"))
+        else:
+            exit_value = entry_cost + pnl_share
+
+        if not _values_close(entry_sum, entry_cost):
+            raise DecisionMetricsError(
+                f"included trade {trade_date} {ticker} {direction} entry cash "
+                f"{entry_sum} != entry_cost_per_share {entry_cost}"
+            )
+        if not _values_close(payoff_sum, exit_value):
+            raise DecisionMetricsError(
+                f"included trade {trade_date} {ticker} {direction} expiry payoff "
+                f"{payoff_sum} != exit_value {exit_value}"
+            )
+        if not _values_close(pnl_unit_sum, pnl_share):
+            raise DecisionMetricsError(
+                f"included trade {trade_date} {ticker} {direction} pnl_per_unit "
+                f"{pnl_unit_sum} != pnl_per_share {pnl_share}"
+            )
+        if not _values_close(pnl_total_sum, pnl_total):
+            raise DecisionMetricsError(
+                f"included trade {trade_date} {ticker} {direction} pnl_total_leg "
+                f"{pnl_total_sum} != pnl_total {pnl_total}"
+            )
+
+    if legs.empty:
+        return
+    extra_included = legs
+    if "included_in_portfolio" in legs.columns:
+        extra_included = legs[legs["included_in_portfolio"] == True]  # noqa: E712
+    for _, leg in extra_included.iterrows():
+        key = _trade_key(leg, run_id=run_id, fill_label=fill_label)
+        if key not in included_keys:
+            raise DecisionMetricsError(
+                f"leg log has included legs for unmatched trade "
+                f"{key[2]} {key[3]} {key[4]}"
+            )

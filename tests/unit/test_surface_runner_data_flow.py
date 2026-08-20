@@ -473,3 +473,150 @@ class TestSurfaceRunnerDateStatus:
         # ONLYBAD is not in the liquidity universe → empty signals on that date.
         assert row["status"] == "valid_no_trade"
         assert row["reason"] == "empty_signals"
+
+
+class TestSurfaceRunnerFunnelAndLegs:
+    """Sprint 006 D3 Commit 2 — funnel counts and constructable leg log."""
+
+    def test_pinned_empty_schemas_when_no_expected_dates(self, synthetic_runner):
+        result = synthetic_runner.run_single_config(
+            _make_config(start_date=date(2099, 1, 1), end_date=date(2099, 1, 31))
+        )
+        from src.backtest.surface_runner import FUNNEL_SUMMARY_COLUMNS, LEG_LOG_COLUMNS
+
+        assert list(result.funnel_summary.columns) == FUNNEL_SUMMARY_COLUMNS
+        assert result.funnel_summary.empty
+        assert list(result.leg_log.columns) == LEG_LOG_COLUMNS
+        assert result.leg_log.empty
+
+    def test_normal_funnel_counts_and_side_splits(self, run_result):
+        from src.backtest.surface_runner import FUNNEL_SUMMARY_COLUMNS
+
+        assert list(run_result.funnel_summary.columns) == FUNNEL_SUMMARY_COLUMNS
+        assert len(run_result.funnel_summary) == 1
+        row = run_result.funnel_summary.iloc[0]
+        assert row["n_expected"] == 1
+        assert row["n_feature_covered"] == 1
+        assert row["n_universe"] == 4
+        assert row["n_jointly_eligible"] == 4
+        assert row["n_post_signal"] == 4
+        assert row["n_post_signal_long"] == 2
+        assert row["n_post_signal_short"] == 2
+        assert row["n_constructable"] == 2
+        assert row["n_constructable_long"] == 1
+        assert row["n_constructable_short"] == 1
+        assert row["n_included"] == 2
+        assert row["n_included_long"] == 1
+        assert row["n_included_short"] == 1
+        assert row["date_status"] == "traded"
+        assert row["date_reason"] is None or pd.isna(row["date_reason"])
+        assert row["n_post_signal"] <= row["n_jointly_eligible"]
+
+    def test_missing_feature_funnel_nulls(self, tmp_path: Path):
+        extra_date = date(2024, 1, 12)
+        meta_path, quotes_path = _build_surface_parquets(tmp_path)
+        meta = pd.read_parquet(meta_path)
+        extra = meta.iloc[[0]].copy()
+        extra["entry_date"] = pd.Timestamp(extra_date)
+        extra["surface_valid"] = False
+        extra["failure_reason"] = "synthetic_a1_only"
+        pd.concat([meta, extra], ignore_index=True).to_parquet(meta_path, index=False)
+        runner = SurfaceRunner(
+            data_paths=SurfaceDataPaths(
+                cache_dir=tmp_path,
+                features_dir=_build_features(tmp_path).parent,
+                liquidity_panel_path=_build_liquidity_panel(tmp_path),
+                surface_meta_path=meta_path,
+                surface_quotes_path=quotes_path,
+                earnings_path=None,
+            )
+        )
+        result = runner.run_single_config(
+            _make_config(start_date=TRADE_DATE, end_date=extra_date)
+        )
+        failed = result.funnel_summary[
+            result.funnel_summary["trade_date"] == extra_date
+        ].iloc[0]
+        assert failed["n_expected"] == 1
+        assert failed["n_feature_covered"] == 0
+        for col in (
+            "n_universe",
+            "n_jointly_eligible",
+            "n_post_signal",
+            "n_constructable",
+            "n_included",
+            "n_post_signal_long",
+            "n_constructable_short",
+            "n_included_long",
+        ):
+            assert pd.isna(failed[col])
+        assert failed["date_status"] == "failed"
+        assert failed["date_reason"] == "missing_features"
+
+    def test_empty_s2_funnel_zeros(self, tmp_path: Path):
+        features_path = _build_features(tmp_path)
+        feats = pd.read_parquet(features_path)
+        feats["mom_42_8_mean"] = float("nan")
+        feats.to_parquet(features_path, index=False)
+        meta_path, quotes_path = _build_surface_parquets(tmp_path)
+        runner = SurfaceRunner(
+            data_paths=SurfaceDataPaths(
+                cache_dir=tmp_path,
+                features_dir=features_path.parent,
+                liquidity_panel_path=_build_liquidity_panel(tmp_path),
+                surface_meta_path=meta_path,
+                surface_quotes_path=quotes_path,
+                earnings_path=None,
+            )
+        )
+        result = runner.run_single_config(_make_config())
+        row = result.funnel_summary.iloc[0]
+        assert row["date_status"] == "valid_no_trade"
+        assert row["date_reason"] == "empty_signals"
+        assert row["n_feature_covered"] == 1
+        assert row["n_universe"] == 4
+        assert row["n_jointly_eligible"] == 0
+        assert row["n_post_signal"] == 0
+        assert row["n_post_signal_long"] == 0
+        assert row["n_post_signal_short"] == 0
+        assert row["n_constructable"] == 0
+        assert row["n_included"] == 0
+        assert result.leg_log.empty
+
+    def test_structure_failures_have_no_leg_rows(self, run_result):
+        failed = run_result.trade_log[
+            run_result.trade_log["structure_ok"] != True  # noqa: E712
+        ]
+        assert not failed.empty
+        failed_keys = set(zip(failed["ticker"], failed["direction"]))
+        if run_result.leg_log.empty:
+            return
+        leg_keys = set(zip(run_result.leg_log["ticker"], run_result.leg_log["direction"]))
+        assert failed_keys.isdisjoint(leg_keys)
+
+    def test_straddle_and_iron_fly_leg_counts_and_signs(self, run_result):
+        from src.backtest.surface_decision_report import assert_included_trade_legs
+
+        legs = run_result.leg_log
+        assert not legs.empty
+        long_legs = legs[legs["ticker"] == TICK_LONG].sort_values("leg_index")
+        short_legs = legs[legs["ticker"] == TICK_SHORT].sort_values("leg_index")
+        assert list(long_legs["leg_index"]) == [0, 1]
+        assert list(short_legs["leg_index"]) == [0, 1, 2, 3]
+        assert list(short_legs["unit_quantity"]) == [1, -1, -1, 1]
+        short_trade = run_result.trade_log[
+            (run_result.trade_log["ticker"] == TICK_SHORT)
+            & (run_result.trade_log["included_in_portfolio"] == True)  # noqa: E712
+        ].iloc[0]
+        qty_mag = abs(float(short_trade["quantity"]))
+        assert qty_mag > 0
+        assert list(short_legs["portfolio_quantity"]) == [
+            pytest.approx(qty_mag * q) for q in (1, -1, -1, 1)
+        ]
+        assert_included_trade_legs(
+            run_result.trade_log,
+            run_result.leg_log,
+            run_id=run_result.config.run_id,
+            fill_label=run_result.config.fill.label,
+        )
+        assert "_assembly" not in run_result.trade_log.columns
