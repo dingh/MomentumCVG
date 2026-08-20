@@ -736,76 +736,88 @@ class TestFunnelAndReportAssembly:
         assert SELECTION_BIAS_NOTICE in md
         assert "Cross (primary)" in md
 
-    def test_markdown_exposes_view_b_annualized_return(self):
+    def test_markdown_renders_injected_sentinel_values(self):
+        """Inject distinctive values into a built report and assert exact Markdown cells."""
         mid, cross = self._complete_packs()
         report = build_decision_report(
-            mid=mid, cross=cross,
+            mid=mid,
+            cross=cross,
             experiment_id="sprint006_baseline_v1",
             contract_id="sprint006_baseline_v1",
             repo_sha="a" * 40,
         )
-        md = render_decision_report_markdown(report)
-        # annualized_return column header present in headline tables
-        assert "annualized_return" in md
-        # present for both fills
-        assert md.count("annualized_return") >= 2
 
-    def test_markdown_yearly_includes_annualized_return_and_drawdown(self):
-        # Build a two-date status so yearly table has a row
-        status = _status_rows([(D1, "traded"), (D2, "valid_no_trade")])
-        summary = pd.DataFrame([_summary_row(D1, pnl=77.0, cap=100.0)])
-        mid, cross = self._complete_packs()
-        mid["date_status"] = status
-        mid["date_summary"] = summary
-        cross["date_status"] = status
-        cross["date_summary"] = summary
-        report = build_decision_report(
-            mid=mid, cross=cross,
-            experiment_id="sprint006_baseline_v1",
-            contract_id="sprint006_baseline_v1",
-            repo_sha="a" * 40,
-        )
-        md = render_decision_report_markdown(report)
-        # yearly table header must list both new columns
-        assert "annualized_return" in md
-        assert "drawdown" in md
+        # Distinctive sentinels — unlikely to appear from the synthetic pack.
+        view_b_ann = 0.271828
+        yearly_ann = 0.161803
+        yearly_dd = -0.041421
+        distx_abs = 1234.5
+        distx_share = 0.314159
+        top5_sum = 0.618033
+        car_delta = -0.012345
+        pnl_delta = -67.89
+        scr_cross = 0.111111
+        scr_mid = 0.222222
+        lscr_cross = 0.333333
+        lscr_mid = 0.444444
 
-    def test_markdown_concentration_table_shows_ticker_pnl_share(self):
-        status = _status_rows([(D1, "traded"), (D2, "valid_no_trade")])
-        # Use a distinctive ticker name so the assertion is specific
-        cross_log = pd.DataFrame([
-            _trade_row(D1, ticker="DISTX", included=False, structure_ok=False,
-                       failure_reason="metadata_error: bad",
-                       fill_label="cross", run_id="run_cross", pnl_total=0.0),
-        ])
-        mid, cross = self._complete_packs()
-        # Inject an included trade with a recognizable ticker into both fills
-        # via the summary (concentration is computed from the trade_log)
-        # For this test we just verify the table header is present even when
-        # top5 is empty (no included trades).
-        report = build_decision_report(
-            mid=mid, cross=cross,
-            experiment_id="sprint006_baseline_v1",
-            contract_id="sprint006_baseline_v1",
-            repo_sha="a" * 40,
-        )
-        md = render_decision_report_markdown(report)
-        # Table header or aggregate line must be present
-        assert "top5_share_sum" in md or "aggregate share" in md
+        report["by_fill"]["cross"]["full_history"]["view_b_calendar"][
+            "annualized_return"
+        ] = view_b_ann
+        report["by_fill"]["cross"]["primary"]["yearly"] = [
+            {
+                "year": 2020,
+                "date_class_counts": {
+                    "n_expected_dates": 2,
+                    "n_traded_dates": 1,
+                },
+                "view_b": {
+                    "compounded_return": 0.05,
+                    "annualized_return": yearly_ann,
+                    "annualized_sharpe": 0.9,
+                    "max_drawdown": yearly_dd,
+                },
+            }
+        ]
+        report["concentration_primary_cross_top5"] = {
+            "top5": [
+                {"ticker": "DISTX", "abs_pnl": distx_abs, "share": distx_share},
+            ],
+            "top5_share_sum": top5_sum,
+            "total_abs_pnl": distx_abs,
+        }
+        for window_name in ("full_history", "primary"):
+            sens = report["fill_assumption_sensitivity"][window_name]
+            sens["mean_cross_minus_mid_car_both_traded"] = car_delta
+            sens["mean_cross_minus_mid_pnl_both_traded"] = pnl_delta
+            sens["mean_spread_cost_ratio_cross"] = scr_cross
+            sens["mean_spread_cost_ratio_mid"] = scr_mid
+            sens["mean_leg_spread_to_credit_ratio_cross"] = lscr_cross
+            sens["mean_leg_spread_to_credit_ratio_mid"] = lscr_mid
 
-    def test_markdown_sensitivity_shows_car_pnl_and_spread_diagnostics(self):
-        mid, cross = self._complete_packs()
-        report = build_decision_report(
-            mid=mid, cross=cross,
-            experiment_id="sprint006_baseline_v1",
-            contract_id="sprint006_baseline_v1",
-            repo_sha="a" * 40,
-        )
         md = render_decision_report_markdown(report)
-        assert "mean_cross_minus_mid_car_both_traded" in md or "cross-minus-mid CAR" in md
-        assert "mean_cross_minus_mid_pnl_both_traded" in md or "cross-minus-mid PnL" in md
-        assert "spread_cost_ratio" in md
-        assert "leg_spread_to_credit" in md
+
+        assert f"| full_history | B calendar |" in md
+        assert f"{view_b_ann:.6g}" in md
+        assert (
+            f"| 2020 | 2 | 1 | 0.05 | {yearly_ann:.6g} | 0.9 | {yearly_dd:.6g} |"
+            in md
+        )
+        assert f"| DISTX | {distx_abs:.6g} | {distx_share:.6g} |" in md
+        assert f"top-5 |PnL| aggregate share (primary cross): {top5_sum:.6g}" in md
+        assert f"{car_delta:.6g}" in md
+        assert f"{pnl_delta:.6g}" in md
+        assert f"{scr_cross:.6g}" in md
+        assert f"{scr_mid:.6g}" in md
+        assert f"{lscr_cross:.6g}" in md
+        assert f"{lscr_mid:.6g}" in md
+        # Sensitivity row must carry all six diagnostics together.
+        assert (
+            f"| full_history | 1 | 0 | 0 | 0 | 0 | "
+            f"{car_delta:.6g} | {pnl_delta:.6g} | "
+            f"{scr_cross:.6g} | {scr_mid:.6g} | "
+            f"{lscr_cross:.6g} | {lscr_mid:.6g} |"
+        ) in md
 
     def test_incomplete_results_banner_when_failed_dates_exist(self):
         mid, cross = self._complete_packs()
