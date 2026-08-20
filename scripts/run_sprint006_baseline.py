@@ -88,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
               f"trade_log_rows={run['trade_log_rows']}")
         for name, path in sorted(run["outputs"].items()):
             print(f"  {name}: {path}")
+    print(f"decision_report_json: {outcome['decision_report_json']}")
+    print(f"decision_report_md: {outcome['decision_report_md']}")
     print(f"receipt: {outcome['receipt_path']}")
     return 0
 

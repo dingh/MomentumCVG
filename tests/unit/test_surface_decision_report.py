@@ -1,6 +1,7 @@
-"""Synthetic tests for Sprint 006 D3 Commit 1 decision-report calculations."""
+"""Synthetic tests for Sprint 006 D3 decision-report calculations."""
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import numpy as np
@@ -8,10 +9,15 @@ import pandas as pd
 import pytest
 
 from src.backtest.surface_decision_report import (
+    CANDIDATE_VIEW_COLUMNS,
     PRIMARY_END,
     PRIMARY_START,
+    SELECTION_BIAS_NOTICE,
     DecisionMetricsError,
     assert_report_preconditions,
+    build_candidate_view,
+    build_decision_report,
+    classify_structure_reason_code,
     compute_activity,
     compute_fill_assumption_sensitivity,
     compute_long_short_attribution,
@@ -19,8 +25,11 @@ from src.backtest.surface_decision_report import (
     compute_view_a,
     compute_view_b,
     compute_weekly_outcomes,
+    dumps_decision_report,
     evaluate_fill_window,
     filter_to_window,
+    render_decision_report_markdown,
+    summarize_funnel,
 )
 
 
@@ -442,3 +451,338 @@ def test_window_constants_match_frozen_d0():
         date(2020, 1, 3),
         date(2026, 7, 10),
     ]
+
+
+# =============================================================================
+# Commit 3 — candidate view, funnel totals, report serialization
+# =============================================================================
+
+def _empty_legs() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "run_id",
+            "fill_label",
+            "trade_date",
+            "ticker",
+            "direction",
+            "leg_index",
+            "included_in_portfolio",
+            "entry_cash_per_unit",
+            "expiry_payoff_per_unit",
+            "pnl_per_unit",
+            "pnl_total_leg",
+        ]
+    )
+
+
+def _trade_row(
+    trade_date: date,
+    *,
+    ticker: str = "AAA",
+    direction: str = "long",
+    included: bool = True,
+    structure_ok: bool = True,
+    failure_reason=None,
+    exclusion_reason=None,
+    pnl_total: float = 10.0,
+    fill_label: str = "cross",
+    run_id: str = "run_cross",
+) -> dict:
+    return {
+        "run_id": run_id,
+        "fill_label": fill_label,
+        "trade_date": trade_date,
+        "ticker": ticker,
+        "direction": direction,
+        "included_in_portfolio": included,
+        "structure_ok": structure_ok,
+        "failure_reason": failure_reason,
+        "exclusion_reason": exclusion_reason,
+        "pnl_total": pnl_total,
+        "instrument_type": "long_straddle",
+        "entry_cost_per_share": 1.0,
+        "pnl_per_share": 0.1,
+        "capital_at_risk_dollars": 100.0,
+    }
+
+
+def _funnel_row(trade_date: date, **overrides) -> dict:
+    row = {
+        "run_id": "run_cross",
+        "fill_label": "cross",
+        "trade_date": trade_date,
+        "n_expected": 1,
+        "n_feature_covered": 1,
+        "n_universe": 10,
+        "n_jointly_eligible": 8,
+        "n_post_signal": 4,
+        "n_post_signal_long": 2,
+        "n_post_signal_short": 2,
+        "n_constructable": 3,
+        "n_constructable_long": 2,
+        "n_constructable_short": 1,
+        "n_included": 2,
+        "n_included_long": 1,
+        "n_included_short": 1,
+        "date_status": "traded",
+        "date_reason": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def _pack(
+    *,
+    fill_label: str,
+    run_id: str,
+    status: pd.DataFrame,
+    summary: pd.DataFrame,
+    trade_log: pd.DataFrame,
+    funnel: pd.DataFrame | None = None,
+    legs: pd.DataFrame | None = None,
+) -> dict:
+    return {
+        "run_id": run_id,
+        "fill_label": fill_label,
+        "date_status": status,
+        "date_summary": summary,
+        "trade_log": trade_log,
+        "funnel_summary": funnel if funnel is not None else pd.DataFrame([_funnel_row(D1)]),
+        "leg_log": legs if legs is not None else _empty_legs(),
+    }
+
+
+class TestCandidateViewMappings:
+    def test_traded_structure_failed_and_portfolio_excluded(self):
+        log = pd.DataFrame(
+            [
+                _trade_row(D1, included=True, structure_ok=True),
+                _trade_row(
+                    D1,
+                    ticker="BBB",
+                    included=False,
+                    structure_ok=False,
+                    failure_reason="metadata_error: surface_valid=False",
+                ),
+                _trade_row(
+                    D1,
+                    ticker="CCC",
+                    included=False,
+                    structure_ok=True,
+                    exclusion_reason="max_names_cap",
+                ),
+            ]
+        )
+        view = build_candidate_view(log, run_id="run_cross", fill_label="cross")
+        assert list(view.columns) == CANDIDATE_VIEW_COLUMNS
+        by_ticker = view.set_index("ticker")
+        assert by_ticker.loc["AAA", "decision_status"] == "traded"
+        assert by_ticker.loc["AAA", "stage"] == "traded"
+        assert pd.isna(by_ticker.loc["AAA", "reason_code"])
+        assert by_ticker.loc["BBB", "stage"] == "structure_failed"
+        assert by_ticker.loc["BBB", "decision_status"] == "no_trade"
+        assert by_ticker.loc["BBB", "reason_code"] == "metadata_error"
+        assert by_ticker.loc["BBB", "reason_raw"].startswith("metadata_error:")
+        assert by_ticker.loc["CCC", "stage"] == "portfolio_excluded"
+        assert by_ticker.loc["CCC", "reason_code"] == "max_names_cap"
+
+    @pytest.mark.parametrize(
+        "failure,code",
+        [
+            ("No quote surface rows for X", "missing_quotes_or_body"),
+            ("No eligible quotes available", "missing_quotes_or_body"),
+            ("Missing body call/put for X", "missing_quotes_or_body"),
+            ("Missing tradeable body call/put for X", "missing_quotes_or_body"),
+            ("No quotes with abs_delta for X", "wing_or_liquidity_selection"),
+            ("Iron fly spread_cost_ratio=1.2 exceeds 1.0", "wing_or_liquidity_selection"),
+            ("unexpected builder failure", "other_structure"),
+        ],
+    )
+    def test_structure_reason_prefixes(self, failure, code):
+        assert classify_structure_reason_code(failure) == code
+
+    def test_structure_failure_not_mapped_to_no_tradeable_structure(self):
+        log = pd.DataFrame(
+            [
+                _trade_row(
+                    D1,
+                    included=False,
+                    structure_ok=False,
+                    failure_reason="No eligible quotes",
+                    exclusion_reason="no_tradeable_structure",
+                )
+            ]
+        )
+        view = build_candidate_view(log, run_id="r", fill_label="cross")
+        assert view.iloc[0]["reason_code"] == "missing_quotes_or_body"
+        assert view.iloc[0]["reason_raw"] == "No eligible quotes"
+
+
+class TestFunnelAndReportAssembly:
+    def test_funnel_averages_skip_nulls(self):
+        funnel = pd.DataFrame(
+            [
+                _funnel_row(D1, n_jointly_eligible=10, n_included=2),
+                _funnel_row(
+                    D2,
+                    n_feature_covered=0,
+                    n_universe=None,
+                    n_jointly_eligible=None,
+                    n_post_signal=None,
+                    n_constructable=None,
+                    n_included=None,
+                    date_status="failed",
+                    date_reason="missing_features",
+                ),
+                _funnel_row(D3, n_jointly_eligible=0, n_included=0, date_status="valid_no_trade"),
+            ]
+        )
+        totals = summarize_funnel(funnel)
+        assert totals["n_expected_dates"] == 3
+        assert totals["n_feature_covered_dates"] == 2
+        assert totals["n_dates_with_jointly_eligible"] == 2
+        assert totals["mean_jointly_eligible"] == pytest.approx(5.0)
+        assert totals["sum_included"] == pytest.approx(2.0)
+        assert SELECTION_BIAS_NOTICE in totals["selection_bias_notice"]
+
+    def _complete_packs(self):
+        status = _status_rows([(D1, "traded"), (D2, "valid_no_trade")])
+        summary = pd.DataFrame([_summary_row(D1, pnl=50.0, cap=100.0)])
+        # No included rows → empty legs satisfy integrity; structure failures still counted.
+        cross_log = pd.DataFrame(
+            [
+                _trade_row(
+                    D1,
+                    ticker="ZZZ",
+                    included=False,
+                    structure_ok=False,
+                    failure_reason="metadata_error: bad",
+                    fill_label="cross",
+                    run_id="run_cross",
+                    pnl_total=0.0,
+                ),
+                _trade_row(
+                    D1,
+                    ticker="YYY",
+                    included=False,
+                    structure_ok=True,
+                    exclusion_reason="max_names_cap",
+                    fill_label="cross",
+                    run_id="run_cross",
+                    pnl_total=0.0,
+                ),
+            ]
+        )
+        mid_log = pd.DataFrame(
+            [
+                _trade_row(
+                    D1,
+                    ticker="ZZZ",
+                    included=False,
+                    structure_ok=False,
+                    failure_reason="No eligible quotes",
+                    fill_label="mid",
+                    run_id="run_mid",
+                    pnl_total=0.0,
+                )
+            ]
+        )
+        funnel_cross = pd.DataFrame(
+            [_funnel_row(D1), _funnel_row(D2, n_included=0, date_status="valid_no_trade")]
+        )
+        funnel_mid = funnel_cross.copy()
+        funnel_mid["fill_label"] = "mid"
+        funnel_mid["run_id"] = "run_mid"
+        return (
+            _pack(
+                fill_label="mid",
+                run_id="run_mid",
+                status=status,
+                summary=summary,
+                trade_log=mid_log,
+                funnel=funnel_mid,
+            ),
+            _pack(
+                fill_label="cross",
+                run_id="run_cross",
+                status=status,
+                summary=summary,
+                trade_log=cross_log,
+                funnel=funnel_cross,
+            ),
+        )
+
+    def test_deterministic_json_and_infinity_serialization(self):
+        mid, cross = self._complete_packs()
+        report = build_decision_report(
+            mid=mid,
+            cross=cross,
+            experiment_id="sprint006_baseline_v1",
+            contract_id="sprint006_baseline_v1",
+            repo_sha="a" * 40,
+        )
+        text1 = dumps_decision_report(report)
+        text2 = dumps_decision_report(report)
+        assert text1 == text2
+        payload = json.loads(text1)
+        assert payload["result_complete"] is True
+        assert payload["has_unresolved_failures"] is False
+        assert payload["by_fill"]["cross"]["full_history"]["weekly"]["profit_factor"] == "Infinity"
+        assert "NaN" not in text1
+        assert payload["concentration_primary_cross_top5"]["top5_share_sum"] <= 1.0 + 1e-12
+        md = render_decision_report_markdown(report)
+        assert md.startswith("# Sprint 006 baseline decision report")
+        assert "INCOMPLETE RESULT" not in md
+        assert SELECTION_BIAS_NOTICE in md
+        assert "Cross (primary)" in md
+
+    def test_incomplete_results_banner_when_failed_dates_exist(self):
+        mid, cross = self._complete_packs()
+        failed_status = _status_rows(
+            [(D1, "traded"), (D2, "valid_no_trade"), (D3, "failed")]
+        )
+        mid["date_status"] = failed_status
+        cross["date_status"] = failed_status
+        report = build_decision_report(
+            mid=mid,
+            cross=cross,
+            experiment_id="sprint006_baseline_v1",
+            contract_id="sprint006_baseline_v1",
+            repo_sha="b" * 40,
+        )
+        assert report["result_complete"] is False
+        assert report["has_unresolved_failures"] is True
+        md = render_decision_report_markdown(report)
+        assert "INCOMPLETE RESULT" in md
+
+    def test_integrity_check_aborts_before_report(self):
+        mid, cross = self._complete_packs()
+        cross["trade_log"] = pd.DataFrame(
+            [_trade_row(D1, fill_label="cross", run_id="run_cross", included=True)]
+        )
+        cross["leg_log"] = _empty_legs()
+        with pytest.raises(DecisionMetricsError, match="no matching leg rows"):
+            build_decision_report(
+                mid=mid,
+                cross=cross,
+                experiment_id="sprint006_baseline_v1",
+                contract_id="sprint006_baseline_v1",
+                repo_sha="c" * 40,
+            )
+
+    def test_fill_sensitivity_and_structure_counts_present(self):
+        mid, cross = self._complete_packs()
+        report = build_decision_report(
+            mid=mid,
+            cross=cross,
+            experiment_id="sprint006_baseline_v1",
+            contract_id="sprint006_baseline_v1",
+            repo_sha="d" * 40,
+        )
+        sens = report["fill_assumption_sensitivity"]["full_history"]
+        assert sens["n_dates_both_traded"] == 1
+        assert "mean_cross_minus_mid_car_both_traded" in sens
+        counts = report["by_fill"]["cross"]["full_history"]["structure_failure_counts"]
+        assert counts["metadata_error"] == 1
+        assert counts["other_structure"] == 0
+        assert SELECTION_BIAS_NOTICE in report["limitations"]

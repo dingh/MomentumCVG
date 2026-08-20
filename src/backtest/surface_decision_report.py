@@ -1,15 +1,16 @@
 """
-Surface-path decision-report calculations (Sprint 006 D3 Commit 1).
+Surface-path decision-report calculations (Sprint 006 D3).
 
 Pure post-pass metrics over existing ``date_status`` / ``date_summary`` /
-``trade_log`` tables. Does not select, price, size, or settle trades.
-Does not build JSON/Markdown report files (Commit 3) or check leg logs
-(Commit 2).
+``trade_log`` / funnel / leg-log tables. Does not select, price, size, or
+settle trades. Commit 3 adds candidate-view derivation and deterministic
+JSON/Markdown report assembly.
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
-from typing import Any, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -879,3 +880,674 @@ def assert_included_trade_legs(
                 f"leg log has included legs for unmatched trade "
                 f"{key[2]} {key[3]} {key[4]}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Commit 3 — candidate view, funnel totals, decision report JSON/MD
+# ---------------------------------------------------------------------------
+
+CANDIDATE_VIEW_COLUMNS = [
+    "run_id",
+    "fill_label",
+    "trade_date",
+    "ticker",
+    "direction",
+    "decision_status",
+    "stage",
+    "reason_code",
+    "reason_raw",
+]
+
+REPORT_WINDOWS: tuple[tuple[str, date, date], ...] = (
+    ("full_history", FULL_HISTORY_START, FULL_HISTORY_END),
+    ("primary", PRIMARY_START, PRIMARY_END),
+)
+
+STRUCTURE_REASON_CODES = (
+    "metadata_error",
+    "missing_quotes_or_body",
+    "wing_or_liquidity_selection",
+    "other_structure",
+)
+
+_PORTFOLIO_REASON_CODES = frozenset(
+    {
+        "max_names_cap",
+        "invalid_max_loss",
+        "premium_exceeds_fair_share",
+        "max_loss_exceeds_fair_share",
+        "no_short_credit",
+        "earnings_exclusion",
+    }
+)
+
+_STRUCTURE_REASON_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("metadata_error:", "metadata_error"),
+    ("No quote surface rows", "missing_quotes_or_body"),
+    ("No eligible quotes", "missing_quotes_or_body"),
+    ("Missing body call/put", "missing_quotes_or_body"),
+    ("Missing tradeable body call/put", "missing_quotes_or_body"),
+    ("No quotes with abs_delta", "wing_or_liquidity_selection"),
+    ("Iron fly spread_cost_ratio=", "wing_or_liquidity_selection"),
+)
+
+SELECTION_BIAS_NOTICE = (
+    "Post-signal candidate means the name already passed the Momentum-tail and "
+    "within-side CVG filters; these artifacts cannot support full-universe "
+    "Momentum IC or CVG increment tests."
+)
+
+REPORT_LIMITATIONS: tuple[str, ...] = (
+    "Hold-to-expiry; positions are not managed intra-week.",
+    "No earnings filter.",
+    "Iron-fly wings use below-nearest 0.15-delta selection.",
+    "Tier A sizing is not integer lots.",
+    "Long-only fallback dates are possible.",
+    "Mid is a fill-assumption diagnostic, not a pure transaction-cost attribution.",
+    "robust_score is not a decision metric and is not used for go/no-go.",
+    SELECTION_BIAS_NOTICE,
+)
+
+
+def classify_structure_reason_code(failure_reason: Any) -> Optional[str]:
+    """Map a structure ``failure_reason`` prefix to one of four stable codes."""
+    if failure_reason is None or (isinstance(failure_reason, float) and pd.isna(failure_reason)):
+        return "other_structure"
+    text = str(failure_reason)
+    if text == "" or text.lower() == "nan":
+        return "other_structure"
+    for prefix, code in _STRUCTURE_REASON_PREFIXES:
+        if text.startswith(prefix):
+            return code
+    return "other_structure"
+
+
+def classify_portfolio_reason_code(exclusion_reason: Any) -> Optional[str]:
+    """Map an S5 ``exclusion_reason`` onto the frozen portfolio vocabulary."""
+    if exclusion_reason is None or (isinstance(exclusion_reason, float) and pd.isna(exclusion_reason)):
+        return "other_exclusion"
+    text = str(exclusion_reason)
+    if text in _PORTFOLIO_REASON_CODES:
+        return text
+    return "other_exclusion"
+
+
+def build_candidate_view(
+    trade_log: pd.DataFrame,
+    *,
+    run_id: str,
+    fill_label: str,
+) -> pd.DataFrame:
+    """Derive one candidate-view row per ``trade_log`` row (post-signal grain)."""
+    empty = pd.DataFrame(columns=CANDIDATE_VIEW_COLUMNS)
+    if trade_log is None or trade_log.empty:
+        return empty
+
+    frame = trade_log.copy()
+    if "trade_date" not in frame.columns:
+        return empty
+
+    rows: list[dict[str, Any]] = []
+    for _, raw in frame.iterrows():
+        included = bool(raw.get("included_in_portfolio") is True)
+        structure_ok = raw.get("structure_ok")
+        if included:
+            stage = "traded"
+            decision_status = "traded"
+            reason_code: Optional[str] = None
+            reason_raw: Optional[str] = None
+        elif structure_ok is not True:
+            stage = "structure_failed"
+            decision_status = "no_trade"
+            reason_raw_val = raw.get("failure_reason")
+            reason_raw = None if pd.isna(reason_raw_val) else str(reason_raw_val)
+            reason_code = classify_structure_reason_code(reason_raw_val)
+        else:
+            stage = "portfolio_excluded"
+            decision_status = "no_trade"
+            reason_raw_val = raw.get("exclusion_reason")
+            reason_raw = None if pd.isna(reason_raw_val) else str(reason_raw_val)
+            reason_code = classify_portfolio_reason_code(reason_raw_val)
+
+        row_fill = raw.get("fill_label", fill_label)
+        if pd.isna(row_fill) or row_fill is None or str(row_fill) == "":
+            row_fill = fill_label
+        row_run = raw.get("run_id", run_id)
+        if pd.isna(row_run) or row_run is None or str(row_run) == "":
+            row_run = run_id
+
+        rows.append(
+            {
+                "run_id": str(row_run),
+                "fill_label": str(row_fill),
+                "trade_date": _to_date(raw["trade_date"]),
+                "ticker": raw.get("ticker"),
+                "direction": raw.get("direction"),
+                "decision_status": decision_status,
+                "stage": stage,
+                "reason_code": reason_code,
+                "reason_raw": reason_raw,
+            }
+        )
+    return pd.DataFrame(rows, columns=CANDIDATE_VIEW_COLUMNS)
+
+
+def structure_failure_counts(candidate_view: pd.DataFrame) -> dict[str, int]:
+    """Histogram of the four structure ``reason_code`` values (zeros for absent)."""
+    counts = {code: 0 for code in STRUCTURE_REASON_CODES}
+    if candidate_view is None or candidate_view.empty:
+        return counts
+    failed = candidate_view[candidate_view["stage"] == "structure_failed"]
+    if failed.empty or "reason_code" not in failed.columns:
+        return counts
+    for code, n in failed["reason_code"].value_counts(dropna=False).items():
+        key = str(code) if code is not None and not (isinstance(code, float) and pd.isna(code)) else "other_structure"
+        if key in counts:
+            counts[key] = int(n)
+        else:
+            counts["other_structure"] += int(n)
+    return counts
+
+
+def _null_aware_sum(series: pd.Series) -> Optional[float]:
+    numeric = pd.to_numeric(series, errors="coerce")
+    valid = numeric.dropna()
+    if valid.empty:
+        return None
+    return float(valid.sum())
+
+
+def _null_aware_mean(series: pd.Series) -> Optional[float]:
+    numeric = pd.to_numeric(series, errors="coerce")
+    valid = numeric.dropna()
+    if valid.empty:
+        return None
+    return float(valid.mean())
+
+
+def _null_aware_n_evaluated(series: pd.Series) -> int:
+    numeric = pd.to_numeric(series, errors="coerce")
+    return int(numeric.notna().sum())
+
+
+def summarize_funnel(funnel_summary: pd.DataFrame) -> dict[str, Any]:
+    """Aggregate funnel counts; averages skip null/unexecuted stage values."""
+    if funnel_summary is None or funnel_summary.empty:
+        return {
+            "n_expected_dates": 0,
+            "n_feature_covered_dates": 0,
+            "joint_coverage_rate": float("nan"),
+            "n_dates_with_universe": 0,
+            "sum_universe": None,
+            "mean_universe": None,
+            "n_dates_with_jointly_eligible": 0,
+            "sum_jointly_eligible": None,
+            "mean_jointly_eligible": None,
+            "n_dates_with_post_signal": 0,
+            "sum_post_signal": None,
+            "mean_post_signal": None,
+            "sum_post_signal_long": None,
+            "sum_post_signal_short": None,
+            "n_dates_with_constructable": 0,
+            "sum_constructable": None,
+            "mean_constructable": None,
+            "sum_constructable_long": None,
+            "sum_constructable_short": None,
+            "n_dates_with_included": 0,
+            "sum_included": None,
+            "mean_included": None,
+            "sum_included_long": None,
+            "sum_included_short": None,
+            "selection_bias_notice": SELECTION_BIAS_NOTICE,
+        }
+
+    frame = funnel_summary.copy()
+    if "trade_date" in frame.columns:
+        frame["trade_date"] = [_to_date(v) for v in frame["trade_date"]]
+
+    n_expected = int(pd.to_numeric(frame["n_expected"], errors="coerce").fillna(0).sum())
+    n_feature = int(pd.to_numeric(frame["n_feature_covered"], errors="coerce").fillna(0).sum())
+    coverage = float(n_feature / n_expected) if n_expected > 0 else float("nan")
+
+    def _block(col: str) -> tuple[int, Optional[float], Optional[float]]:
+        series = frame[col] if col in frame.columns else pd.Series(dtype=float)
+        return (
+            _null_aware_n_evaluated(series),
+            _null_aware_sum(series),
+            _null_aware_mean(series),
+        )
+
+    n_u, sum_u, mean_u = _block("n_universe")
+    n_j, sum_j, mean_j = _block("n_jointly_eligible")
+    n_p, sum_p, mean_p = _block("n_post_signal")
+    n_c, sum_c, mean_c = _block("n_constructable")
+    n_i, sum_i, mean_i = _block("n_included")
+
+    return {
+        "n_expected_dates": n_expected,
+        "n_feature_covered_dates": n_feature,
+        "joint_coverage_rate": coverage,
+        "n_dates_with_universe": n_u,
+        "sum_universe": sum_u,
+        "mean_universe": mean_u,
+        "n_dates_with_jointly_eligible": n_j,
+        "sum_jointly_eligible": sum_j,
+        "mean_jointly_eligible": mean_j,
+        "n_dates_with_post_signal": n_p,
+        "sum_post_signal": sum_p,
+        "mean_post_signal": mean_p,
+        "sum_post_signal_long": _null_aware_sum(frame.get("n_post_signal_long", pd.Series(dtype=float))),
+        "sum_post_signal_short": _null_aware_sum(frame.get("n_post_signal_short", pd.Series(dtype=float))),
+        "n_dates_with_constructable": n_c,
+        "sum_constructable": sum_c,
+        "mean_constructable": mean_c,
+        "sum_constructable_long": _null_aware_sum(frame.get("n_constructable_long", pd.Series(dtype=float))),
+        "sum_constructable_short": _null_aware_sum(frame.get("n_constructable_short", pd.Series(dtype=float))),
+        "n_dates_with_included": n_i,
+        "sum_included": sum_i,
+        "mean_included": mean_i,
+        "sum_included_long": _null_aware_sum(frame.get("n_included_long", pd.Series(dtype=float))),
+        "sum_included_short": _null_aware_sum(frame.get("n_included_short", pd.Series(dtype=float))),
+        "selection_bias_notice": SELECTION_BIAS_NOTICE,
+    }
+
+
+def report_jsonable(value: Any) -> Any:
+    """JSON-ready conversion: NaN→null, +Infinity→\"Infinity\", stable types."""
+    if value is None:
+        return None
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): report_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [report_jsonable(item) for item in value]
+    if isinstance(value, (int, np.integer)) and not isinstance(value, (bool, np.bool_)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        number = float(value)
+        if number == float("inf"):
+            return "Infinity"
+        if not np.isfinite(number):
+            return None
+        return number
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
+def dumps_decision_report(report: Mapping[str, Any]) -> str:
+    """Deterministic standards-compliant JSON text for the decision report."""
+    payload = report_jsonable(dict(report))
+    return json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+
+
+def _filter_frame_to_window(
+    frame: pd.DataFrame,
+    start: date,
+    end: date,
+    *,
+    date_col: str = "trade_date",
+) -> pd.DataFrame:
+    if frame is None or frame.empty or date_col not in frame.columns:
+        return frame.copy() if frame is not None else pd.DataFrame()
+    out = frame.copy()
+    out[date_col] = [_to_date(v) for v in out[date_col]]
+    mask = (out[date_col] >= start) & (out[date_col] <= end)
+    return out.loc[mask].reset_index(drop=True)
+
+
+def _window_fill_block(
+    *,
+    date_status: pd.DataFrame,
+    date_summary: pd.DataFrame,
+    trade_log: pd.DataFrame,
+    funnel_summary: pd.DataFrame,
+    candidate_view: pd.DataFrame,
+    start: date,
+    end: date,
+) -> dict[str, Any]:
+    metrics = evaluate_fill_window(
+        date_status, date_summary, trade_log, start=start, end=end
+    )
+    funnel_w = _filter_frame_to_window(funnel_summary, start, end)
+    candidates_w = _filter_frame_to_window(candidate_view, start, end)
+    return {
+        "window_start": metrics["window_start"],
+        "window_end": metrics["window_end"],
+        "date_class_counts": metrics["date_class_counts"],
+        "result_complete": metrics["result_complete"],
+        "has_unresolved_failures": metrics["has_unresolved_failures"],
+        "view_a_conditional": {
+            "mean_cycle_car": metrics["view_a"]["mean_cycle_car"],
+            "sharpe": metrics["view_a"]["annualized_sharpe"],
+            "drawdown": metrics["view_a"]["max_drawdown"],
+            "n_traded": metrics["view_a"]["n_traded_dates"],
+        },
+        "view_b_calendar": {
+            "compounded": metrics["view_b"]["compounded_return"],
+            "annualized_return": metrics["view_b"]["annualized_return"],
+            "sharpe": metrics["view_b"]["annualized_sharpe"],
+            "drawdown": metrics["view_b"]["max_drawdown"],
+            "complete": metrics["view_b"]["complete"],
+        },
+        "weekly": metrics["weekly"],
+        "yearly": metrics["yearly"],
+        "long_short": metrics["long_short"],
+        "activity": metrics["activity"],
+        "concentration": metrics["concentration"],
+        "structure_failure_counts": structure_failure_counts(candidates_w),
+        "funnel_totals": summarize_funnel(funnel_w),
+    }
+
+
+def build_decision_report(
+    *,
+    mid: Mapping[str, Any],
+    cross: Mapping[str, Any],
+    experiment_id: str,
+    contract_id: str,
+    repo_sha: str,
+) -> dict[str, Any]:
+    """
+    Assemble the dual-fill / dual-window decision report.
+
+    Aborts with ``DecisionMetricsError`` on broken traded-date economics or
+    included-trade leg mismatches. Failed dates do not abort; they mark the
+    pack incomplete.
+    """
+    packs = {"mid": dict(mid), "cross": dict(cross)}
+    for label, pack in packs.items():
+        if pack.get("fill_label") != label:
+            raise DecisionMetricsError(
+                f"fill pack labeled {label!r} has fill_label={pack.get('fill_label')!r}"
+            )
+        assert_report_preconditions(
+            pack["date_status"], pack["date_summary"], pack["trade_log"]
+        )
+        assert_included_trade_legs(
+            pack["trade_log"],
+            pack["leg_log"],
+            run_id=str(pack["run_id"]),
+            fill_label=str(pack["fill_label"]),
+        )
+        pack["candidate_view"] = build_candidate_view(
+            pack["trade_log"],
+            run_id=str(pack["run_id"]),
+            fill_label=str(pack["fill_label"]),
+        )
+
+    by_fill: dict[str, Any] = {}
+    for fill_key, pack in packs.items():
+        by_fill[fill_key] = {}
+        for window_name, start, end in REPORT_WINDOWS:
+            by_fill[fill_key][window_name] = _window_fill_block(
+                date_status=pack["date_status"],
+                date_summary=pack["date_summary"],
+                trade_log=pack["trade_log"],
+                funnel_summary=pack["funnel_summary"],
+                candidate_view=pack["candidate_view"],
+                start=start,
+                end=end,
+            )
+
+    sensitivity: dict[str, Any] = {}
+    for window_name, start, end in REPORT_WINDOWS:
+        sensitivity[window_name] = compute_fill_assumption_sensitivity(
+            cross_date_status=packs["cross"]["date_status"],
+            cross_date_summary=packs["cross"]["date_summary"],
+            cross_trade_log=packs["cross"]["trade_log"],
+            mid_date_status=packs["mid"]["date_status"],
+            mid_date_summary=packs["mid"]["date_summary"],
+            mid_trade_log=packs["mid"]["trade_log"],
+            start=start,
+            end=end,
+        )
+
+    # Report completeness follows the official full-history calendars for both fills.
+    result_complete = (
+        by_fill["cross"]["full_history"]["result_complete"]
+        and by_fill["mid"]["full_history"]["result_complete"]
+    )
+    has_unresolved = not result_complete
+
+    return {
+        "experiment_id": experiment_id,
+        "contract_id": contract_id,
+        "repo_sha": repo_sha,
+        "result_complete": result_complete,
+        "has_unresolved_failures": has_unresolved,
+        "windows": {
+            "full_history": {
+                "start": FULL_HISTORY_START,
+                "end": FULL_HISTORY_END,
+            },
+            "primary": {
+                "start": PRIMARY_START,
+                "end": PRIMARY_END,
+            },
+        },
+        "fills": {
+            "cross": {
+                "role": "primary",
+                "run_id": packs["cross"]["run_id"],
+                "fill_label": "cross",
+            },
+            "mid": {
+                "role": "diagnostic",
+                "run_id": packs["mid"]["run_id"],
+                "fill_label": "mid",
+            },
+        },
+        "by_fill": by_fill,
+        "fill_assumption_sensitivity": sensitivity,
+        "concentration_primary_cross_top5": by_fill["cross"]["primary"]["concentration"],
+        "limitations": list(REPORT_LIMITATIONS),
+    }
+
+
+def _fmt_metric(value: Any) -> str:
+    converted = report_jsonable(value)
+    if converted is None:
+        return "n/a"
+    if isinstance(converted, bool):
+        return "true" if converted else "false"
+    if isinstance(converted, float):
+        return f"{converted:.6g}"
+    return str(converted)
+
+
+def render_decision_report_markdown(report: Mapping[str, Any]) -> str:
+    """Compact human rendering of the same numbers as ``decision_report.json``."""
+    lines: list[str] = []
+    lines.append("# Sprint 006 baseline decision report")
+    lines.append("")
+    lines.append(
+        "This pack summarizes the frozen mid+cross Surface baseline for the "
+        "contract-defined full-history and primary windows. **Cross** is the "
+        "primary economic view; **mid** is a fill-assumption diagnostic. "
+        "No go/no-go conclusion is declared here."
+    )
+    lines.append("")
+    if not report.get("result_complete", False):
+        lines.append(
+            "> **INCOMPLETE RESULT.** One or more expected dates are `failed`. "
+            "Do not treat this pack as a complete backtest result (including turnover)."
+        )
+        lines.append("")
+
+    lines.append(
+        f"experiment_id=`{report.get('experiment_id')}` · "
+        f"contract_id=`{report.get('contract_id')}` · "
+        f"repo_sha=`{report.get('repo_sha')}` · "
+        f"result_complete=`{report.get('result_complete')}`"
+    )
+    lines.append("")
+
+    def _headline(fill_key: str, title: str) -> None:
+        lines.append(f"## {title}")
+        lines.append("")
+        lines.append(
+            "| window | view | mean_CAR / compounded | sharpe | drawdown | n_traded / complete |"
+        )
+        lines.append("|---|---|---|---|---|---|")
+        for window_name, _, _ in REPORT_WINDOWS:
+            block = report["by_fill"][fill_key][window_name]
+            a = block["view_a_conditional"]
+            b = block["view_b_calendar"]
+            lines.append(
+                f"| {window_name} | A conditional | {_fmt_metric(a['mean_cycle_car'])} | "
+                f"{_fmt_metric(a['sharpe'])} | {_fmt_metric(a['drawdown'])} | "
+                f"{_fmt_metric(a['n_traded'])} |"
+            )
+            lines.append(
+                f"| {window_name} | B calendar | {_fmt_metric(b['compounded'])} | "
+                f"{_fmt_metric(b['sharpe'])} | {_fmt_metric(b['drawdown'])} | "
+                f"{_fmt_metric(b['complete'])} |"
+            )
+        lines.append("")
+
+    _headline("cross", "Cross (primary)")
+    _headline("mid", "Mid (diagnostic)")
+
+    lines.append("## Completeness and date classes")
+    lines.append("")
+    lines.append("| fill | window | expected | traded | valid_no_trade | failed | complete |")
+    lines.append("|---|---|---|---|---|---|---|")
+    for fill_key in ("cross", "mid"):
+        for window_name, _, _ in REPORT_WINDOWS:
+            c = report["by_fill"][fill_key][window_name]["date_class_counts"]
+            lines.append(
+                f"| {fill_key} | {window_name} | {c['n_expected_dates']} | "
+                f"{c['n_traded_dates']} | {c['n_valid_no_trade_dates']} | "
+                f"{c['n_failed_dates']} | {c['result_complete']} |"
+            )
+    lines.append("")
+
+    lines.append("## Weekly diagnostics (cross)")
+    lines.append("")
+    lines.append("| window | win_rate | profit_factor | no_trade_frequency |")
+    lines.append("|---|---|---|---|")
+    for window_name, _, _ in REPORT_WINDOWS:
+        w = report["by_fill"]["cross"][window_name]["weekly"]
+        lines.append(
+            f"| {window_name} | {_fmt_metric(w.get('win_rate'))} | "
+            f"{_fmt_metric(w.get('profit_factor'))} | "
+            f"{_fmt_metric(w.get('no_trade_frequency'))} |"
+        )
+    lines.append("")
+
+    lines.append("## Yearly diagnostics (cross, primary window)")
+    lines.append("")
+    yearly = report["by_fill"]["cross"]["primary"]["yearly"]
+    if yearly:
+        lines.append("| year | n_expected | n_traded | compounded | sharpe |")
+        lines.append("|---|---|---|---|---|")
+        for row in yearly:
+            counts = row.get("date_class_counts", {})
+            view_b = row.get("view_b", {})
+            lines.append(
+                f"| {row.get('year')} | {counts.get('n_expected_dates')} | "
+                f"{counts.get('n_traded_dates')} | "
+                f"{_fmt_metric(view_b.get('compounded_return'))} | "
+                f"{_fmt_metric(view_b.get('annualized_sharpe'))} |"
+            )
+    else:
+        lines.append("_No yearly rows in the primary window._")
+    lines.append("")
+
+    lines.append("## Long / short attribution (cross, primary)")
+    lines.append("")
+    ls = report["by_fill"]["cross"]["primary"]["long_short"]
+    long_side = ls.get("long", {})
+    short_side = ls.get("short", {})
+    lines.append(
+        f"- long mean cycle return: {_fmt_metric(long_side.get('mean_cycle_return'))}; "
+        f"short mean cycle return: {_fmt_metric(short_side.get('mean_cycle_return'))}"
+    )
+    lines.append(
+        f"- long PnL: {_fmt_metric(long_side.get('pnl_total'))}; "
+        f"short PnL: {_fmt_metric(short_side.get('pnl_total'))}"
+    )
+    lines.append("")
+
+    lines.append("## Activity and concentration")
+    lines.append("")
+    act = report["by_fill"]["cross"]["primary"]["activity"]
+    turnover = act.get("turnover", {})
+    conc = report["concentration_primary_cross_top5"]
+    lines.append(
+        f"- primary cross activity: mean included names/traded date="
+        f"{_fmt_metric(act.get('avg_included_names_per_traded_date'))}, "
+        f"turnover_complete={_fmt_metric(turnover.get('complete'))}, "
+        f"mean_turnover_names={_fmt_metric(turnover.get('mean_included_names'))}"
+    )
+    lines.append(
+        f"- top-5 |PnL| share (primary cross): {_fmt_metric(conc.get('top5_share_sum'))}"
+    )
+    lines.append("")
+
+    lines.append("## Structure-failure counts")
+    lines.append("")
+    lines.append("| fill | window | metadata_error | missing_quotes_or_body | wing_or_liquidity_selection | other_structure |")
+    lines.append("|---|---|---|---|---|---|")
+    for fill_key in ("cross", "mid"):
+        for window_name, _, _ in REPORT_WINDOWS:
+            s = report["by_fill"][fill_key][window_name]["structure_failure_counts"]
+            lines.append(
+                f"| {fill_key} | {window_name} | {s['metadata_error']} | "
+                f"{s['missing_quotes_or_body']} | {s['wing_or_liquidity_selection']} | "
+                f"{s['other_structure']} |"
+            )
+    lines.append("")
+
+    lines.append("## Funnel totals (cross)")
+    lines.append("")
+    lines.append("| window | expected | feature_covered | mean jointly eligible | sum included |")
+    lines.append("|---|---|---|---|---|")
+    for window_name, _, _ in REPORT_WINDOWS:
+        f = report["by_fill"]["cross"][window_name]["funnel_totals"]
+        lines.append(
+            f"| {window_name} | {f['n_expected_dates']} | {f['n_feature_covered_dates']} | "
+            f"{_fmt_metric(f['mean_jointly_eligible'])} | {_fmt_metric(f['sum_included'])} |"
+        )
+    lines.append("")
+    lines.append(f"_Selection-bias notice:_ {SELECTION_BIAS_NOTICE}")
+    lines.append("")
+
+    lines.append("## Mid-versus-cross fill-assumption sensitivity")
+    lines.append("")
+    lines.append(
+        "Cross-minus-mid is **not** a pure transaction-cost number: fills can also "
+        "change sizing, inclusion, and selected structures."
+    )
+    lines.append("")
+    lines.append(
+        "| window | both traded | mid-only dates | cross-only dates | "
+        "mid-only candidates | cross-only candidates |"
+    )
+    lines.append("|---|---|---|---|---|---|")
+    for window_name, _, _ in REPORT_WINDOWS:
+        sens = report["fill_assumption_sensitivity"][window_name]
+        lines.append(
+            f"| {window_name} | {_fmt_metric(sens.get('n_dates_both_traded'))} | "
+            f"{_fmt_metric(sens.get('n_dates_mid_only'))} | "
+            f"{_fmt_metric(sens.get('n_dates_cross_only'))} | "
+            f"{_fmt_metric(sens.get('n_candidates_mid_only'))} | "
+            f"{_fmt_metric(sens.get('n_candidates_cross_only'))} |"
+        )
+    lines.append("")
+
+    lines.append("## Limitations")
+    lines.append("")
+    for item in report.get("limitations", []):
+        lines.append(f"- {item}")
+    lines.append("")
+    return "\n".join(lines)

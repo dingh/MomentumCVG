@@ -1,8 +1,8 @@
 # Current sprint — 006
 
 **Updated:** 2026-08-19
-**Status:** `ACTIVE — D0/D1/D2 COMPLETE; D3 IMPLEMENTATION IN PROGRESS (COMMIT 2)`
-**Mode:** Build. D0 accepted and frozen. D1 accepted (`241b0d3` + review fix `c6b1735`). D2 accepted (`9224068`; design `aa72a86`). D3 design `b924330` **accepted**. Commit 1 (`361b333`) accepted. D3 implementation in progress — **Commit 2 implemented** (leg log, funnel, shared S2 eligibility helper). Commit 3 and D4 remain deferred.
+**Status:** `ACTIVE — D0/D1/D2 COMPLETE; D3 IMPLEMENTED — AWAITING REVIEW`
+**Mode:** Build. D0 accepted and frozen. D1 accepted (`241b0d3` + review fix `c6b1735`). D2 accepted (`9224068`; design `aa72a86`). D3 design `b924330` **accepted**. Commit 1 (`361b333`) and Commit 2 (`bb40864` + correction `f009684`) accepted. **D3 Commit 3 implemented** (candidate view, decision report JSON/MD, adapter persistence, D3 receipt). D3 awaits review; **D4 and real-data conclusions remain deferred**. Do not mark the sprint closed.
 **Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`)
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (design commit `1cdfad7`; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
@@ -39,7 +39,7 @@ Do not reopen or redesign accepted Sprint 004/005 work.
 ```text
 Sprint 004: trusted immutable input snapshot          ← CLOSED
 Sprint 005: trusted full-history weekly Mom/CVG        ← CLOSED
-Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D0/D1/D2 complete; D3 Commit 2 implemented)
+Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D0/D1/D2 complete; D3 implemented — awaiting review)
 Sprint 007: bounded robustness (only after 006 trusted)
 ```
 
@@ -112,9 +112,9 @@ Exercise and harden the existing `SurfaceRunner.run_single_config()` path so the
 
 Plan / implementation record: [`docs/tmp/sprint006_d2_eligibility_coverage_correctness_plan.md`](../tmp/sprint006_d2_eligibility_coverage_correctness_plan.md) (`ACCEPTED — D2 COMPLETE`). Accepted implementation: `9224068` (design `aa72a86`). Joint Mom+CVG count eligibility (`ceil` → 28 for `(42,8)`), A1 expected-date `date_status` accounting, iron-fly all-leg `max_leg_spread_pct`, and thin adapter persistence of `date_status`. Scope remains D2 only; D3–D4 deferred. No accepted real-data economic backtest or aggregate P&L.
 
-### D3 — Decision-quality evaluation report — **ACCEPTED DESIGN; COMMIT 2 IMPLEMENTED**
+### D3 — Decision-quality evaluation report — **IMPLEMENTED — AWAITING REVIEW**
 
-Plan: [`docs/tmp/sprint006_d3_decision_diagnostic_report_plan.md`](../tmp/sprint006_d3_decision_diagnostic_report_plan.md) (accepted design `b924330`). Commit 1 (`361b333`) accepted. **Commit 2** adds shared S2 eligibility helper, per-date funnel rows, constructable leg log, and included-trade reconciliation checks. Commit 3 (report persistence/rendering) and real-data execution remain deferred.
+Plan: [`docs/tmp/sprint006_d3_decision_diagnostic_report_plan.md`](../tmp/sprint006_d3_decision_diagnostic_report_plan.md) (accepted design `b924330`). Commits 1–3 implemented: dual-view metrics; funnel/leg log/integrity checks; candidate view; deterministic `decision_report.json` / `.md`; D3 receipt digests. **D3 is not yet accepted.** D4 (real-data smoke, manual sample, full-history execution, conclusion) remains deferred. No accepted real-data economic backtest or aggregate P&L in D3.
 
 ### D4 — Verification, full execution, and closeout
 
@@ -227,3 +227,4 @@ The 12–18 hour budget is a review trigger, not an acceptance condition. A corr
 | 2026-08-17 | D3 design corrected in-place (follow-up to `688c2a3`): short-iron-fly `abs(quantity)` scaling; abort on broken traded-date economics; remove `outcome_status` and drop-ticker/drop-week; funnel null vs zero; fill-assumption labeling; small structure-failure classes. Status remains `D3 DESIGN UNDER REVIEW` / `PROPOSED — AWAITING ACCEPTANCE`. No implementation, frozen-config change, real-data run, or P&L inspection. |
 | 2026-08-18 | D3 design `b924330` accepted. Sprint status → `ACTIVE — D0/D1/D2 COMPLETE; D3 IMPLEMENTATION IN PROGRESS (COMMIT 1)`. Commit 1 authorizes pure `surface_decision_report` calculations and synthetic tests only. No real-data run or aggregate P&L inspection. Commits 2–3 deferred. |
 | 2026-08-19 | D3 Commit 1 (`361b333`) accepted. Commit 2 implemented: shared S2 eligibility helper, funnel_summary, constructable leg log, included-trade reconciliation checks. Status → `D3 IMPLEMENTATION IN PROGRESS (COMMIT 2)`. D3 not complete. No real-data run or aggregate P&L inspection. |
+| 2026-08-19 | D3 Commit 3 implemented: candidate view, dual-fill decision report JSON/MD, adapter persistence, D3 receipt (`deliverable=sprint006_d3`), deferred list = D4 only. Status → `ACTIVE — D0/D1/D2 COMPLETE; D3 IMPLEMENTED — AWAITING REVIEW`. Frozen contract unchanged; no real-data economic run; no aggregate P&L inspected. Sprint remains open; D4 deferred. |

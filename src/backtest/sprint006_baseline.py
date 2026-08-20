@@ -32,6 +32,13 @@ import pandas as pd
 
 from src.backtest.option_surface import FillAssumption
 from src.backtest.run_config import BacktestRunConfig
+from src.backtest.surface_decision_report import (
+    DecisionMetricsError,
+    build_candidate_view,
+    build_decision_report,
+    dumps_decision_report,
+    render_decision_report_markdown,
+)
 from src.backtest.surface_run_config import SurfaceDataPaths
 from src.backtest.surface_runner import SurfaceRunner, SurfaceRunResult
 
@@ -47,10 +54,9 @@ MUTABLE_CACHE_ROOT = Path(r"C:/MomentumCVG_env/cache")
 # always run together.
 REQUIRED_FILL_LABELS = frozenset({"mid", "cross"})
 
-# Work that D1/D2 explicitly do not deliver; recorded in the receipt so a reader
+# Work that D1–D3 explicitly do not deliver; recorded in the receipt so a reader
 # never mistakes these outputs for a complete Sprint 006 result.
 DEFERRED_TO_LATER_DELIVERABLES = (
-    "decision-quality report and dual return views (D3)",
     "real-data smoke, manual trade sample, and full-history execution (D4)",
 )
 
@@ -430,22 +436,61 @@ def create_run_dir(output_dir: Path | str) -> Path:
 
 
 def write_run_outputs(result: SurfaceRunResult, run_dir: Path) -> Dict[str, Path]:
-    """Persist the existing result frames/summary; refuse to overwrite artifacts."""
+    """Persist result frames plus D3 candidate/leg/funnel tables; refuse overwrite."""
     run_id = result.config.run_id
+    fill_label = result.config.fill.label
     targets = {
         "trade_log": run_dir / f"trade_log_{run_id}.parquet",
         "date_summary": run_dir / f"date_summary_{run_id}.parquet",
         "date_status": run_dir / f"date_status_{run_id}.parquet",
         "run_summary": run_dir / f"run_summary_{run_id}.json",
+        "candidate_view": run_dir / f"candidate_view_{run_id}.parquet",
+        "leg_log": run_dir / f"leg_log_{run_id}.parquet",
+        "funnel_summary": run_dir / f"funnel_summary_{run_id}.parquet",
     }
     for path in targets.values():
         _refuse_existing(path)
 
+    candidate_view = build_candidate_view(
+        result.trade_log,
+        run_id=run_id,
+        fill_label=fill_label,
+    )
+
     result.trade_log.to_parquet(targets["trade_log"], index=False)
     result.date_summary.to_parquet(targets["date_summary"], index=False)
     result.date_status.to_parquet(targets["date_status"], index=False)
+    candidate_view.to_parquet(targets["candidate_view"], index=False)
+    result.leg_log.to_parquet(targets["leg_log"], index=False)
+    result.funnel_summary.to_parquet(targets["funnel_summary"], index=False)
     _write_json(_jsonable(dict(result.run_summary)), targets["run_summary"])
     return targets
+
+
+def write_decision_report_files(
+    report: Mapping[str, Any],
+    run_dir: Path,
+) -> Dict[str, Path]:
+    """Write deterministic decision_report.json and decision_report.md once per run dir."""
+    json_path = run_dir / "decision_report.json"
+    md_path = run_dir / "decision_report.md"
+    _refuse_existing(json_path)
+    _refuse_existing(md_path)
+    json_path.write_text(dumps_decision_report(report), encoding="utf-8")
+    md_path.write_text(render_decision_report_markdown(report), encoding="utf-8")
+    return {"decision_report_json": json_path, "decision_report_md": md_path}
+
+
+def _fill_pack_from_result(result: SurfaceRunResult) -> Dict[str, Any]:
+    return {
+        "run_id": result.config.run_id,
+        "fill_label": result.config.fill.label,
+        "date_status": result.date_status,
+        "date_summary": result.date_summary,
+        "trade_log": result.trade_log,
+        "funnel_summary": result.funnel_summary,
+        "leg_log": result.leg_log,
+    }
 
 
 def build_receipt(
@@ -453,16 +498,20 @@ def build_receipt(
     preflight_result: BaselinePreflight,
     repo_sha: str,
     run_outputs: Sequence[Tuple[BacktestRunConfig, Dict[str, Path], Mapping[str, Any]]],
+    decision_report_files: Mapping[str, Path],
+    decision_report: Mapping[str, Any],
     command: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Assemble the light run receipt (identity, effective configs, outputs)."""
     contract = preflight_result.contract
     return {
-        "deliverable": "sprint006_d2",
+        "deliverable": "sprint006_d3",
         "experiment_id": EXPERIMENT_ID,
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "command": list(command) if command is not None else None,
         "repo_sha": repo_sha,
+        "result_complete": bool(decision_report.get("result_complete")),
+        "has_unresolved_failures": bool(decision_report.get("has_unresolved_failures")),
         "contract": {
             "path": str(contract.path),
             "sha256": contract.sha256,
@@ -493,6 +542,13 @@ def build_receipt(
             }
             for config, outputs, run_summary in run_outputs
         ],
+        "decision_report": {
+            name: {
+                "path": str(path),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+            for name, path in sorted(decision_report_files.items())
+        },
         "deferred": list(DEFERRED_TO_LATER_DELIVERABLES),
     }
 
@@ -510,7 +566,7 @@ def run_baseline(
     """Run every frozen contract run through ``SurfaceRunner.run_single_config``.
 
     Returns a summary of written paths and row counts — deliberately no economic
-    metrics, so D1 execution cannot double as P&L inspection.
+    metrics, so D1/D3 execution cannot double as P&L inspection.
     """
     contract = load_contract(contract_path)
     checked = preflight(contract)
@@ -519,22 +575,48 @@ def run_baseline(
 
     runner = SurfaceRunner(data_paths=checked.data_paths)
     run_outputs: List[Tuple[BacktestRunConfig, Dict[str, Path], Dict[str, Any]]] = []
+    results_by_fill: Dict[str, SurfaceRunResult] = {}
     row_counts: Dict[str, int] = {}
     for config in checked.configs:
         result = runner.run_single_config(config)
         run_outputs.append((config, write_run_outputs(result, run_dir), dict(result.run_summary)))
+        results_by_fill[config.fill.label] = result
         row_counts[config.run_id] = int(len(result.trade_log))
 
+    if set(results_by_fill) != REQUIRED_FILL_LABELS:
+        raise ContractError(
+            f"expected fill labels {sorted(REQUIRED_FILL_LABELS)}, "
+            f"got {sorted(results_by_fill)}"
+        )
+
+    try:
+        decision_report = build_decision_report(
+            mid=_fill_pack_from_result(results_by_fill["mid"]),
+            cross=_fill_pack_from_result(results_by_fill["cross"]),
+            experiment_id=EXPERIMENT_ID,
+            contract_id=contract.contract_id,
+            repo_sha=repo_sha,
+        )
+    except DecisionMetricsError as exc:
+        raise ContractError(
+            f"refusing to publish D3 decision report or receipt: {exc}"
+        ) from exc
+
+    report_files = write_decision_report_files(decision_report, run_dir)
     receipt = build_receipt(
         preflight_result=checked,
         repo_sha=repo_sha,
         run_outputs=run_outputs,
+        decision_report_files=report_files,
+        decision_report=decision_report,
         command=command,
     )
     receipt_path = _write_json(receipt, run_dir / "run_receipt.json")
     return {
         "run_dir": run_dir,
         "receipt_path": receipt_path,
+        "decision_report_json": report_files["decision_report_json"],
+        "decision_report_md": report_files["decision_report_md"],
         "runs": [
             {
                 "run_id": config.run_id,

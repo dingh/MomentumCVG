@@ -442,9 +442,17 @@ class TestRunBaselineOnSyntheticFixtures:
         assert receipt["command"][0] == "run_sprint006_baseline.py"
         assert [run["fill_label"] for run in receipt["runs"]] == ["mid", "cross"]
         assert receipt["deferred"] == [
-            "decision-quality report and dual return views (D3)",
             "real-data smoke, manual trade sample, and full-history execution (D4)",
         ]
+        assert receipt["deliverable"] == "sprint006_d3"
+        assert "result_complete" in receipt
+        assert "has_unresolved_failures" in receipt
+        assert set(receipt["decision_report"]) == {
+            "decision_report_json",
+            "decision_report_md",
+        }
+        for artifact in receipt["decision_report"].values():
+            assert len(artifact["sha256"]) == 64
         for run in receipt["runs"]:
             assert "n_failed_dates" in run
             assert "has_unresolved_failures" in run
@@ -455,6 +463,9 @@ class TestRunBaselineOnSyntheticFixtures:
                 "date_summary",
                 "date_status",
                 "run_summary",
+                "candidate_view",
+                "leg_log",
+                "funnel_summary",
             }
 
     def test_receipt_dumps_effective_configs_and_output_digests(self, outcome):
@@ -468,6 +479,9 @@ class TestRunBaselineOnSyntheticFixtures:
                 "date_summary",
                 "date_status",
                 "run_summary",
+                "candidate_view",
+                "leg_log",
+                "funnel_summary",
             }
             for artifact in run["outputs"].values():
                 assert len(artifact["sha256"]) == 64
@@ -483,6 +497,35 @@ class TestRunBaselineOnSyntheticFixtures:
             reloaded = pd.read_parquet(run["outputs"]["trade_log"])
             assert len(reloaded) == run["trade_log_rows"]
             assert (reloaded["fill_label"].dropna() == run["fill_label"]).all()
+
+    def test_written_candidate_leg_funnel_and_decision_report(self, outcome):
+        for run in outcome["runs"]:
+            candidates = pd.read_parquet(run["outputs"]["candidate_view"])
+            assert {
+                "run_id",
+                "fill_label",
+                "trade_date",
+                "ticker",
+                "direction",
+                "decision_status",
+                "stage",
+                "reason_code",
+                "reason_raw",
+            }.issubset(candidates.columns)
+            assert (candidates["fill_label"] == run["fill_label"]).all()
+            legs = pd.read_parquet(run["outputs"]["leg_log"])
+            funnel = pd.read_parquet(run["outputs"]["funnel_summary"])
+            assert not funnel.empty
+            assert "n_jointly_eligible" in funnel.columns
+            if not legs.empty:
+                assert "entry_cash_per_unit" in legs.columns
+        report = json.loads(outcome["decision_report_json"].read_text(encoding="utf-8"))
+        assert report["result_complete"] is True
+        assert report["fills"]["cross"]["role"] == "primary"
+        assert report["fills"]["mid"]["role"] == "diagnostic"
+        md = outcome["decision_report_md"].read_text(encoding="utf-8")
+        assert md.startswith("# Sprint 006 baseline decision report")
+        assert "INCOMPLETE RESULT" not in md
 
     def test_dirty_repo_blocks_writing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         contract_path = _write_contract(tmp_path)
@@ -501,6 +544,21 @@ class TestRunBaselineOnSyntheticFixtures:
         checked = sb.preflight(sb.load_contract(contract_path))
         assert len(checked.configs) == 2
         assert not (tmp_path / "run").exists()
+
+    def test_leg_integrity_failure_blocks_d3_receipt(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        contract_path = _write_contract(tmp_path)
+        monkeypatch.setattr(sb, "clean_repo_sha", lambda: "a" * 40)
+
+        def boom(*_args, **_kwargs):
+            raise sb.DecisionMetricsError("missing legs for included trade")
+
+        monkeypatch.setattr(sb, "build_decision_report", boom)
+        with pytest.raises(sb.ContractError, match="refusing to publish D3"):
+            sb.run_baseline(contract_path=contract_path, output_dir=tmp_path / "run")
+        run_dir = tmp_path / "run"
+        assert run_dir.exists()
+        assert not (run_dir / "decision_report.json").exists()
+        assert not (run_dir / "run_receipt.json").exists()
 
 
 # =============================================================================
