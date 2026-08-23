@@ -8,6 +8,7 @@
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (unchanged)
 **Plans:** [D0](sprint006_d0_baseline_experiment_contract_plan.md) · [D1](sprint006_d1_trusted_baseline_runner_plan.md) · [D2](sprint006_d2_eligibility_coverage_correctness_plan.md) · [D3](sprint006_d3_decision_diagnostic_report_plan.md)
 **Naming convention:** `docs/tmp/sprint00N_dN_*_plan.md`
+**Planning decisions:** all previously open items (PG-1a, PG-1b, PG-2, PG-3, D4-Q1–Q3) are resolved in §14. No decision remains open; the plan itself still requires acceptance.
 
 ---
 
@@ -161,8 +162,10 @@ git rev-parse HEAD          # RECORD as EXECUTION_COMMIT
 git log --oneline -3
 ```
 
-**Pass:** empty `git status --porcelain`; HEAD is a 40-hex commit; HEAD contains the accepted D3 implementation (`10133f6` is an ancestor: `git merge-base --is-ancestor 10133f6 HEAD` exits 0).
-**Stop:** any untracked or modified file; detached HEAD; `10133f6` not an ancestor.
+**Resolved (D4-Q1):** execution runs from the **final accepted plan commit** — the HEAD that carries the accepted D4 plan — not from `10133f6` itself. Documentation-only commits do not change behavior, and `10133f6` remains an ancestor. That HEAD is `EXECUTION_COMMIT` and must equal the receipt's `repo_sha` (V-14).
+
+**Pass:** empty `git status --porcelain`; HEAD is a 40-hex commit; HEAD is the accepted-plan commit and contains the accepted D3 implementation (`10133f6` is an ancestor: `git merge-base --is-ancestor 10133f6 HEAD` exits 0).
+**Stop:** any untracked or modified file; detached HEAD; `10133f6` not an ancestor; HEAD is not the accepted-plan commit.
 **Retain:** `EXECUTION_COMMIT` (full 40-hex), branch, `git log --oneline -3`.
 
 > The adapter independently re-checks a clean tree via `clean_repo_sha()` and refuses to write artifacts from a dirty tree. Phase 1 records the value; the adapter enforces it.
@@ -288,16 +291,21 @@ $inputs | ForEach-Object {
 **Stop:** lineage receipt digest mismatch; any listed input missing; any input path resolving under `C:/MomentumCVG_env/cache`.
 **Retain:** the full digest/size/mtime table. Phase 4 re-runs this exact command and requires byte-identical digests.
 
-> **PG-2 (planning gap).** The repository pins expected digests only for the lineage receipt and the feature config. There is no pinned expected SHA-256 for `features_42_8.parquet`, the A1/A2 surface parquets, or the liquidity panel, and the adapter's receipt records accepted-input **paths without digests**. D0 §12 left this box unchecked ("record at D1/D4 run time"). D4 therefore treats the Phase 1 values as a first-observation baseline and proves *immutability across the run* rather than *equality to a pin*. Making input digests a pinned, code-enforced identity is a candidate Sprint 007 item; **do not implement it in D4.**
+> **PG-2 — resolved: pre-run and post-run digests accepted in place of pins.** The repository pins expected digests only for the lineage receipt and the feature config. There is no pinned expected SHA-256 for `features_42_8.parquet`, the A1/A2 surface parquets, or the liquidity panel, and the adapter's receipt records accepted-input **paths without digests**. D0 §12 left this box unchecked ("record at D1/D4 run time"). D4 therefore treats the Phase 1 values as a first-observation baseline and proves *immutability across the run* rather than *equality to a pin*. Making input digests a pinned, code-enforced identity is a candidate Sprint 007 item; **do not implement it in D4.**
 
 ### 1.7 Output location
 
-Choose `RUN_DIR = C:/MomentumCVG_env/runs/sprint006_baseline_v1_<UTCSTAMP>` with `<UTCSTAMP>` = `yyyyMMddTHHmmssZ` at launch.
+Derive the run directory from a UTC launch stamp:
 
 ```powershell
-Test-Path $RUN_DIR                                  # must be False
-Get-ChildItem C:/MomentumCVG_env/runs -Directory     # record existing siblings
+$UTCSTAMP = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+$RUN_DIR  = "C:/MomentumCVG_env/runs/sprint006_baseline_v1_$UTCSTAMP"
+$RUN_DIR                                             # RECORD the absolute path
+Test-Path $RUN_DIR                                   # must be False
+Get-ChildItem C:/MomentumCVG_env/runs -Directory      # record existing siblings
 ```
+
+`$UTCSTAMP` and `$RUN_DIR` persist in the operator's PowerShell session and are reused verbatim by Phase 3. If Phase 3 runs in a new session, re-derive both and record the new values; never reuse a stamp from a previous attempt.
 
 **Pass:** `RUN_DIR` does not exist; it is outside `C:/MomentumCVG` and outside `C:/MomentumCVG_env/cache`; its parent exists and is writable.
 **Stop:** the directory already exists, or is inside either forbidden root. The adapter also refuses all three cases.
@@ -338,58 +346,97 @@ print('first', dates[0], 'last', dates[-1])
 "@
 ```
 
-**Convention used by this plan:** `MEDIAN_DATE = dates[(n - 1) // 2]` (the lower median when `n` is even). For odd `n` both indices coincide and the convention is irrelevant. The expected value is `2022-09-02`, which is the date Sprint 005 D5 derived under the same median rule.
+**Resolved convention (PG-1a, decided):** `MEDIAN_DATE = dates[(n - 1) // 2]` — the **lower median** when `n` is even. For odd `n` both indices coincide and the convention is irrelevant. The expected value is **`2022-09-02`**, the date Sprint 005 D5 derived under the same median rule.
 
-**PG-1a (planning gap).** D0 §9 says "median A1 expected date (sorted)" and does not disambiguate an even-length calendar. The lower-median convention above is this plan's proposal, not a frozen D0 rule. It needs explicit human confirmation at acceptance. It affects only sample selection, never economics.
+D0 §9 says "median A1 expected date (sorted)" without disambiguating an even-length calendar; the lower-median rule above closes that ambiguity for D4. It governs sample selection only and never touches economics. Record both median indices and both candidate dates in the evidence memo regardless of parity, so the choice is auditable.
 
 **Stop condition:** if the derived `MEDIAN_DATE` is not `2022-09-02`, **stop**. Record `n`, both median indices, both candidate dates, and the first/last calendar dates, and escalate for review. Do not silently substitute another date, and do not adjust the interval or the convention to reach `2022-09-02`.
 
-### 2.2 PG-1b — the smoke cannot be date-restricted with the current CLI
+### 2.2 The smoke cannot be date-restricted with the current CLI — resolved by Option A
 
-**This is a planning gap, flagged for human review and deliberately not fixed here.**
+**Implementation limitation.** `scripts/run_sprint006_baseline.py` exposes only `--contract`, `--output-dir`, and `--dry-run`. The run window comes from the contract, and `build_run_configs` requires `shared_run_config.start_date/end_date` to equal `periods.run_start_date/run_end_date`. There is **no** flag, environment variable, or supported entry point that limits an official-path run to one date, so "run the frozen settings on `2022-09-02` only" is not achievable through the accepted command as implemented. D4 does **not** fix this; making the limitation disappear would be a production change.
 
-`scripts/run_sprint006_baseline.py` exposes only `--contract`, `--output-dir`, and `--dry-run`. The run window comes from the contract, and `build_run_configs` requires `shared_run_config.start_date/end_date` to equal `periods.run_start_date/run_end_date`. There is **no** flag, environment variable, or supported entry point that limits an official-path run to one date. So "run the frozen settings on `2022-09-02` only" is not achievable through the accepted command as implemented.
+**Resolved decision (PG-1b): Option A — an outside-repository, date-narrowed smoke contract.**
 
-Two candidate resolutions. **Neither may be executed until a human selects one at acceptance.**
+Procedure: copy the frozen JSON to a disposable directory outside the repository and change **only** the four date fields to `2022-09-02` — `periods.run_start_date`, `periods.run_end_date`, `shared_run_config.start_date`, `shared_run_config.end_date`. Diff the copy against the frozen file and confirm that exactly those four lines differ. Then invoke the existing CLI with `--contract <copy>`; both frozen fills still execute in one invocation. Executable commands are in §2.3.
 
-| Option | Procedure | Cost / hazard |
-|--------|-----------|---------------|
-| **A — date-narrowed smoke contract (recommended)** | Copy the frozen JSON to `C:/MomentumCVG_env/runs/smoke_<UTCSTAMP>/sprint006_smoke_contract.json` (outside the repo). Change **only** the four date fields to `2022-09-02`: `periods.run_start_date`, `periods.run_end_date`, `shared_run_config.start_date`, `shared_run_config.end_date`. Diff the copy against the frozen file and confirm exactly those four lines differ. Run twice-in-one invocation as usual via `--contract <copy>`. | The adapter hard-requires `contract_id == "sprint006_baseline_v1"` and `status == "accepted"`, so the smoke receipt will claim the frozen contract id with a **different** `sha256` and identical `run_id`s. Confusion risk is real and must be contained by §2.5. |
-| **B — full frozen run into a disposable directory** | Run the unmodified official command into a throwaway directory and restrict all inspection to the `2022-09-02` rows. | Not "small": it is the full run's cost, and it produces a complete artifact set that is not the official baseline — a stronger confusion hazard than A, and it makes the Phase 3 run a second full execution. |
+Option B (a full frozen run into a disposable directory) was considered and **rejected**: it costs a full execution, produces a complete non-official artifact set, and creates a stronger confusion hazard than A.
 
-The remainder of Phase 2 is written to work under either option; differences are noted.
+**Known hazard of Option A, contained by §2.5.** `load_contract` hard-requires `contract_id == "sprint006_baseline_v1"` and `status == "accepted"`, so the smoke receipt will carry the frozen contract id and the two frozen `run_id`s while its `contract.sha256` differs from both digests recorded in §2.1 *Code and configuration*. That divergence is **expected and by design**; it is the signal that the artifacts are smoke, not baseline. The frozen file itself is never edited — only the copy.
 
 ### 2.3 Smoke execution (both fills, disposable directory)
 
+Step 1 — derive the disposable paths. `$SMOKE_DIR` holds the smoke contract and the §2.5 marker; the adapter's own output goes one level below in `$SMOKE_OUT`, which must not exist beforehand because `create_run_dir` refuses an existing directory.
+
 ```powershell
-$SMOKE_DIR = "C:/MomentumCVG_env/runs/sprint006_d4_smoke_<UTCSTAMP>"
-Test-Path $SMOKE_DIR   # must be False
-& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint006_baseline.py `
-  --contract <FROZEN_OR_SMOKE_CONTRACT_PER_SELECTED_OPTION> `
-  --output-dir $SMOKE_DIR
+cd C:\MomentumCVG
+$SMOKE_STAMP    = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+$SMOKE_DIR      = "C:/MomentumCVG_env/runs/sprint006_d4_smoke_$SMOKE_STAMP"
+$SMOKE_OUT      = "$SMOKE_DIR/run"
+$SMOKE_CONTRACT = "$SMOKE_DIR/sprint006_smoke_contract.json"
+$FROZEN         = "C:/MomentumCVG/configs/sprint006_baseline_v1.json"
+$SMOKE_DIR; $SMOKE_OUT; $SMOKE_CONTRACT          # RECORD all three
+Test-Path $SMOKE_DIR                             # must be False
+New-Item -ItemType Directory -Path $SMOKE_DIR | Out-Null
+Test-Path $SMOKE_OUT                             # must be False — the adapter creates it
 ```
 
-Both frozen fills always execute in one invocation; there is no fill selector, so "mid and cross" needs no extra argument.
+Step 2 — build the date-narrowed contract copy, changing only the four date fields. Each pattern anchors on the opening quote, so `primary_reporting_start_date` / `primary_reporting_end_date` and `run_start_date` / `run_end_date` cannot be matched by the bare `start_date` / `end_date` patterns.
 
-**Inputs:** the selected contract; the §2.2 accepted inputs.
-**Outputs (in `$SMOKE_DIR`):** for each of `sprint006_baseline_v1_mid` and `sprint006_baseline_v1_cross` — `trade_log_<run_id>.parquet`, `date_summary_<run_id>.parquet`, `date_status_<run_id>.parquet`, `run_summary_<run_id>.json`, `candidate_view_<run_id>.parquet`, `leg_log_<run_id>.parquet`, `funnel_summary_<run_id>.parquet`; plus one `decision_report.json`, one `decision_report.md`, one `run_receipt.json`.
+```powershell
+$MEDIAN_DATE = "2022-09-02"                      # from §2.1; must match the derivation
+$frozenText  = Get-Content $FROZEN -Raw
+$smokeText   = $frozenText `
+  -replace '("run_start_date"\s*:\s*)"2018-10-26"', ('$1"' + $MEDIAN_DATE + '"') `
+  -replace '("run_end_date"\s*:\s*)"2026-07-10"',   ('$1"' + $MEDIAN_DATE + '"') `
+  -replace '("start_date"\s*:\s*)"2018-10-26"',     ('$1"' + $MEDIAN_DATE + '"') `
+  -replace '("end_date"\s*:\s*)"2026-07-10"',       ('$1"' + $MEDIAN_DATE + '"')
+# Write UTF-8 without a BOM: Windows PowerShell 5.1 `Set-Content -Encoding utf8` prepends a BOM,
+# which json.load() would reject. Byte content otherwise matches the frozen file apart from the four dates.
+[System.IO.File]::WriteAllText($SMOKE_CONTRACT, $smokeText, (New-Object System.Text.UTF8Encoding($false)))
+```
+
+Step 3 — prove the copy differs from the frozen contract in exactly four lines, and prove the frozen file is untouched.
+
+```powershell
+$delta = Compare-Object (Get-Content $FROZEN) (Get-Content $SMOKE_CONTRACT) -SyncWindow 0
+$delta | Format-Table -AutoSize                  # RECORD: expect 4 '<=' and 4 '=>' lines
+($delta | Measure-Object).Count                  # expect 8
+(Get-FileHash -Algorithm SHA256 $SMOKE_CONTRACT).Hash.ToLower()   # RECORD; differs from the frozen digests by design
+(Get-FileHash -Algorithm SHA256 $FROZEN).Hash.ToLower()           # must still equal 4012b4a4… (or 3cd57f4d… on an LF checkout)
+git -C C:/MomentumCVG status --porcelain configs/sprint006_baseline_v1.json   # must print nothing
+```
+
+**Stop** if the diff is anything other than those four date lines, or if the frozen contract's digest or Git status changed.
+
+Step 4 — run the smoke. Both frozen fills always execute in one invocation; there is no fill selector, so "mid and cross" needs no extra argument.
+
+```powershell
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint006_baseline.py `
+  --contract $SMOKE_CONTRACT `
+  --output-dir $SMOKE_OUT
+$LASTEXITCODE                                    # RECORD; expect 0
+```
+
+**Inputs:** `$SMOKE_CONTRACT`; the §2.2 accepted inputs.
+**Outputs (in `$SMOKE_OUT`):** for each of `sprint006_baseline_v1_mid` and `sprint006_baseline_v1_cross` — `trade_log_<run_id>.parquet`, `date_summary_<run_id>.parquet`, `date_status_<run_id>.parquet`, `run_summary_<run_id>.json`, `candidate_view_<run_id>.parquet`, `leg_log_<run_id>.parquet`, `funnel_summary_<run_id>.parquet`; plus one `decision_report.json`, one `decision_report.md`, one `run_receipt.json`. That is 17 adapter-written files.
 
 ### 2.4 Smoke checks
 
 | # | Check | Pass criterion |
 |---|-------|----------------|
 | S-1 | Execution | Exit code 0; no `ERROR:` on stderr; stdout lists all seven per-run files for both runs plus report and receipt paths |
-| S-2 | Artifact set | All 17 expected files present; no extras |
+| S-2 | Artifact set | All 17 expected **adapter-written** files present in `$SMOKE_OUT`; no extras. Count adapter outputs only, and perform the count **before** the §2.5 marker file is written. The marker `NOT_THE_OFFICIAL_BASELINE.txt` and `sprint006_smoke_contract.json` live in `$SMOKE_DIR`, one level above `$SMOKE_OUT`, so they are never part of this count |
 | S-3 | Schemas | `date_status` columns exactly `["trade_date","status","reason"]`; `funnel_summary` columns exactly `FUNNEL_SUMMARY_COLUMNS` (18); `leg_log` columns exactly `LEG_LOG_COLUMNS` (21); `candidate_view` columns exactly `CANDIDATE_VIEW_COLUMNS` (9) |
-| S-4 | Date status | Under option A: exactly one `date_status` row, `trade_date == MEDIAN_DATE`, `status ∈ {traded, valid_no_trade, failed}`; `reason` is `null` iff `traded`. Under option B: the `MEDIAN_DATE` row exists and satisfies the same constraints |
+| S-4 | Date status | Exactly one `date_status` row per fill, `trade_date == MEDIAN_DATE`, `status ∈ {traded, valid_no_trade, failed}`; `reason` is `null` iff `traded` |
 | S-5 | Funnel semantics | For a `failed`/`missing_features` date: `n_feature_covered=0` and `n_universe`…`n_included` all **null**. For an evaluated date: `n_universe` and `n_jointly_eligible` are non-null integers, `n_post_signal ≤ n_jointly_eligible`, `n_constructable ≤ n_post_signal`, `n_included ≤ n_constructable`, and long+short splits sum to their totals. Zero ≠ null is respected |
 | S-6 | Leg serialization | Every `structure_ok=True` row on the date has leg rows; every included straddle has exactly 2 (`leg_index {0,1}`), every included iron fly exactly 4 (`leg_index {0,1,2,3}`); an included short iron fly has `unit_quantity` signs `+ − − +` by `leg_index` and `portfolio_quantity = abs(trade.quantity) × unit_quantity` with the same signs; non-included constructable rows have `portfolio_quantity` and `pnl_total_leg` null |
 | S-7 | Included-trade reconciliation | For every included trade on the date, and independently of the generator: `Σ entry_cash_per_unit = entry_cost_per_share`; `Σ expiry_payoff_per_unit = entry_cost_per_share + pnl_per_share`; `Σ pnl_per_unit = pnl_per_share`; `Σ pnl_total_leg = pnl_total`; tolerance `max(1e-6 abs, 1e-8 rel)` |
 | S-8 | Structure failures | Any `stage=structure_failed` candidate row has `reason_code` in the four frozen classes and a retained `reason_raw`; such rows have **no** leg rows |
-| S-9 | Fill differentiation | For at least one name constructable under both fills, `fill_price` differs between the mid and cross leg logs in the expected direction (buy legs higher under cross, sell legs lower); `mid` column identical across fills |
+| S-9 | Fill differentiation (**conditional**) | Determine whether any `(ticker, direction)` is constructable in **both** the mid and the cross leg log on `MEDIAN_DATE`. **If at least one overlap exists:** for one such name, `fill_price` must differ in the expected direction — buy legs (`unit_quantity > 0`) priced higher under cross than mid, sell legs (`unit_quantity < 0`) priced lower — while the `mid` column is identical across fills. **If no overlap exists:** record `N/A — no overlapping constructable name` with the mid-only and cross-only constructable key counts, and continue. Do **not** substitute another date, widen the window, or relax the frozen settings to manufacture an overlap. Only an **incorrect comparison on an existing overlap** blocks execution; absence of an overlap does not |
 | S-10 | No aggregate inspection | The operator attests that `decision_report.json`, `decision_report.md`, and `run_summary_*.json` economic fields were not opened |
 
-**Stop conditions:** non-zero exit; a `DecisionMetricsError` / `ContractError` abort; missing artifact; schema deviation; funnel null-vs-zero violation; leg count/sign violation; any reconciliation break; a `failed` date whose reason is not explainable by the recorded inputs.
+**Stop conditions:** non-zero exit; a `DecisionMetricsError` / `ContractError` abort; missing artifact; schema deviation; funnel null-vs-zero violation; leg count/sign violation; any reconciliation break; an incorrect fill-price comparison on an **existing** mid/cross overlap (S-9); a `failed` date whose reason is not explainable by the recorded inputs. A recorded `N/A` on S-9 is **not** a stop condition.
 
 If the smoke aborts, that is a **correctness signal, not a nuisance**. Preserve `$SMOKE_DIR`, stop, and escalate per §9. Do not proceed to Phase 3.
 
@@ -397,11 +444,25 @@ If the smoke aborts, that is a **correctness signal, not a nuisance**. Preserve 
 
 Mandatory, all of them:
 
-1. `$SMOKE_DIR` name contains `smoke` and is a sibling of, never inside, the official run directory.
-2. Write `$SMOKE_DIR/NOT_THE_OFFICIAL_BASELINE.txt` containing: the smoke purpose, the selected PG-1b option, the contract path and its SHA-256, `MEDIAN_DATE`, and the sentence "Smoke artifacts must not be cited as Sprint 006 economic evidence."
-3. Under option A, also record the four-line diff of the smoke contract against the frozen file, and note that the smoke receipt's `contract.sha256` differs from both §2.1 values by design.
-4. The Phase 4/5 evidence tables cite **only** the official `RUN_DIR`. Smoke paths appear only in the smoke section of the evidence memo, labeled as such.
-5. Smoke artifacts are never committed and never copied into `RUN_DIR`.
+1. `$SMOKE_DIR` name contains `smoke` and is a sibling of, never inside, the official `$RUN_DIR`.
+2. After the S-2 file count, write the marker file:
+
+```powershell
+@(
+  "Sprint 006 D4 smoke run - NOT the official baseline.",
+  "Purpose: integration/plumbing check on one real date only.",
+  "PG-1b resolution: Option A (outside-repository date-narrowed smoke contract).",
+  "Smoke contract: $SMOKE_CONTRACT",
+  "Smoke contract SHA-256: " + (Get-FileHash -Algorithm SHA256 $SMOKE_CONTRACT).Hash.ToLower(),
+  "MEDIAN_DATE: $MEDIAN_DATE",
+  "Adapter output directory: $SMOKE_OUT",
+  "Smoke artifacts must not be cited as Sprint 006 economic evidence."
+) | Set-Content -Path "$SMOKE_DIR/NOT_THE_OFFICIAL_BASELINE.txt"
+```
+
+3. Record the four-line diff of the smoke contract against the frozen file, and note that the smoke receipt's `contract.sha256` differs from both digests in §2.1 *Code and configuration* by design.
+4. The Phase 4/5 evidence tables cite **only** the official `$RUN_DIR`. Smoke paths appear only in the smoke section of the evidence memo, labeled as such.
+5. Smoke artifacts are never committed and never copied into `$RUN_DIR`.
 
 ---
 
@@ -416,14 +477,20 @@ Mandatory, all of them:
 
 ```powershell
 cd C:\MomentumCVG
-$RUN_DIR = "C:/MomentumCVG_env/runs/sprint006_baseline_v1_<UTCSTAMP>"
-(Get-Date).ToUniversalTime().ToString("o")   # RECORD as START_UTC
+# Reuse the §1.7 values if this is the same shell session; otherwise re-derive and record.
+if (-not $RUN_DIR) {
+  $UTCSTAMP = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+  $RUN_DIR  = "C:/MomentumCVG_env/runs/sprint006_baseline_v1_$UTCSTAMP"
+}
+$RUN_DIR                                              # RECORD
+Test-Path $RUN_DIR                                    # must be False
+$START_UTC = (Get-Date).ToUniversalTime().ToString("o"); $START_UTC   # RECORD
 & C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint006_baseline.py `
   --contract configs/sprint006_baseline_v1.json `
   --output-dir $RUN_DIR
-$exit = $LASTEXITCODE
-(Get-Date).ToUniversalTime().ToString("o")   # RECORD as END_UTC
-$exit                                        # RECORD as EXIT_CODE
+$EXIT_CODE = $LASTEXITCODE
+$END_UTC = (Get-Date).ToUniversalTime().ToString("o"); $END_UTC       # RECORD
+$EXIT_CODE                                                            # RECORD
 ```
 
 One invocation. Both frozen fills (`mid` diagnostic, `cross` primary) execute from the contract's `runs[]` list. No other flags exist and none may be invented.
@@ -446,7 +513,7 @@ One invocation. Both frozen fills (`mid` diagnostic, `cross` primary) execute fr
 | Full stdout / stderr | transcript |
 | `run_receipt.json` `generated_utc` | receipt |
 
-**PG-3 (minor planning gap).** The receipt records `generated_utc` but no run start time or duration. Wall-clock start/end therefore come from the operator's transcript. This is a recording procedure, not a defect; do not add timing code in D4.
+**PG-3 — resolved: shell-recorded timing accepted.** The receipt records `generated_utc` but no run start time or duration. `START_UTC` and `END_UTC` therefore come from the operator's PowerShell transcript (§3.1) and are recorded in the evidence memo. This is a recording procedure, not a defect; do not add timing code in D4.
 
 ### 3.3 Prohibitions
 
@@ -480,7 +547,7 @@ Exit code 0; all 17 artifacts present; stdout lists both runs with trade-log row
 
 **Closed until the evidence verdict is recorded:**
 
-* `decision_report.json` and `decision_report.md` in their entirety.
+* All **values** in `decision_report.json`, and `decision_report.md` in its entirety. **Key names only** may be inspected programmatically for V-9 — see the exception below.
 * In `run_summary_<run_id>.json`: `mean_cycle_return_on_capital_at_risk`, `annualized_sharpe`, `max_drawdown`, `robust_score`, `hit_rate`, `availability_rate`, `mean_/median_trade_return_on_body_credit`, `avg_long_/avg_short_cycle_return`, `avg_*_return_on_body_credit`, `avg_spread_cost_ratio`, `avg_leg_spread_to_credit_ratio`.
 * `date_summary_<run_id>.parquet` **as a series** — no aggregation, no sorting by return, no min/max/mean over dates.
 
@@ -489,6 +556,26 @@ Exit code 0; all 17 artifacts present; stdout lists both runs with trade-log row
 * `run_receipt.json` in full. It carries every completeness and identity field Phase 4 needs — `repo_sha`, `contract.*`, `accepted_inputs`, per-run `n_expected_dates`, `n_traded_dates`, `n_valid_no_trade_dates`, `n_failed_dates`, `has_unresolved_failures`, `n_feature_dates_absent_from_a1`, `feature_dates_absent_from_a1`, per-file `sha256`, `result_complete`, `deferred` — without exposing performance.
 * `date_status`, `funnel_summary`, `candidate_view`, `leg_log`, `trade_log` parquets, and structural fields of `run_summary_*.json` (`run_id`, `fill_label`, `momentum_col`, `cvg_col`, `short_structure`, `n_trade_dates`, `n_candidate_rows`, `n_traded_rows`, the date-class counts).
 * Per-trade economics for the sampled trades only, and the single `date_summary` row of each sampled date (needed for the frozen `date_car_contribution` check).
+
+**Key-only exception for `decision_report.json` (V-9).** The report's schema may be verified by listing **key names** programmatically, provided no value is printed, returned, or logged. Use a key-only walk:
+
+```powershell
+$keys = New-Object System.Collections.Generic.List[string]
+function Get-JsonKeys($node, $path) {
+  if ($node -is [System.Management.Automation.PSCustomObject]) {
+    foreach ($p in $node.PSObject.Properties) {
+      $keys.Add(("{0}.{1}" -f $path, $p.Name).TrimStart('.'))
+      Get-JsonKeys $p.Value ("{0}.{1}" -f $path, $p.Name)
+    }
+  } elseif ($node -is [System.Object[]] -and $node.Count -gt 0) {
+    Get-JsonKeys $node[0] ("{0}[]" -f $path)
+  }
+}
+Get-JsonKeys (Get-Content "$RUN_DIR/decision_report.json" -Raw | ConvertFrom-Json) ""
+$keys | Sort-Object -Unique      # key names only; no values are emitted
+```
+
+Anything that renders a value — `ConvertTo-Json`, `Format-List`, `Select-Object <field>`, opening the file in an editor or pager, or reading `decision_report.md` — remains closed until the verdict is recorded.
 
 Selecting or replacing a sample on the basis of P&L is forbidden. Sorting the trade log by P&L is forbidden.
 
@@ -504,13 +591,13 @@ Selecting or replacing a sample on the basis of P&L is forbidden. Sorting the tr
 | V-6 | Calendar bounds | first date ≥ `2018-10-26`, last date ≤ `2026-07-10` | `date_status` |
 | V-7 | Feature reconciliation | `n_feature_dates_absent_from_a1` and the listed dates recorded and explained; A1 dates missing from features would have surfaced as `failed`/`missing_features` and V-3 already forbids them | receipt |
 | V-8 | Artifact presence | all 17 files present, non-zero size | directory listing |
-| V-9 | Pinned schemas | `date_status` = 3 cols; `funnel_summary` = `FUNNEL_SUMMARY_COLUMNS`; `leg_log` = `LEG_LOG_COLUMNS`; `candidate_view` = `CANDIDATE_VIEW_COLUMNS`; `date_summary` = the 19 `build_date_summary` columns; `decision_report.json` top-level keys = `experiment_id, contract_id, repo_sha, result_complete, has_unresolved_failures, windows, fills, by_fill, fill_assumption_sensitivity, concentration_primary_cross_top5, limitations` (key presence only — values stay closed) | parquet/JSON headers |
+| V-9 | Pinned schemas | `date_status` = 3 cols; `funnel_summary` = `FUNNEL_SUMMARY_COLUMNS`; `leg_log` = `LEG_LOG_COLUMNS`; `candidate_view` = `CANDIDATE_VIEW_COLUMNS`; `date_summary` = the 19 `build_date_summary` columns; `decision_report.json` top-level keys = `experiment_id, contract_id, repo_sha, result_complete, has_unresolved_failures, windows, fills, by_fill, fill_assumption_sensitivity, concentration_primary_cross_top5, limitations`, verified by the §7.1 key-only walk (**key names only — every value stays closed**) | parquet headers; §7.1 key walk |
 | V-10 | Digest verification | Recomputed SHA-256 of every file in `$RUN_DIR` equals the value recorded in `run_receipt.json` | `Get-FileHash` |
 | V-11 | Code identity | receipt `repo_sha == EXECUTION_COMMIT` | receipt vs §1.1 |
 | V-12 | Config identity | receipt `contract.sha256` equals the §1.4 on-disk digest; `contract_id/version/status` = `sprint006_baseline_v1`/`1`/`accepted`; every `effective_config` field matches §2.3 for both runs, differing only in `run_id` and `fill` | receipt |
 | V-13 | Input identity | receipt `accepted_inputs` paths equal §2.2 exactly; none under `C:/MomentumCVG_env/cache`; `earnings_path` null | receipt |
 | V-14 | Input immutability | Re-running the §1.6 digest command yields digests byte-identical to the pre-run baseline | §1.6 rerun |
-| V-15 | Run identity | receipt `experiment_id = sprint006_baseline_v1`; run ids exactly the two frozen ids; `deliverable`/`deferred` recorded | receipt |
+| V-15 | Run identity | receipt `experiment_id = sprint006_baseline_v1`; run ids exactly the two frozen ids; `deliverable == "sprint006_d3"` and `deferred` still listing the D4 item — both **expected**, see the note below | receipt |
 | V-16 | No unexplained artifacts | `$RUN_DIR` contains exactly the 17 expected files; no duplicates, temp files, or `.1`/`.bak` variants; all mtimes inside `[START_UTC, END_UTC]` | listing + timestamps |
 | V-17 | Funnel monotonicity | On every evaluated date and both fills: `n_included ≤ n_constructable ≤ n_post_signal ≤ n_jointly_eligible ≤ n_universe`; side splits sum to totals; nulls only on unevaluated stages | `funnel_summary` |
 | V-18 | Included-trade leg completeness | Independently re-derived: every included trade has exactly 2 (straddle) or 4 (iron fly) matching legs with the required `leg_index` set, no duplicates, and no included leg rows without a matching included trade | `trade_log` + `leg_log` |
@@ -527,6 +614,8 @@ Get-ChildItem $RUN_DIR -File | ForEach-Object {
 ```
 
 Compare against `$receipt.runs[*].outputs.*.sha256` and `$receipt.decision_report.*.sha256`. `run_receipt.json` itself is not self-digested; that is expected.
+
+**Receipt `deliverable` / `deferred` are D3 producer metadata, not lifecycle state.** A D4 run emits `deliverable = "sprint006_d3"` and a `deferred` list still naming "real-data smoke, manual trade sample, and full-history execution (D4)". These come from `build_receipt` and the module constant `DEFERRED_TO_LATER_DELIVERABLES` in `src/backtest/sprint006_baseline.py`: they record **which deliverable's code wrote the artifacts**, which is genuinely D3's adapter, not how far the sprint has progressed. Seeing them in a D4 receipt is therefore **correct and is not a V-15 failure**. D4's lifecycle acceptance is recorded in the D4 evidence memo and the sprint agenda instead. **Do not change production code to relabel these fields** — that would put a production change inside the evidence commit, which §9 forbids. A future deliverable-aware receipt label is a candidate Sprint 007 cleanup item, not D4 work.
 
 **Any failure in V-1…V-20 sets the evidence verdict to `BLOCKED` and forbids Phase 5.**
 
@@ -667,7 +756,7 @@ Exactly one:
 * Write `docs/sprint_memos/006_closeout.md` following the `004_closeout.md` / `005_closeout.md` shape.
 * Sync `docs/baseline_status.md` with the Phase 1 suite result and the tested baseline commit.
 * Add the Sprint 006 rows to the `docs/README.md` memo index.
-* Retire the four `docs/tmp/sprint006_d*_plan.md` documents per §10.3.
+* Delete all **five** `docs/tmp/sprint006_d*_plan.md` documents per §10.3.
 
 ---
 
@@ -684,7 +773,7 @@ If execution exposes a genuine code or data defect:
 5. **Do not inspect or use economic results from an invalid run.** A run whose evidence is `BLOCKED` yields no economic statement of any kind — not "directionally", not "informally", not "for context".
 6. After the fix is separately reviewed and accepted, a rerun uses a **new** run directory, a new execution commit, and a new evidence record. The original invalid run is retained and labeled invalid; it is never overwritten or silently replaced (D0 §6.4, `pnl_firewall.correctness_change_after_exposure`).
 
-Distinguish clearly in the escalation note between a **defect** (code or data is wrong) and a **planning gap** (the plan asked for something the implementation cannot do). PG-1a, PG-1b, PG-2, and PG-3 are planning gaps and are already recorded; they are not defects and must not be "fixed" during D4.
+Distinguish clearly in the escalation note between a **defect** (code or data is wrong) and a **planning gap** (the plan asked for something the implementation cannot do). PG-1a, PG-1b, PG-2, and PG-3 are planning gaps, and each is resolved by a documented procedure in §14 rather than by code; they are not defects and must not be "fixed" by editing production code during D4. The same holds for the receipt's D3 `deliverable`/`deferred` labels (§7.2).
 
 ---
 
@@ -707,7 +796,7 @@ Do not plan or perform any of the following in D4:
 * Any edit to `configs/sprint006_baseline_v1.json`
 * Repairing `SurfaceSearch` / `scripts/run_surface_search.py`
 * Iron-condor comparison while KB-001 is open
-* Implementing PG-1b tooling, PG-2 digest pinning, or PG-3 timing capture
+* Implementing single-date CLI support (PG-1b tooling), PG-2 input-digest pinning, PG-3 timing capture, or a deliverable-aware receipt label (§7.2)
 
 ### 10.2 Deliberately narrow
 
@@ -715,7 +804,7 @@ D4 adds no framework, no guardrail beyond the checks above, and no research. Whe
 
 ### 10.3 Temporary-document cleanup (commit 3)
 
-At closeout, retire `docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`, `…_d1_…`, `…_d2_…`, `…_d3_…`, and this D4 plan, following the Sprint 005 precedent of retiring accepted plans at closeout. The durable record moves into `docs/sprint_memos/006_closeout.md` and the D4 evidence memo; `configs/sprint006_baseline_v1.json` remains the frozen contract of record. Confirm the exact retirement mechanism (delete versus move to `docs/archive/`) at closeout review — see §14.
+**Resolved: delete all five plans.** At closeout, `git rm` all five temporary Sprint 006 plans — `docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`, `…_d1_…`, `…_d2_…`, `…_d3_…`, and this D4 plan — matching the Sprint 005 precedent of deleting accepted plans at closeout rather than copying them into `docs/archive/`. They are not moved, not archived, and not partially retained. The durable record moves into `docs/sprint_memos/006_closeout.md` and the D4 evidence memo; `configs/sprint006_baseline_v1.json` remains the frozen contract of record, and Git history retains the plans themselves.
 
 ---
 
@@ -735,7 +824,7 @@ Commit message: `docs(sprint006): define D4 execution and acceptance plan`. No p
 
 | File | Content |
 |------|---------|
-| `docs/sprint_memos/sprint006_d4_baseline_execution_evidence.md` | Phase 1 gate results; Phase 2 smoke (option selected, date derivation, checks); Phase 3 command, identities, `START_UTC`/`END_UTC`, `EXIT_CODE`, `RUN_DIR`, receipt digests; Phase 4 V-1…V-20 table, sample selection record, source-level reconstruction audit table, S3/S4 records; **evidence verdict**; residual limitations. Contains **no** economic interpretation |
+| `docs/sprint_memos/sprint006_d4_baseline_execution_evidence.md` | Phase 1 gate results; Phase 2 smoke (Option A contract diff and digest, `MEDIAN_DATE` derivation, S-1…S-10 with the S-9 conditional outcome recorded); Phase 3 command, identities, `START_UTC`/`END_UTC`, `EXIT_CODE`, `RUN_DIR`, receipt digests; Phase 4 V-1…V-20 table, sample selection record, source-level reconstruction audit table, S3/S4 records; **evidence verdict**; residual limitations. Contains **no** economic interpretation |
 | `docs/agenda/current_sprint.md` | Progress-log row: D4 executed and verified; evidence verdict; economics not yet reviewed |
 | `docs/tmp/sprint006_d4_execution_acceptance_plan.md` | Status → `ACCEPTED — D4 EXECUTION COMPLETE (EVIDENCE ONLY)` |
 
@@ -749,37 +838,48 @@ Stays **outside** the repository: `$RUN_DIR` and every artifact in it, `$SMOKE_D
 | `docs/agenda/current_sprint.md` | Sprint status → closed with the recommendation |
 | `docs/baseline_status.md` | Phase 1 suite result and tested baseline commit |
 | `docs/README.md` | Sprint 006 memo/index rows |
-| `docs/tmp/sprint006_d0…d4_*_plan.md` | Retired per §10.3 |
+| `docs/tmp/sprint006_d0_*_plan.md`, `…_d1_…`, `…_d2_…`, `…_d3_…`, `…_d4_…` | **Deleted** — all five, per §10.3 |
 
 ---
 
 ## 12. Exact future execution commands (reference)
 
-Nothing below runs during the planning commit.
+Nothing below runs during the planning commit. Every path is a PowerShell variable derived at execution time; no directory, contract copy, or run output is created now.
 
 ```powershell
 # Phase 1 — gate
 cd C:\MomentumCVG
 git status --porcelain; git rev-parse HEAD
 & C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest -q
+$DRYRUN_DIR = "C:/MomentumCVG_env/runs/sprint006_d4_dryrun_" + (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 & C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint006_baseline.py `
   --contract configs/sprint006_baseline_v1.json `
-  --output-dir C:/MomentumCVG_env/runs/sprint006_d4_dryrun_placeholder --dry-run
+  --output-dir $DRYRUN_DIR --dry-run
 git rev-parse HEAD:configs/sprint006_baseline_v1.json
 (Get-FileHash -Algorithm SHA256 configs/sprint006_baseline_v1.json).Hash.ToLower()
 
-# Phase 2 — smoke (only after the PG-1b option is selected)
+# Phase 2 — smoke (PG-1b Option A: outside-repository date-narrowed contract; see §2.3 for the full build/diff steps)
+$SMOKE_STAMP    = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+$SMOKE_DIR      = "C:/MomentumCVG_env/runs/sprint006_d4_smoke_$SMOKE_STAMP"
+$SMOKE_OUT      = "$SMOKE_DIR/run"
+$SMOKE_CONTRACT = "$SMOKE_DIR/sprint006_smoke_contract.json"
 & C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint006_baseline.py `
-  --contract <FROZEN_OR_SMOKE_CONTRACT> `
-  --output-dir C:/MomentumCVG_env/runs/sprint006_d4_smoke_<UTCSTAMP>
+  --contract $SMOKE_CONTRACT `
+  --output-dir $SMOKE_OUT
 
 # Phase 3 — official baseline
+$UTCSTAMP = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+$RUN_DIR  = "C:/MomentumCVG_env/runs/sprint006_baseline_v1_$UTCSTAMP"
+$START_UTC = (Get-Date).ToUniversalTime().ToString("o")
 & C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint006_baseline.py `
   --contract configs/sprint006_baseline_v1.json `
-  --output-dir C:/MomentumCVG_env/runs/sprint006_baseline_v1_<UTCSTAMP>
+  --output-dir $RUN_DIR
+$EXIT_CODE = $LASTEXITCODE
+$END_UTC = (Get-Date).ToUniversalTime().ToString("o")
+$RUN_DIR; $START_UTC; $END_UTC; $EXIT_CODE      # RECORD
 
 # Phase 4 — digest verification
-Get-ChildItem C:/MomentumCVG_env/runs/sprint006_baseline_v1_<UTCSTAMP> -File | ForEach-Object {
+Get-ChildItem $RUN_DIR -File | ForEach-Object {
   "{0}`t{1}" -f (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower(), $_.Name
 }
 ```
@@ -791,32 +891,42 @@ Get-ChildItem C:/MomentumCVG_env/runs/sprint006_baseline_v1_<UTCSTAMP> -File | F
 - [ ] Central question, success criteria, and the negative-result rationale approved
 - [ ] Immutable identifiers in §2 confirmed correct and complete
 - [ ] Phase 1 gate accepted, including the dual-digest (LF and on-disk) contract procedure
-- [ ] **PG-1a** median-date convention (lower median on even `n`) confirmed
-- [ ] **PG-1b** smoke option selected: A (date-narrowed smoke contract outside the repo) or B (full run into a disposable directory)
-- [ ] **PG-2** accepted: input digests recorded as a pre-run baseline and re-verified for immutability, with no new pinning code in D4
-- [ ] **PG-3** accepted: run start/end time captured from the operator transcript
-- [ ] Blind boundary in §7.1 accepted, including keeping `run_summary_*.json` economic fields and `decision_report.*` closed until the verdict
+- [ ] **PG-1a** resolved: lower median `dates[(n−1)//2]`, expected `2022-09-02`
+- [ ] **PG-1b** resolved: Option A, the outside-repository date-narrowed smoke contract (four date fields, contained by §2.5)
+- [ ] **PG-2** resolved: pre-run and post-run input digests accepted in place of pins, with no new pinning code in D4
+- [ ] **PG-3** resolved: shell-recorded `START_UTC`/`END_UTC` accepted, with no timing code added
+- [ ] **D4-Q1** resolved: execution runs from the final accepted plan commit
+- [ ] **D4-Q3** resolved: the smoke is not skipped
+- [ ] Conditional S-9 accepted: an absent mid/cross overlap is recorded as `N/A`, never worked around by changing the date
+- [ ] Blind boundary in §7.1 accepted, including keeping `run_summary_*.json` economic fields and all `decision_report` values closed until the verdict, with only the key-only walk permitted for V-9
+- [ ] Accepted that a D4 receipt still reports `deliverable=sprint006_d3` with D4 deferred, and that no production code changes to relabel it
 - [ ] D0 §9 S1–S4 rules, fallbacks, and the ≤ 6 cap reproduced without redesign
 - [ ] Source-level reconstruction field list sufficient and correct
 - [ ] Two-verdict structure accepted; no numeric go/no-go threshold introduced
-- [ ] Three-commit sequence and file assignment accepted
+- [ ] Three-commit sequence and file assignment accepted, including deleting all five D0–D4 plans at closeout
 - [ ] Out-of-scope list accepted
 - [ ] Confirmed: this planning commit performs no real-data execution and no performance inspection
 
 ---
 
-## 14. Remaining decisions and uncertainties for human review
+## 14. Resolved planning decisions
 
-| id | Item | Why it needs a human | Proposed resolution |
-|----|------|----------------------|---------------------|
-| **PG-1a** | D0 §9 does not disambiguate "median" for an even-length expected calendar | Sample selection must be frozen before P&L; picking after the fact looks like selection | Adopt the lower median `dates[(n−1)//2]`; expected `2022-09-02`; stop and escalate if the derivation differs |
-| **PG-1b** | The accepted CLI cannot restrict a run to one date, so a "small" smoke is not achievable as specified | Both workarounds involve a trade-off the operator should not choose alone | Option A (date-narrowed smoke contract outside the repo, four fields changed, contained by §2.5) is recommended over option B |
-| **PG-2** | No pinned expected digests for `features_42_8.parquet`, A1, A2, or the liquidity panel; the receipt records input paths without digests | Accepting "immutability across the run" instead of "equality to a pin" is a real weakening of input identity | Record Phase 1 digests as the baseline and re-verify in Phase 4; consider pinned input digests as a Sprint 007 item; implement nothing in D4 |
-| **PG-3** | The receipt has `generated_utc` but no start time or duration | Determines whether the timing record is trustworthy for the memo | Capture `START_UTC`/`END_UTC` from the shell transcript; add no timing code |
-| **D4-Q1** | Does the D3-acceptance docs commit become the execution commit, or must execution run from `10133f6`? | Affects `EXECUTION_COMMIT` and the receipt's `repo_sha` | Either is acceptable provided the tree is clean, `10133f6` is an ancestor, and the commit is recorded; documentation-only commits do not change behavior |
-| **D4-Q2** | Retirement mechanism for the five `docs/tmp/sprint006_*` plans at closeout | Repository convention question, not a technical one | Follow whichever Sprint 005 precedent the reviewer confirms (delete versus move to `docs/archive/`) |
-| **D4-Q3** | Whether the smoke may be skipped entirely if PG-1b is unresolved at execution time | Skipping loses the cheap integration check before the full run | Recommend not skipping; if PG-1b stays unresolved, escalate rather than proceeding straight to Phase 3 |
+Every open item from the first draft is now decided. None of these resolutions changes production code, tests, or the frozen contract; they are procedural commitments binding on the operator.
+
+| id | Item | Resolution |
+|----|------|-----------|
+| **PG-1a** | D0 §9 does not disambiguate "median" for an even-length expected calendar | **Resolved: lower median** `dates[(n−1)//2]`, expected `2022-09-02`. Record both candidate indices and dates; stop and escalate if the derivation yields anything else, and never substitute a date by hand (§2.1) |
+| **PG-1b** | The accepted CLI cannot restrict a run to one date | **Resolved: Option A** — an outside-repository date-narrowed smoke contract with only the four date fields changed, verified by a four-line diff and contained by §2.5. Option B is rejected. No CLI change is made (§2.2–§2.3) |
+| **PG-2** | No pinned expected digests for `features_42_8.parquet`, A1, A2, or the liquidity panel | **Resolved: accept pre-run and post-run digests** as the input-identity record, in place of pins. Digest the inputs in Phase 1, re-verify the same values in Phase 4, and treat any change as `BLOCKED`. Pinned input digests are a candidate Sprint 007 item; nothing is implemented in D4 |
+| **PG-3** | The receipt has `generated_utc` but no start time or duration | **Resolved: accept shell-recorded timing.** `START_UTC` and `END_UTC` come from the operator's PowerShell transcript (§3.1) and are recorded in the evidence memo. No timing code is added |
+| **D4-Q1** | Which commit executes D4 | **Resolved: execute from the final accepted plan commit** — the HEAD that carries the accepted D4 plan, with `10133f6` as an ancestor and a clean tree. That SHA is the recorded `EXECUTION_COMMIT` and must equal the receipt's `repo_sha` |
+| **D4-Q2** | Retirement mechanism for the five temporary Sprint 006 plans | **Resolved: delete all five** D0–D4 plans in commit 3, matching the Sprint 005 precedent. No move to `docs/archive/`, no partial retention (§10.3) |
+| **D4-Q3** | Whether the smoke may be skipped | **Resolved: do not skip the smoke.** Phase 2 runs before Phase 3 in every case; skipping is not an operator option |
+| **S-9** | Mid/cross fill differentiation may have no overlapping constructable name on the smoke date | **Resolved: conditional check.** Verify the price differences when an overlap exists; otherwise record `N/A — no overlapping constructable name` and continue. Only an incorrect comparison on an existing overlap blocks execution (§2.4) |
+| **Receipt labels** | A D4 run's receipt reports `deliverable=sprint006_d3` and still defers D4 | **Resolved: expected, no code change.** These are D3 producer-metadata fields; D4 lifecycle acceptance is recorded in the evidence memo (§7.2) |
+
+No item remains open for human decision. Acceptance of this plan is acceptance of the table above.
 
 ---
 
-**End of proposed D4 plan.** No D4 execution, real-data run, smoke run, official run directory, or aggregate P&L inspection is authorized by drafting or committing this document. Execution requires explicit acceptance of this plan, including a decision on every item in §14.
+**End of proposed D4 plan.** No D4 execution, real-data run, smoke run, official run directory, or aggregate P&L inspection is authorized by drafting or committing this document. Execution requires explicit acceptance of this plan, including the resolutions recorded in §14.
