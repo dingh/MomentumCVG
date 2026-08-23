@@ -1,7 +1,7 @@
 # Sprint 006 D4 — Execution and acceptance plan
 
-**Status:** `BLOCKED — AMENDED PLAN AWAITING ACCEPTANCE`
-**Mode:** Build. This document authorizes **nothing**. No accepted D4 execution exists. This amendment commit is documentation-only.
+**Status:** `ACCEPTED — PHASES 1–2 PASSED, AWAITING REVIEW BEFORE PHASE 3`
+**Mode:** Build. The amended plan was accepted at `e205b9a`, and Phases 1 and 2 were rerun in full from that commit and passed. Phase 3 is **not** authorized; it requires separate explicit acceptance after human review of the checkpoint. Evidence: [`sprint006_d4_phase12_checkpoint.md`](sprint006_d4_phase12_checkpoint.md).
 **Repo HEAD at proposal:** `10133f6c12facae26d818b7e112b94332f5e1e46` (`test(sprint006): verify D3 markdown values`), clean working tree on `main`
 **Accepted D3 implementation:** `361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6` (design `b924330`)
 **Confirmed ancestors:** D0 `1cdfad7`; D1 `241b0d3` + `c6b1735`; D2 `9224068` (acceptance `62bdf38`); D3 design `b924330`
@@ -23,15 +23,20 @@ impossible, so the plan was amended. The following happened and must not be mist
 | At `5c31e49` | Phase 2 smoke with all four date fields set to `2022-09-02` | **Blocked.** `BacktestRunConfig` validation rejects `start_date >= end_date`, so the adapter aborted in preflight (exit 2) and wrote no artifacts. |
 | At `5c31e49`, before this amendment | A provisional **two-date** smoke (`2022-09-02` … `2022-09-09`) | Ran and passed plumbing checks. **Not official D4 evidence**: it was executed *before* the plan was amended and re-accepted, so it violates the "execute only from the final accepted plan commit" rule (§14, D4-Q1). |
 
+**Resolution.** The amended plan was accepted at `e205b9acc5d0400aa38169de721acb7fb8268f29`, and Phases 1 and 2
+were rerun from scratch at that commit on 2026-08-23. Both passed; see
+[`sprint006_d4_phase12_checkpoint.md`](sprint006_d4_phase12_checkpoint.md). None of the earlier attempts above
+was reused, and their artifacts remain uncited.
+
 Consequences, binding on any future operator:
 
 * **Phase 3 has not started.** No official full-history run exists and no official run directory exists.
-* **Neither Phase 1 nor Phase 2 is accepted.** Both must be rerun in full from the final accepted plan commit
-  once this amended plan is accepted.
-* **The provisional smoke's economics are not evidence.** No figure from any smoke `decision_report.*` or
-  `run_summary_*.json` may be cited anywhere, in any form.
-* Provisional artifacts remain outside the repository under `C:/MomentumCVG_env/runs/`. They are retained as
-  history only, are never cited, and are never copied into the repository.
+* **The accepted Phase 1/2 rerun is the one at `e205b9a`.** The earlier attempts in the table above are
+  superseded history and are never cited as evidence.
+* **No smoke's economics are evidence** — not the provisional ones and not the accepted rerun's. No figure from
+  any smoke `decision_report.*` or `run_summary_*.json` may be cited anywhere, in any form.
+* All smoke artifacts remain outside the repository under `C:/MomentumCVG_env/runs/`, are never cited for
+  economics, and are never copied into the repository.
 
 ---
 
@@ -988,4 +993,4 @@ No item remains open for human decision. Acceptance of this plan is acceptance o
 
 ---
 
-**End of amended D4 plan.** Nothing is authorized by drafting or committing this document. No accepted D4 evidence exists: Phase 1 was attempted but not accepted, the original single-date Phase 2 was impossible, the provisional two-date smoke predates this amendment, and Phase 3 has never run. Execution requires explicit acceptance of this amended plan — including the resolutions in §14 — after which **Phase 1 and Phase 2 are rerun in full** from the final accepted plan commit. Smoke economics are never citable.
+**End of amended D4 plan.** This plan was accepted at `e205b9a`, and Phases 1 and 2 were rerun in full from that commit and **passed** — recorded in [`sprint006_d4_phase12_checkpoint.md`](sprint006_d4_phase12_checkpoint.md). **Phase 3 remains unauthorized** and requires separate explicit acceptance after human review of that checkpoint; no official run directory exists and no economics have been opened. D4 is not complete. Smoke economics are never citable.
