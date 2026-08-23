@@ -120,7 +120,7 @@ Plan: [`docs/tmp/sprint006_d3_decision_diagnostic_report_plan.md`](../tmp/sprint
 
 Plan: [`docs/tmp/sprint006_d4_execution_acceptance_plan.md`](../tmp/sprint006_d4_execution_acceptance_plan.md) (`ACCEPTED — PHASES 1–2 PASSED, AWAITING REVIEW BEFORE PHASE 3`). Small real-data smoke; independent inspection of a limited trade sample; frozen full-history baseline under required fill assumptions; reproducibility evidence; documented conclusion; clean closeout.
 
-**Accepted rerun at `e205b9a`** — [`docs/tmp/sprint006_d4_phase12_checkpoint.md`](../tmp/sprint006_d4_phase12_checkpoint.md), verdict `PASS`. Phase 1 gate (§§1.1–1.8) and the amended two-date Phase 2 (§§2.1–2.5) were rerun from scratch; S-1…S-10 all passed, with S-9 evaluated on `2022-09-02` only. Phase 3 has **not** started, `RUN_DIR` was derived but never created, and no economics were opened. Phase 3 requires separate explicit acceptance.
+**Accepted rerun at `e205b9a`** — [`docs/tmp/sprint006_d4_phase12_checkpoint.md`](../tmp/sprint006_d4_phase12_checkpoint.md), verdict `PASS`. Phase 1 gate (§§1.1–1.8) and the amended two-date Phase 2 (§§2.1–2.5) were rerun from scratch; S-1…S-10 all passed, with S-9 evaluated on `2022-09-02` only. Phase 3 has **not** started, `RUN_DIR` was derived but never created, and no aggregate economics were opened or interpreted — per-leg and per-trade P&L fields were machine-read only for the S-7 reconciliation, with no individual value reported or interpreted. Phase 3 requires separate explicit acceptance.
 
 Superseded execution history — **none of it is accepted D4 evidence**:
 

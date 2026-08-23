@@ -168,9 +168,21 @@ Executed `scripts/run_sprint006_baseline.py --contract $SMOKE_CONTRACT --output-
 **S-10 attestation.** `decision_report.json` and `decision_report.md` were never opened. `run_summary_*.json`
 was never read — the two files appear only as filenames in the S-2 directory listing. `run_receipt.json` was
 read for identity keys only (`experiment_id`, `deliverable`, `repo_sha`, `contract.contract_id`,
-`contract.sha256`, `len(runs)`), which is the key-only walk the plan permits. No aggregate return, Sharpe,
-drawdown, yearly table, concentration figure, or P&L value was opened, computed, or recorded anywhere in this
-task. The counts above are structural row counts, which §5 explicitly permits.
+`contract.sha256`, `len(runs)`), which is the key-only walk the plan permits.
+
+Precisely what was and was not touched at the P&L level:
+
+* Per-leg and per-trade P&L fields — `entry_cash_per_unit`, `expiry_payoff_per_unit`, `pnl_per_unit`,
+  `pnl_total_leg`, `entry_cost_per_share`, `pnl_per_share`, `pnl_total` — **were** machine-read from the
+  `leg_log` and `trade_log` parquets and summed, solely to evaluate the S-7 reconciliation identities that the
+  plan requires. S-7 cannot be performed without reading them.
+* **No individual P&L value was reported or economically interpreted.** The comparisons were pass/fail against
+  a tolerance; no per-trade or per-leg figure was printed to the checkpoint, quoted, ranked, or read for
+  economic meaning, and none appears anywhere in this document.
+* **No aggregate P&L, return, Sharpe, drawdown, yearly result, or concentration metric was opened, computed,
+  or reported** at any point.
+
+The counts above are structural row counts, which §5 explicitly permits.
 
 ### Smoke receipt identity (identity fields only)
 
@@ -212,7 +224,8 @@ make any check pass.
 
 * **Overall verdict: `PASS`.** Phase 1 (§§1.1–1.8) and Phase 2 (§§2.1–2.5) completed with no failure.
 * **Phase 3 was not started.** No official run directory exists; `RUN_DIR` was derived but never created.
-* **No aggregate economics were opened or interpreted** at any point.
+* **No aggregate economics were opened or interpreted** at any point. Per-leg and per-trade P&L fields were
+  machine-read and summed only for the S-7 reconciliation; see the S-10 attestation in §5.
 * **No raw artifacts were copied into the repository.** Parquet files, JSON reports, receipts, contracts,
   transcripts, and run outputs all remain under `C:/MomentumCVG_env/runs/`; this Markdown checkpoint is the
   only artifact entering Git.
