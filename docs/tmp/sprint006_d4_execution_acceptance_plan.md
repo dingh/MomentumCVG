@@ -1,7 +1,7 @@
 # Sprint 006 D4 — Execution and acceptance plan
 
-**Status:** `PROPOSED — AWAITING ACCEPTANCE`
-**Mode:** Build. This document authorizes **nothing**. No D4 execution has started. Planning commit is documentation-only.
+**Status:** `BLOCKED — AMENDED PLAN AWAITING ACCEPTANCE`
+**Mode:** Build. This document authorizes **nothing**. No accepted D4 execution exists. This amendment commit is documentation-only.
 **Repo HEAD at proposal:** `10133f6c12facae26d818b7e112b94332f5e1e46` (`test(sprint006): verify D3 markdown values`), clean working tree on `main`
 **Accepted D3 implementation:** `361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6` (design `b924330`)
 **Confirmed ancestors:** D0 `1cdfad7`; D1 `241b0d3` + `c6b1735`; D2 `9224068` (acceptance `62bdf38`); D3 design `b924330`
@@ -12,9 +12,32 @@
 
 ---
 
+## Execution history (truthful record — nothing here is accepted D4 evidence)
+
+An earlier version of this plan specified a **single-date** Phase 2 smoke. That procedure was attempted and is
+impossible, so the plan was amended. The following happened and must not be mistaken for accepted evidence:
+
+| When | What was attempted | Outcome |
+|------|--------------------|---------|
+| At `5c31e49` | Phase 1 pre-execution gate checks | Ran. **Not accepted as the official gate**: §1.7's literal criterion ("parent exists and is writable") was not satisfied, because `C:/MomentumCVG_env/runs` did not exist at the time. Recorded as a deviation rather than a clean pass. |
+| At `5c31e49` | Phase 2 smoke with all four date fields set to `2022-09-02` | **Blocked.** `BacktestRunConfig` validation rejects `start_date >= end_date`, so the adapter aborted in preflight (exit 2) and wrote no artifacts. |
+| At `5c31e49`, before this amendment | A provisional **two-date** smoke (`2022-09-02` … `2022-09-09`) | Ran and passed plumbing checks. **Not official D4 evidence**: it was executed *before* the plan was amended and re-accepted, so it violates the "execute only from the final accepted plan commit" rule (§14, D4-Q1). |
+
+Consequences, binding on any future operator:
+
+* **Phase 3 has not started.** No official full-history run exists and no official run directory exists.
+* **Neither Phase 1 nor Phase 2 is accepted.** Both must be rerun in full from the final accepted plan commit
+  once this amended plan is accepted.
+* **The provisional smoke's economics are not evidence.** No figure from any smoke `decision_report.*` or
+  `run_summary_*.json` may be cited anywhere, in any form.
+* Provisional artifacts remain outside the repository under `C:/MomentumCVG_env/runs/`. They are retained as
+  history only, are never cited, and are never copied into the repository.
+
+---
+
 ## Plain-language summary
 
-D0–D3 built a frozen experiment contract, a thin adapter that runs it reproducibly, correct date/eligibility accounting, and a deterministic decision-report generator. Every one of those deliverables was validated on **synthetic** fixtures only. Nobody has yet run the frozen `42:8` baseline on the accepted real dataset, and nobody has looked at real Sprint 006 P&L.
+D0–D3 built a frozen experiment contract, a thin adapter that runs it reproducibly, correct date/eligibility accounting, and a deterministic decision-report generator. Every one of those deliverables was validated on **synthetic** fixtures only. The frozen `42:8` baseline has never been run over the accepted real dataset's full history, and no Sprint 006 P&L has been reviewed. (A provisional two-date smoke was executed before this plan was amended — see the execution history above — but it is not accepted evidence and its economics must not be cited.)
 
 D4 does exactly that, once, and then decides whether the resulting evidence can be trusted.
 
@@ -317,16 +340,18 @@ Any failure in 1.1–1.7 **blocks execution**. Record the failure, stop, and esc
 
 ---
 
-## 5. Phase 2 — Small real-data smoke
+## 5. Phase 2 — Small real-data smoke (minimal two-date window)
 
-**Purpose.** Catch integration failures (path/schema/dtype/serialization) cheaply on one real date, and confirm that the artifacts D4 depends on — `date_status`, `funnel_summary`, `leg_log`, `candidate_view` — are populated with real data and internally consistent. This is a plumbing check, **not** a performance check.
+**Purpose.** Catch integration failures (path/schema/dtype/serialization) cheaply on the **smallest window the accepted runner will accept** — two consecutive A1 expected dates — and confirm that the artifacts D4 depends on (`date_status`, `funnel_summary`, `leg_log`, `candidate_view`) are populated with real data and internally consistent. This is a plumbing check, **not** a performance check.
+
+**Why two dates and not one.** `BacktestRunConfig` validation requires `start_date` to be **strictly** before `end_date`; a zero-length window is rejected before any execution begins. That rule is intentional, is shared well beyond Sprint 006, and D4 **must not** change it or add single-date support (§10.1). The smoke therefore spans `MEDIAN_DATE` through the **next** A1 expected date, which is the minimal valid window. Everything the smoke is meant to prove is still proven; there is simply one extra evaluated date.
 
 **May be inspected:** exit codes, file presence, schemas and dtypes, row counts, `date_status` values, funnel null-vs-zero semantics, per-trade leg rows and their reconciliation arithmetic.
 **May not be inspected or reported:** aggregate returns, Sharpe, drawdown, yearly tables, top-5 concentration, or any figure from `decision_report.*` / `run_summary_*.json`. Smoke numbers must never be cited as a result.
 
-### 2.1 Deriving the smoke date (do not hardcode)
+### 2.1 Deriving the two smoke dates (do not hardcode)
 
-The date is the **median of the frozen expected calendar**, per D0 §9 sample S1. The calendar is defined by D0 §8.0 and implemented by `SurfaceRunner._get_expected_dates_from_a1`: sorted unique A1 `entry_date` values in the closed interval `[2018-10-26, 2026-07-10]`, **including dates that appear only on `surface_valid=False` rows**.
+The window's start is the **median of the frozen expected calendar**, per D0 §9 sample S1; its end is the **next expected date after that median**. The calendar is defined by D0 §8.0 and implemented by `SurfaceRunner._get_expected_dates_from_a1`: sorted unique A1 `entry_date` values in the closed interval `[2018-10-26, 2026-07-10]`, **including dates that appear only on `surface_valid=False` rows**.
 
 Read-only derivation (loads A1 metadata only; runs no economics):
 
@@ -339,26 +364,40 @@ d = pd.to_datetime(meta['entry_date']).dt.date
 lo, hi = dt.date(2018,10,26), dt.date(2026,7,10)
 dates = sorted(set(x for x in d if lo <= x <= hi))
 n = len(dates)
+i = (n - 1) // 2
 print('n_expected_dates', n)
-print('lower_median_index', (n-1)//2, dates[(n-1)//2])
+print('lower_median_index', i, dates[i])
 print('upper_median_index', n//2, dates[n//2])
+print('median_index', i, 'MEDIAN_DATE', dates[i])
+print('next_index', i+1, 'SMOKE_END_DATE', dates[i+1])
 print('first', dates[0], 'last', dates[-1])
 "@
 ```
 
 **Resolved convention (PG-1a, decided):** `MEDIAN_DATE = dates[(n - 1) // 2]` — the **lower median** when `n` is even. For odd `n` both indices coincide and the convention is irrelevant. The expected value is **`2022-09-02`**, the date Sprint 005 D5 derived under the same median rule.
 
-D0 §9 says "median A1 expected date (sorted)" without disambiguating an even-length calendar; the lower-median rule above closes that ambiguity for D4. It governs sample selection only and never touches economics. Record both median indices and both candidate dates in the evidence memo regardless of parity, so the choice is auditable.
+**Smoke window end:** `SMOKE_END_DATE = dates[(n - 1) // 2 + 1]` — the **next** A1 expected date after the median, required by the strict `start_date < end_date` validation described in §5. The expected value is **`2022-09-09`**. It is derived from the same calendar, never hand-picked, and never chosen to change what the smoke covers.
 
-**Stop condition:** if the derived `MEDIAN_DATE` is not `2022-09-02`, **stop**. Record `n`, both median indices, both candidate dates, and the first/last calendar dates, and escalate for review. Do not silently substitute another date, and do not adjust the interval or the convention to reach `2022-09-02`.
+D0 §9 says "median A1 expected date (sorted)" without disambiguating an even-length calendar; the lower-median rule above closes that ambiguity for D4. It governs sample selection only and never touches economics. Record `n`, both median indices, both candidate median dates, and the derived `SMOKE_END_DATE` in the evidence memo regardless of parity, so both choices are auditable.
 
-### 2.2 The smoke cannot be date-restricted with the current CLI — resolved by Option A
+**Stop condition:** if the derived `MEDIAN_DATE` is not `2022-09-02`, or the derived `SMOKE_END_DATE` is not `2022-09-09`, **stop**. Record `n`, both median indices, both candidate median dates, the derived next date, and the first/last calendar dates, and escalate for review. Do not silently substitute another date, and do not adjust the interval or the convention to reach the expected values.
 
-**Implementation limitation.** `scripts/run_sprint006_baseline.py` exposes only `--contract`, `--output-dir`, and `--dry-run`. The run window comes from the contract, and `build_run_configs` requires `shared_run_config.start_date/end_date` to equal `periods.run_start_date/run_end_date`. There is **no** flag, environment variable, or supported entry point that limits an official-path run to one date, so "run the frozen settings on `2022-09-02` only" is not achievable through the accepted command as implemented. D4 does **not** fix this; making the limitation disappear would be a production change.
+### 2.2 The smoke cannot be narrowed to one date — resolved by Option A over a two-date window
 
-**Resolved decision (PG-1b): Option A — an outside-repository, date-narrowed smoke contract.**
+**Implementation limitation.** `scripts/run_sprint006_baseline.py` exposes only `--contract`, `--output-dir`, and `--dry-run`. The run window comes from the contract, and `build_run_configs` requires `shared_run_config.start_date/end_date` to equal `periods.run_start_date/run_end_date`. There is **no** flag, environment variable, or supported entry point that narrows an official-path run, so the window can only be changed through the contract itself. Separately, `BacktestRunConfig` validation rejects `start_date >= end_date`, so a true one-date run is **not constructible at all** through the accepted path. D4 does **not** fix either limitation; making them disappear would be a production change.
 
-Procedure: copy the frozen JSON to a disposable directory outside the repository and change **only** the four date fields to `2022-09-02` — `periods.run_start_date`, `periods.run_end_date`, `shared_run_config.start_date`, `shared_run_config.end_date`. Diff the copy against the frozen file and confirm that exactly those four lines differ. Then invoke the existing CLI with `--contract <copy>`; both frozen fills still execute in one invocation. Executable commands are in §2.3.
+**Resolved decision (PG-1b): Option A — an outside-repository, date-narrowed smoke contract over the minimal valid two-date window.**
+
+Procedure: copy the frozen JSON to a disposable directory outside the repository and change **only** these four date fields:
+
+| Field | Value |
+|-------|-------|
+| `periods.run_start_date` | `MEDIAN_DATE` (`2022-09-02`) |
+| `shared_run_config.start_date` | `MEDIAN_DATE` (`2022-09-02`) |
+| `periods.run_end_date` | `SMOKE_END_DATE` (`2022-09-09`) |
+| `shared_run_config.end_date` | `SMOKE_END_DATE` (`2022-09-09`) |
+
+`primary_reporting_start_date` / `primary_reporting_end_date` are **not** touched. Diff the copy against the frozen file and confirm that exactly those four lines differ. Then invoke the existing CLI with `--contract <copy>`; both frozen fills still execute in one invocation. Executable commands are in §2.3.
 
 Option B (a full frozen run into a disposable directory) was considered and **rejected**: it costs a full execution, produces a complete non-official artifact set, and creates a stronger confusion hazard than A.
 
@@ -381,22 +420,23 @@ New-Item -ItemType Directory -Path $SMOKE_DIR | Out-Null
 Test-Path $SMOKE_OUT                             # must be False — the adapter creates it
 ```
 
-Step 2 — build the date-narrowed contract copy, changing only the four date fields. Each pattern anchors on the opening quote, so `primary_reporting_start_date` / `primary_reporting_end_date` and `run_start_date` / `run_end_date` cannot be matched by the bare `start_date` / `end_date` patterns.
+Step 2 — build the date-narrowed contract copy, changing only the four date fields. Start fields take `MEDIAN_DATE`; end fields take `SMOKE_END_DATE`. Each pattern anchors on the opening quote, so `primary_reporting_start_date` / `primary_reporting_end_date` and `run_start_date` / `run_end_date` cannot be matched by the bare `start_date` / `end_date` patterns.
 
 ```powershell
-$MEDIAN_DATE = "2022-09-02"                      # from §2.1; must match the derivation
+$MEDIAN_DATE    = "2022-09-02"                   # from §2.1; must match the derivation
+$SMOKE_END_DATE = "2022-09-09"                   # from §2.1; next A1 expected date after the median
 $frozenText  = Get-Content $FROZEN -Raw
 $smokeText   = $frozenText `
   -replace '("run_start_date"\s*:\s*)"2018-10-26"', ('$1"' + $MEDIAN_DATE + '"') `
-  -replace '("run_end_date"\s*:\s*)"2026-07-10"',   ('$1"' + $MEDIAN_DATE + '"') `
+  -replace '("run_end_date"\s*:\s*)"2026-07-10"',   ('$1"' + $SMOKE_END_DATE + '"') `
   -replace '("start_date"\s*:\s*)"2018-10-26"',     ('$1"' + $MEDIAN_DATE + '"') `
-  -replace '("end_date"\s*:\s*)"2026-07-10"',       ('$1"' + $MEDIAN_DATE + '"')
+  -replace '("end_date"\s*:\s*)"2026-07-10"',       ('$1"' + $SMOKE_END_DATE + '"')
 # Write UTF-8 without a BOM: Windows PowerShell 5.1 `Set-Content -Encoding utf8` prepends a BOM,
 # which json.load() would reject. Byte content otherwise matches the frozen file apart from the four dates.
 [System.IO.File]::WriteAllText($SMOKE_CONTRACT, $smokeText, (New-Object System.Text.UTF8Encoding($false)))
 ```
 
-Step 3 — prove the copy differs from the frozen contract in exactly four lines, and prove the frozen file is untouched.
+Step 3 — prove the copy differs from the frozen contract in exactly four lines — the two start fields now reading `MEDIAN_DATE` and the two end fields now reading `SMOKE_END_DATE` — and prove the frozen file is untouched.
 
 ```powershell
 $delta = Compare-Object (Get-Content $FROZEN) (Get-Content $SMOKE_CONTRACT) -SyncWindow 0
@@ -407,7 +447,7 @@ $delta | Format-Table -AutoSize                  # RECORD: expect 4 '<=' and 4 '
 git -C C:/MomentumCVG status --porcelain configs/sprint006_baseline_v1.json   # must print nothing
 ```
 
-**Stop** if the diff is anything other than those four date lines, or if the frozen contract's digest or Git status changed.
+**Stop** if the diff is anything other than those four date lines, if any changed line carries a value other than the derived `MEDIAN_DATE` / `SMOKE_END_DATE`, or if the frozen contract's digest or Git status changed.
 
 Step 4 — run the smoke. Both frozen fills always execute in one invocation; there is no fill selector, so "mid and cross" needs no extra argument.
 
@@ -428,12 +468,12 @@ $LASTEXITCODE                                    # RECORD; expect 0
 | S-1 | Execution | Exit code 0; no `ERROR:` on stderr; stdout lists all seven per-run files for both runs plus report and receipt paths |
 | S-2 | Artifact set | All 17 expected **adapter-written** files present in `$SMOKE_OUT`; no extras. Count adapter outputs only, and perform the count **before** the §2.5 marker file is written. The marker `NOT_THE_OFFICIAL_BASELINE.txt` and `sprint006_smoke_contract.json` live in `$SMOKE_DIR`, one level above `$SMOKE_OUT`, so they are never part of this count |
 | S-3 | Schemas | `date_status` columns exactly `["trade_date","status","reason"]`; `funnel_summary` columns exactly `FUNNEL_SUMMARY_COLUMNS` (18); `leg_log` columns exactly `LEG_LOG_COLUMNS` (21); `candidate_view` columns exactly `CANDIDATE_VIEW_COLUMNS` (9) |
-| S-4 | Date status | Exactly one `date_status` row per fill, `trade_date == MEDIAN_DATE`, `status ∈ {traded, valid_no_trade, failed}`; `reason` is `null` iff `traded` |
-| S-5 | Funnel semantics | For a `failed`/`missing_features` date: `n_feature_covered=0` and `n_universe`…`n_included` all **null**. For an evaluated date: `n_universe` and `n_jointly_eligible` are non-null integers, `n_post_signal ≤ n_jointly_eligible`, `n_constructable ≤ n_post_signal`, `n_included ≤ n_constructable`, and long+short splits sum to their totals. Zero ≠ null is respected |
-| S-6 | Leg serialization | Every `structure_ok=True` row on the date has leg rows; every included straddle has exactly 2 (`leg_index {0,1}`), every included iron fly exactly 4 (`leg_index {0,1,2,3}`); an included short iron fly has `unit_quantity` signs `+ − − +` by `leg_index` and `portfolio_quantity = abs(trade.quantity) × unit_quantity` with the same signs; non-included constructable rows have `portfolio_quantity` and `pnl_total_leg` null |
-| S-7 | Included-trade reconciliation | For every included trade on the date, and independently of the generator: `Σ entry_cash_per_unit = entry_cost_per_share`; `Σ expiry_payoff_per_unit = entry_cost_per_share + pnl_per_share`; `Σ pnl_per_unit = pnl_per_share`; `Σ pnl_total_leg = pnl_total`; tolerance `max(1e-6 abs, 1e-8 rel)` |
-| S-8 | Structure failures | Any `stage=structure_failed` candidate row has `reason_code` in the four frozen classes and a retained `reason_raw`; such rows have **no** leg rows |
-| S-9 | Fill differentiation (**conditional**) | Determine whether any `(ticker, direction)` is constructable in **both** the mid and the cross leg log on `MEDIAN_DATE`. **If at least one overlap exists:** for one such name, every leg must satisfy the exact fill relationship — buy legs (`unit_quantity > 0`): `cross_fill_price − mid_fill_price = +0.5 × (ask − bid)`; sell legs (`unit_quantity < 0`): `cross_fill_price − mid_fill_price = −0.5 × (ask − bid)` — within `max(1e-6 absolute, 1e-8 relative)`, while the `mid` column is identical across fills. Strict inequality (cross buys above mid, cross sells below mid) applies **only where `ask > bid`**; on a zero-spread leg the two fills are **equal**, which is correct and not a failure. **If no overlap exists:** record `N/A — no overlapping constructable name` with the mid-only and cross-only constructable key counts, and continue. Do **not** substitute another date, widen the window, or relax the frozen settings to manufacture an overlap. Only an **incorrect comparison on an existing overlap** blocks execution; absence of an overlap does not |
+| S-4 | Date status | Exactly **two** `date_status` rows per fill — one with `trade_date == MEDIAN_DATE` and one with `trade_date == SMOKE_END_DATE`, and no others. Each row has `status ∈ {traded, valid_no_trade, failed}`; `reason` is `null` iff `traded` |
+| S-5 | Funnel semantics | Checked on **both** smoke dates and both fills. For a `failed`/`missing_features` date: `n_feature_covered=0` and `n_universe`…`n_included` all **null**. For an evaluated date: `n_universe` and `n_jointly_eligible` are non-null integers, `n_post_signal ≤ n_jointly_eligible`, `n_constructable ≤ n_post_signal`, `n_included ≤ n_constructable`, and long+short splits sum to their totals. Zero ≠ null is respected |
+| S-6 | Leg serialization | Checked on **both** smoke dates. Every `structure_ok=True` row has leg rows; every included straddle has exactly 2 (`leg_index {0,1}`), every included iron fly exactly 4 (`leg_index {0,1,2,3}`); an included short iron fly has `unit_quantity` signs `+ − − +` by `leg_index` and `portfolio_quantity = abs(trade.quantity) × unit_quantity` with the same signs; non-included constructable rows have `portfolio_quantity` and `pnl_total_leg` null |
+| S-7 | Included-trade reconciliation | For every included trade on **both** smoke dates, and independently of the generator: `Σ entry_cash_per_unit = entry_cost_per_share`; `Σ expiry_payoff_per_unit = entry_cost_per_share + pnl_per_share`; `Σ pnl_per_unit = pnl_per_share`; `Σ pnl_total_leg = pnl_total`; tolerance `max(1e-6 abs, 1e-8 rel)` |
+| S-8 | Structure failures | Checked on **both** smoke dates. Any `stage=structure_failed` candidate row has `reason_code` in the four frozen classes and a retained `reason_raw`; such rows have **no** leg rows |
+| S-9 | Fill differentiation (**conditional**) | Determine whether any `(ticker, direction)` is constructable in **both** the mid and the cross leg log on `MEDIAN_DATE`. **If at least one overlap exists:** for one such name, every leg must satisfy the exact fill relationship — buy legs (`unit_quantity > 0`): `cross_fill_price − mid_fill_price = +0.5 × (ask − bid)`; sell legs (`unit_quantity < 0`): `cross_fill_price − mid_fill_price = −0.5 × (ask − bid)` — within `max(1e-6 absolute, 1e-8 relative)`, while the `mid` column is identical across fills. Strict inequality (cross buys above mid, cross sells below mid) applies **only where `ask > bid`**; on a zero-spread leg the two fills are **equal**, which is correct and not a failure. **If no overlap exists:** record `N/A — no overlapping constructable name` with the mid-only and cross-only constructable key counts, and continue. S-9 is evaluated on `MEDIAN_DATE` **only**: do **not** fall back to `SMOKE_END_DATE`, substitute another date, widen the window, or relax the frozen settings to manufacture an overlap. Only an **incorrect comparison on an existing overlap** blocks execution; absence of an overlap does not |
 | S-10 | No aggregate inspection | The operator attests that `decision_report.json`, `decision_report.md`, and `run_summary_*.json` economic fields were not opened |
 
 **Stop conditions:** non-zero exit; a `DecisionMetricsError` / `ContractError` abort; missing artifact; schema deviation; funnel null-vs-zero violation; leg count/sign violation; any reconciliation break; an incorrect fill-price comparison on an **existing** mid/cross overlap (S-9); a `failed` date whose reason is not explainable by the recorded inputs. A recorded `N/A` on S-9 is **not** a stop condition.
@@ -450,17 +490,19 @@ Mandatory, all of them:
 ```powershell
 @(
   "Sprint 006 D4 smoke run - NOT the official baseline.",
-  "Purpose: integration/plumbing check on one real date only.",
-  "PG-1b resolution: Option A (outside-repository date-narrowed smoke contract).",
+  "Purpose: integration/plumbing check on the minimal valid two-date window.",
+  "PG-1b resolution: Option A (outside-repository date-narrowed smoke contract, two dates).",
+  "Second date required because BacktestRunConfig enforces start_date < end_date.",
   "Smoke contract: $SMOKE_CONTRACT",
   "Smoke contract SHA-256: " + (Get-FileHash -Algorithm SHA256 $SMOKE_CONTRACT).Hash.ToLower(),
-  "MEDIAN_DATE: $MEDIAN_DATE",
+  "MEDIAN_DATE (window start): $MEDIAN_DATE",
+  "SMOKE_END_DATE (window end): $SMOKE_END_DATE",
   "Adapter output directory: $SMOKE_OUT",
   "Smoke artifacts must not be cited as Sprint 006 economic evidence."
 ) | Set-Content -Path "$SMOKE_DIR/NOT_THE_OFFICIAL_BASELINE.txt"
 ```
 
-3. Record the four-line diff of the smoke contract against the frozen file, and note that the smoke receipt's `contract.sha256` differs from both digests in §2.1 *Code and configuration* by design.
+3. Record the four-line diff of the smoke contract against the frozen file (two start fields at `MEDIAN_DATE`, two end fields at `SMOKE_END_DATE`), and note that the smoke receipt's `contract.sha256` differs from both digests in §2.1 *Code and configuration* by design.
 4. The Phase 4/5 evidence tables cite **only** the official `$RUN_DIR`. Smoke paths appear only in the smoke section of the evidence memo, labeled as such.
 5. Smoke artifacts are never committed and never copied into `$RUN_DIR`.
 
@@ -810,21 +852,34 @@ D4 adds no framework, no guardrail beyond the checks above, and no research. Whe
 
 ## 11. Artifacts and three-commit sequence
 
-### Commit 1 — D3 acceptance and proposed D4 plan (**this commit; documentation only**)
+### Commit 1 — D3 acceptance and proposed D4 plan (**documentation only; already made**)
 
 | File | Change |
 |------|--------|
-| `docs/tmp/sprint006_d4_execution_acceptance_plan.md` | **New.** This plan, `PROPOSED — AWAITING ACCEPTANCE` |
-| `docs/agenda/current_sprint.md` | D3 accepted through `10133f6`; D4 planning started; D4 plan proposed; no D4 execution |
+| `docs/tmp/sprint006_d4_execution_acceptance_plan.md` | **New.** This plan, then `PROPOSED — AWAITING ACCEPTANCE` |
+| `docs/agenda/current_sprint.md` | D3 accepted through `10133f6`; D4 planning started; D4 plan proposed |
 | `docs/tmp/sprint006_d3_decision_diagnostic_report_plan.md` | Status header → `ACCEPTED — D3 COMPLETE` with the accepted commit range |
 
-Commit message: `docs(sprint006): define D4 execution and acceptance plan`. No push.
+Commit message: `docs(sprint006): define D4 execution and acceptance plan`.
+
+### Commit 1b — Smoke-procedure correction and cleanup (**documentation only; this commit**)
+
+Inserted because the original Phase 2 procedure was impossible and a provisional smoke ran before the plan was
+amended. It is **not** an evidence commit and accepts nothing.
+
+| File | Change |
+|------|--------|
+| `docs/tmp/sprint006_d4_execution_acceptance_plan.md` | Phase 2 corrected to the minimal valid two-date window; execution history added; status → `BLOCKED — AMENDED PLAN AWAITING ACCEPTANCE` |
+| `docs/agenda/current_sprint.md` | Truthful D4 history and status; no phase marked accepted |
+| `docs/tmp/sprint006_d4_phase12_review/` | **Deleted** — the mistakenly committed smoke bundle (contracts, parquets, trade logs, reports, receipts, summaries, checkpoints, digest table). Outside-repository originals under `C:/MomentumCVG_env/runs/` are untouched |
+
+Commit message: `docs(sprint006): correct D4 smoke procedure`. No push.
 
 ### Commit 2 — Accepted-plan execution and verification evidence (**only after human acceptance of this plan**)
 
 | File | Content |
 |------|---------|
-| `docs/sprint_memos/sprint006_d4_baseline_execution_evidence.md` | Phase 1 gate results; Phase 2 smoke (Option A contract diff and digest, `MEDIAN_DATE` derivation, S-1…S-10 with the S-9 conditional outcome recorded); Phase 3 command, identities, `START_UTC`/`END_UTC`, `EXIT_CODE`, `RUN_DIR`, receipt digests; Phase 4 V-1…V-20 table, sample selection record, source-level reconstruction audit table, S3/S4 records; **evidence verdict**; residual limitations. Contains **no** economic interpretation |
+| `docs/sprint_memos/sprint006_d4_baseline_execution_evidence.md` | Phase 1 gate results; Phase 2 smoke (Option A contract diff and digest, `MEDIAN_DATE` **and** `SMOKE_END_DATE` derivation, the two-date window rationale, S-1…S-10 with S-4's two rows per fill and the S-9 conditional outcome on `MEDIAN_DATE` recorded); Phase 3 command, identities, `START_UTC`/`END_UTC`, `EXIT_CODE`, `RUN_DIR`, receipt digests; Phase 4 V-1…V-20 table, sample selection record, source-level reconstruction audit table, S3/S4 records; **evidence verdict**; residual limitations. Contains **no** economic interpretation |
 | `docs/agenda/current_sprint.md` | Progress-log row: D4 executed and verified; evidence verdict; economics not yet reviewed |
 | `docs/tmp/sprint006_d4_execution_acceptance_plan.md` | Status → `ACCEPTED — D4 EXECUTION COMPLETE (EVIDENCE ONLY)` |
 
@@ -858,7 +913,8 @@ $DRYRUN_DIR = "C:/MomentumCVG_env/runs/sprint006_d4_dryrun_" + (Get-Date).ToUniv
 git rev-parse HEAD:configs/sprint006_baseline_v1.json
 (Get-FileHash -Algorithm SHA256 configs/sprint006_baseline_v1.json).Hash.ToLower()
 
-# Phase 2 — smoke (PG-1b Option A: outside-repository date-narrowed contract; see §2.3 for the full build/diff steps)
+# Phase 2 — smoke (PG-1b Option A: outside-repository contract narrowed to MEDIAN_DATE..SMOKE_END_DATE;
+#                  see §2.3 for the full build/diff steps)
 $SMOKE_STAMP    = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 $SMOKE_DIR      = "C:/MomentumCVG_env/runs/sprint006_d4_smoke_$SMOKE_STAMP"
 $SMOKE_OUT      = "$SMOKE_DIR/run"
@@ -892,7 +948,10 @@ Get-ChildItem $RUN_DIR -File | ForEach-Object {
 - [ ] Immutable identifiers in §2 confirmed correct and complete
 - [ ] Phase 1 gate accepted, including the dual-digest (LF and on-disk) contract procedure
 - [ ] **PG-1a** resolved: lower median `dates[(n−1)//2]`, expected `2022-09-02`
-- [ ] **PG-1b** resolved: Option A, the outside-repository date-narrowed smoke contract (four date fields, contained by §2.5)
+- [ ] **PG-1b** resolved: Option A over the minimal valid **two-date** window — start fields `MEDIAN_DATE` (`2022-09-02`), end fields `SMOKE_END_DATE` (`2022-09-09`), still exactly four changed date fields, contained by §2.5
+- [ ] Accepted that the second smoke date exists solely because `BacktestRunConfig` enforces `start_date < end_date`, and that D4 changes neither that validator nor the CLI
+- [ ] S-4 accepted as **two** `date_status` rows per fill; S-5…S-8 verified on both dates; S-9 evaluated on `MEDIAN_DATE` only
+- [ ] Execution history acknowledged: the earlier Phase 1 attempt, the blocked single-date smoke, and the provisional two-date smoke are **not** accepted evidence, and Phases 1–2 must be rerun in full from the final accepted plan commit
 - [ ] **PG-2** resolved: pre-run and post-run input digests accepted in place of pins, with no new pinning code in D4
 - [ ] **PG-3** resolved: shell-recorded `START_UTC`/`END_UTC` accepted, with no timing code added
 - [ ] **D4-Q1** resolved: execution runs from the final accepted plan commit
@@ -916,17 +975,17 @@ Every open item from the first draft is now decided. None of these resolutions c
 | id | Item | Resolution |
 |----|------|-----------|
 | **PG-1a** | D0 §9 does not disambiguate "median" for an even-length expected calendar | **Resolved: lower median** `dates[(n−1)//2]`, expected `2022-09-02`. Record both candidate indices and dates; stop and escalate if the derivation yields anything else, and never substitute a date by hand (§2.1) |
-| **PG-1b** | The accepted CLI cannot restrict a run to one date | **Resolved: Option A** — an outside-repository date-narrowed smoke contract with only the four date fields changed, verified by a four-line diff and contained by §2.5. Option B is rejected. No CLI change is made (§2.2–§2.3) |
+| **PG-1b** | The accepted CLI cannot narrow a run, and a one-date window is not constructible at all because `BacktestRunConfig` enforces `start_date < end_date` | **Resolved: Option A over the minimal valid two-date window** — an outside-repository smoke contract with only the four date fields changed: start fields to `MEDIAN_DATE` (`2022-09-02`), end fields to `SMOKE_END_DATE` (`2022-09-09`). Verified by a four-line diff and contained by §2.5. Option B is rejected. **No CLI change and no validator change** is made; single-date support stays out of scope (§10.1) (§2.2–§2.3) |
 | **PG-2** | No pinned expected digests for `features_42_8.parquet`, A1, A2, or the liquidity panel | **Resolved: accept pre-run and post-run digests** as the input-identity record, in place of pins. Digest the inputs in Phase 1, re-verify the same values in Phase 4, and treat any change as `BLOCKED`. Pinned input digests are a candidate Sprint 007 item; nothing is implemented in D4 |
 | **PG-3** | The receipt has `generated_utc` but no start time or duration | **Resolved: accept shell-recorded timing.** `START_UTC` and `END_UTC` come from the operator's PowerShell transcript (§3.1) and are recorded in the evidence memo. No timing code is added |
 | **D4-Q1** | Which commit executes D4 | **Resolved: execute from the final accepted plan commit** — the HEAD that carries the accepted D4 plan, with `10133f6` as an ancestor and a clean tree. That SHA is the recorded `EXECUTION_COMMIT` and must equal the receipt's `repo_sha` |
 | **D4-Q2** | Retirement mechanism for the five temporary Sprint 006 plans | **Resolved: delete all five** D0–D4 plans in commit 3, matching the Sprint 005 precedent. No move to `docs/archive/`, no partial retention (§10.3) |
 | **D4-Q3** | Whether the smoke may be skipped | **Resolved: do not skip the smoke.** Phase 2 runs before Phase 3 in every case; skipping is not an operator option |
-| **S-9** | Mid/cross fill differentiation may have no overlapping constructable name on the smoke date | **Resolved: conditional check.** Verify the price differences when an overlap exists; otherwise record `N/A — no overlapping constructable name` and continue. Only an incorrect comparison on an existing overlap blocks execution (§2.4) |
+| **S-9** | Mid/cross fill differentiation may have no overlapping constructable name on `MEDIAN_DATE` | **Resolved: conditional check on `MEDIAN_DATE` only.** Verify the half-spread relationships when an overlap exists; otherwise record `N/A — no overlapping constructable name` and continue. Never fall back to `SMOKE_END_DATE`. Only an incorrect comparison on an existing overlap blocks execution (§2.4) |
 | **Receipt labels** | A D4 run's receipt reports `deliverable=sprint006_d3` and still defers D4 | **Resolved: expected, no code change.** These are D3 producer-metadata fields; D4 lifecycle acceptance is recorded in the evidence memo (§7.2) |
 
 No item remains open for human decision. Acceptance of this plan is acceptance of the table above.
 
 ---
 
-**End of proposed D4 plan.** No D4 execution, real-data run, smoke run, official run directory, or aggregate P&L inspection is authorized by drafting or committing this document. Execution requires explicit acceptance of this plan, including the resolutions recorded in §14.
+**End of amended D4 plan.** Nothing is authorized by drafting or committing this document. No accepted D4 evidence exists: Phase 1 was attempted but not accepted, the original single-date Phase 2 was impossible, the provisional two-date smoke predates this amendment, and Phase 3 has never run. Execution requires explicit acceptance of this amended plan — including the resolutions in §14 — after which **Phase 1 and Phase 2 are rerun in full** from the final accepted plan commit. Smoke economics are never citable.

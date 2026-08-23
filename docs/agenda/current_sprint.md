@@ -1,8 +1,8 @@
 # Current sprint — 006
 
 **Updated:** 2026-08-22
-**Status:** `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 PLANNING — PLAN PROPOSED, AWAITING ACCEPTANCE`
-**Mode:** Build. D0 accepted and frozen. D1 accepted (`241b0d3` + review fix `c6b1735`). D2 accepted (`9224068`; design `aa72a86`). D3 design `b924330` **accepted**; **D3 implementation accepted through `10133f6`** (`361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6`). **D4 planning has started**; the D4 plan is `PROPOSED — AWAITING ACCEPTANCE` and **no D4 execution has started** — no real-data economic run, no smoke run, no official run directory, no aggregate P&L inspected. Do not mark the sprint closed.
+**Status:** `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 BLOCKED — AMENDED PLAN AWAITING ACCEPTANCE`
+**Mode:** Build. D0 accepted and frozen. D1 accepted (`241b0d3` + review fix `c6b1735`). D2 accepted (`9224068`; design `aa72a86`). D3 design `b924330` **accepted**; **D3 implementation accepted through `10133f6`** (`361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6`). **D4 is blocked pending acceptance of an amended plan.** Unaccepted D4 activity did occur at `5c31e49`: Phase 1 checks ran but failed §1.7's literal parent-directory criterion and are **not** accepted as the official gate; the original single-date smoke was **blocked** because `BacktestRunConfig` rejects equal start/end dates; a provisional two-date smoke later passed plumbing checks but ran **before** the plan was amended and accepted, so it is **not** official D4 evidence. **Phase 3 and the official full-history run have not started**, and no aggregate P&L has been reviewed. Phase 1 and the amended Phase 2 must be **rerun in full** from the final accepted plan commit. Smoke economics are not evidence and must not be cited. Do not mark the sprint closed.
 **Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`)
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (design commit `1cdfad7`; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
@@ -39,7 +39,7 @@ Do not reopen or redesign accepted Sprint 004/005 work.
 ```text
 Sprint 004: trusted immutable input snapshot          ← CLOSED
 Sprint 005: trusted full-history weekly Mom/CVG        ← CLOSED
-Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D0/D1/D2/D3 complete; D4 plan proposed)
+Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D0/D1/D2/D3 complete; D4 blocked, amended plan awaiting acceptance)
 Sprint 007: bounded robustness (only after 006 trusted)
 ```
 
@@ -116,9 +116,20 @@ Plan / implementation record: [`docs/tmp/sprint006_d2_eligibility_coverage_corre
 
 Plan: [`docs/tmp/sprint006_d3_decision_diagnostic_report_plan.md`](../tmp/sprint006_d3_decision_diagnostic_report_plan.md) (accepted design `b924330`). **Accepted implementation through `10133f6`** (`361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6`): dual-view metrics; funnel/leg log/integrity checks; candidate view; deterministic `decision_report.json` / `.md`; D3 receipt digests. Accepted scope remains D3 only; D4 (real-data smoke, manual sample, full-history execution, conclusion) stays deferred. No accepted real-data economic backtest or aggregate P&L in D3.
 
-### D4 — Verification, full execution, and closeout — **PLANNING — PLAN PROPOSED, AWAITING ACCEPTANCE**
+### D4 — Verification, full execution, and closeout — **BLOCKED — AMENDED PLAN AWAITING ACCEPTANCE**
 
-Plan: [`docs/tmp/sprint006_d4_execution_acceptance_plan.md`](../tmp/sprint006_d4_execution_acceptance_plan.md) (`PROPOSED — AWAITING ACCEPTANCE`). Small real-data smoke; independent inspection of a limited trade sample; frozen full-history baseline under required fill assumptions; reproducibility evidence; documented conclusion; clean closeout. **No D4 execution has started** and none is authorized until the plan is accepted.
+Plan: [`docs/tmp/sprint006_d4_execution_acceptance_plan.md`](../tmp/sprint006_d4_execution_acceptance_plan.md) (`BLOCKED — AMENDED PLAN AWAITING ACCEPTANCE`). Small real-data smoke; independent inspection of a limited trade sample; frozen full-history baseline under required fill assumptions; reproducibility evidence; documented conclusion; clean closeout.
+
+Truthful execution record — **nothing below is accepted D4 evidence**:
+
+* At `5c31e49`, Phase 1 pre-execution checks were attempted. They did **not** satisfy the literal §1.7 criterion (`C:/MomentumCVG_env/runs` did not exist), so Phase 1 is **not accepted** as the official gate.
+* The original single-date smoke was **blocked**: `BacktestRunConfig` intentionally requires `start_date < end_date`, so equal start/end dates abort in preflight and write nothing.
+* A provisional two-date smoke (`2022-09-02` … `2022-09-09`) later passed plumbing checks, but it ran **before** the plan was amended and accepted, so it is **not** official D4 evidence.
+* **Phase 3 and the official full-history run have not started.** No official run directory exists.
+* Once the amended plan is accepted, **Phase 1 and Phase 2 are rerun in full** from the final accepted plan commit.
+* **Smoke economics are not evidence and must not be cited.** Provisional artifacts stay outside the repository under `C:/MomentumCVG_env/runs/`.
+
+The plan's Phase 2 is now the minimal valid **two-date** window (median `2022-09-02` → next A1 date `2022-09-09`), still exactly four changed contract fields in an outside-repository copy. Adding single-date CLI support or changing the validator remains out of scope.
 
 ---
 
@@ -229,3 +240,4 @@ The 12–18 hour budget is a review trigger, not an acceptance condition. A corr
 | 2026-08-19 | D3 Commit 1 (`361b333`) accepted. Commit 2 implemented: shared S2 eligibility helper, funnel_summary, constructable leg log, included-trade reconciliation checks. Status → `D3 IMPLEMENTATION IN PROGRESS (COMMIT 2)`. D3 not complete. No real-data run or aggregate P&L inspection. |
 | 2026-08-19 | D3 Commit 3 implemented: candidate view, dual-fill decision report JSON/MD, adapter persistence, D3 receipt (`deliverable=sprint006_d3`), deferred list = D4 only. Status → `ACTIVE — D0/D1/D2 COMPLETE; D3 IMPLEMENTED — AWAITING REVIEW`. Frozen contract unchanged; no real-data economic run; no aggregate P&L inspected. Sprint remains open; D4 deferred. |
 | 2026-08-22 | **D3 reviewed and accepted** through `10133f6` (`361b333`, `bb40864` + `f009684`, `6c7e44f`, `eaa8421`, `10133f6`); accepted scope remains D3 only. **D4 planning started**: [`sprint006_d4_execution_acceptance_plan.md`](../tmp/sprint006_d4_execution_acceptance_plan.md) written as `PROPOSED — AWAITING ACCEPTANCE`. HEAD at proposal: `10133f6`. Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 PLANNING — PLAN PROPOSED, AWAITING ACCEPTANCE`. **No D4 execution has started**: no real-data economic run, no smoke run, no official run directory, no aggregate P&L inspected; frozen JSON untouched; no production code changed. Plan records four planning gaps (median-date convention, no single-date smoke path in the CLI, unpinned input digests, no run-duration field) for human review. |
+| 2026-08-22 | **Unaccepted D4 activity at `5c31e49`, then plan amended.** Phase 1 checks ran but failed §1.7's literal parent-directory criterion → **not accepted** as the official gate. The original single-date smoke was **blocked**: `BacktestRunConfig` requires `start_date < end_date`, so the adapter aborted in preflight and wrote nothing. A provisional two-date smoke (`2022-09-02` … `2022-09-09`) then passed plumbing checks, but ran **before** the plan was amended and accepted, so it is **not** official D4 evidence. A copy of those smoke artifacts was mistakenly committed as `docs/tmp/sprint006_d4_phase12_review/` and is **deleted** in this commit; outside-repository originals under `C:/MomentumCVG_env/runs/` are untouched and are never cited. Plan Phase 2 corrected to the minimal valid **two-date** window (four contract fields: start → `MEDIAN_DATE`, end → `SMOKE_END_DATE`); validator and CLI unchanged; single-date support stays out of scope. Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 BLOCKED — AMENDED PLAN AWAITING ACCEPTANCE`. **Phase 3 and the official full-history run have not started**; no aggregate P&L reviewed. Phase 1 and amended Phase 2 must be rerun in full from the final accepted plan commit. Frozen JSON untouched; no production code or test changed. |
