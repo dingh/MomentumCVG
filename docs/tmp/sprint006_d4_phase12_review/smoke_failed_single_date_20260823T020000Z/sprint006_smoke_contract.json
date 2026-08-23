@@ -1,0 +1,240 @@
+{
+  "contract_id": "sprint006_baseline_v1",
+  "contract_version": 1,
+  "status": "accepted",
+  "source_design": {
+    "path": "docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md",
+    "accepted_commit": "1cdfad7634176de87c466a897a0d5ee5665c61a1"
+  },
+  "summary": {
+    "purpose": "Frozen Sprint 006 pre-P&L economic baseline contract (D0). No parameter search.",
+    "signal": "Momentum+CVG window (42,8) only",
+    "structures": "Long ATM straddle; short iron fly (below-nearest |delta|<=0.15)",
+    "fills": "Diagnostic mid + primary cross; config.fill is sole Surface pricing; cost_model mid is inactive legacy",
+    "sizing": "Tier A equal_max_loss; short budget 10000; long budget 10000 fallback (may yield long-only)",
+    "universe": "PIT dvol top 20%; spread_bottom_pct 1.0; max 25 names/side; earnings off",
+    "count_eligibility": "min_count_pct 0.80 joint Mom+CVG; derived required_count 28 of 35 for (42,8)",
+    "periods": "Run 2018-10-26..2026-07-10; primary reporting 2020-01-01..2026-07-10",
+    "expected_dates": "Independent A1 entry_date calendar (any surface_valid); reconcile to features_42_8",
+    "metrics": "Conditional CAR + calendar-aligned 0-fill; no robust_score go/no-go",
+    "firewall": "No retuning after P&L; correctness changes require a new versioned experiment"
+  },
+  "accepted_inputs": {
+    "snapshot_id": "e2c1f8fd44d72176",
+    "build_id": "20260724T045049097520Z_40b16886",
+    "snapshot_root": "C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886",
+    "manifest": "C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886/manifests/input_snapshot_e2c1f8fd44d72176.json",
+    "derived_root": "C:/MomentumCVG_env/derived/e2c1f8fd44d72176/",
+    "features_dir": "C:/MomentumCVG_env/derived/e2c1f8fd44d72176/features/",
+    "baseline_feature_file": "C:/MomentumCVG_env/derived/e2c1f8fd44d72176/features/features_42_8.parquet",
+    "d3_receipt": "C:/MomentumCVG_env/derived/e2c1f8fd44d72176/features_backfill_v1.lineage.json",
+    "d3_receipt_sha256": "c585bce169d897d8a393e9cbf7c62a4e42d28e9139e4dce51eabdacc8f4866a5",
+    "d3_producer_repo_sha": "131d0ac05e1e57749d3095923927a394fdcbc25b",
+    "feature_config": "configs/feature_backfill_v1.json",
+    "feature_config_sha256": "764056ce7153751d93c1764b1b4cae13a521bf5c3baee729db30bb69543132dd",
+    "d4_audit_json": "C:/MomentumCVG_env/derived/e2c1f8fd44d72176/features_quality_audit_v1.json",
+    "a1_surface_meta": "C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886/cache/surface/option_surface_meta_weekly_2018_2026.parquet",
+    "a2_surface_quotes": "C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886/cache/surface/option_surface_quotes_weekly_2018_2026.parquet",
+    "liquidity_panel": "C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886/input/liquidity/ticker_liquidity_panel.parquet",
+    "earnings_path": null,
+    "mutable_cache_forbidden": true
+  },
+  "feature_window": {
+    "max_lag": 42,
+    "min_lag": 8,
+    "window_size": 35,
+    "momentum_col": "mom_42_8_mean",
+    "cvg_col": "cvg_42_8",
+    "count_col": "mom_42_8_count",
+    "cvg_count_col": "cvg_count_42_8",
+    "search": false
+  },
+  "count_eligibility": {
+    "min_count_pct": 0.8,
+    "rule": "required_count = ceil(min_count_pct * (max_lag - min_lag + 1))",
+    "window_size": 35,
+    "derived_required_count": 28,
+    "note": "Freeze min_count_pct only; 28 is derived for (42,8), not an independent parameter. Apply jointly: mom_42_8_count >= required_count AND cvg_count_42_8 >= required_count. No separate CVG threshold field. D2 implements joint enforcement.",
+    "joint_columns": ["mom_42_8_count", "cvg_count_42_8"]
+  },
+  "periods": {
+    "run_start_date": "2022-09-02",
+    "run_end_date": "2022-09-02",
+    "run_end_inclusive": true,
+    "primary_reporting_start_date": "2020-01-01",
+    "primary_reporting_end_date": "2026-07-10"
+  },
+  "shared_run_config": {
+    "min_count_pct": 0.8,
+    "long_top_pct": 0.1,
+    "short_bottom_pct": 0.1,
+    "cvg_filter_pct": 0.5,
+    "dvol_top_pct": 0.2,
+    "spread_bottom_pct": 1.0,
+    "short_structure": "ironfly",
+    "wing_selection_rule": "closest_delta",
+    "wing_selection_rule_note": "Required BacktestRunConfig string; surface iron-fly implementation uses _choose_below_nearest (abs_delta <= wing_delta_target).",
+    "wing_delta_target": 0.15,
+    "max_names_per_side": 25,
+    "max_loss_budget_per_trade": 500.0,
+    "max_loss_budget_per_trade_note": "Legacy required field; does not control Tier A equal_max_loss sizing.",
+    "earnings_exclusion_days": 0,
+    "cost_model": "mid",
+    "cost_model_note": "Inactive legacy compatibility value on both mid and cross runs. Must not affect Surface P&L or add spread deduction on top of fill. Pipeline does not consume this field.",
+    "start_date": "2022-09-02",
+    "end_date": "2022-09-02",
+    "max_leg_spread_pct": 0.5,
+    "max_leg_spread_pct_intent": "Apply to every traded leg (long-straddle call/put and all four iron-fly legs). Current code filters straddle bodies and iron-fly OTM wings only; iron-fly ATM body shorts are unfiltered until D2.",
+    "max_spread_cost_ratio": null,
+    "condor_short_delta_target": null,
+    "condor_long_delta_target": null,
+    "include_diagnostics": true,
+    "sizing_mode": "conceptual",
+    "tier_a_mode": "equal_max_loss",
+    "tier_a_short_budget": 10000.0,
+    "tier_a_long_budget": 10000.0,
+    "tier_a_long_budget_role": "fallback_only",
+    "tier_a_fallback_rule": "Normally longs are financed by collected short premium. If there are no usable shorts or collected short premium is non-positive, use tier_a_long_budget=10000. This may produce a long-only book on that date.",
+    "tier_b_short_max_loss_budget": null,
+    "contract_multiplier": 100.0,
+    "deployable_capital": null
+  },
+  "runs": [
+    {
+      "run_id": "sprint006_baseline_v1_mid",
+      "role": "diagnostic",
+      "fill": {
+        "label": "mid",
+        "buy_alpha": 0.5,
+        "sell_alpha": 0.5,
+        "meaning": "All legs filled at mid. Sole Surface execution pricing for this run."
+      },
+      "cost_model": "mid",
+      "primary_decision_view": false
+    },
+    {
+      "run_id": "sprint006_baseline_v1_cross",
+      "role": "primary",
+      "fill": {
+        "label": "cross",
+        "buy_alpha": 1.0,
+        "sell_alpha": 1.0,
+        "meaning": "Buys at ask, sells at bid. Sole Surface execution pricing for this run; primary economic view."
+      },
+      "cost_model": "mid",
+      "primary_decision_view": true
+    }
+  ],
+  "execution_pricing": {
+    "authoritative_field": "fill",
+    "inactive_legacy_field": "cost_model",
+    "no_stacked_spread_deduction": true,
+    "d1_verification_required": "Confirm mid/cross prices apply correctly and no additional spread deduction occurs beyond fill."
+  },
+  "structure_and_settlement": {
+    "long": "ATM straddle from A1 body_strike / A2 is_body",
+    "short": "Iron fly; wings via _choose_below_nearest at abs_delta <= 0.15",
+    "holding": "Weekly surface entry; hold to expiry",
+    "settlement": "Intrinsic payoff at A1 exit_spot on expiry; no exit spread",
+    "missing_structure": "Keep candidate with structure_ok=false and failure_reason; not included_in_portfolio"
+  },
+  "ranking_and_selection": {
+    "momentum_rank": "rank(pct=True, method=average) within PIT and count-eligible cross-section",
+    "long_pool": "top long_top_pct by signal_rank_pct",
+    "short_pool": "bottom short_bottom_pct by signal_rank_pct",
+    "cvg_within_side": "keep highest cvg_filter_pct by cvg rank within each side",
+    "sides_independent": true,
+    "cap_tie_break": "After side rank sort, secondary key ticker ascending (D1/D2 must pin if current sort is unstable)"
+  },
+  "expected_dates": {
+    "authority": "Sorted unique A1 entry_date values in [run_start_date, run_end_date], including dates that appear only on surface_valid=false rows",
+    "reconcile_to": "features_42_8.parquet dates in the same closed interval",
+    "missing_from_features_default_class": "failed",
+    "intentional_exception_policy": "Must be explicit and evidenced",
+    "feature_dates_absent_from_a1": "Report in reconciliation evidence; not members of the expected calendar",
+    "date_status_taxonomy": {
+      "traded": "At least one included_in_portfolio=true row",
+      "valid_no_trade": "Pipeline completed; zero included names for an allowed economic reason",
+      "failed": "Incomplete processing, missing features vs A1, schema/identity failure, or unresolved exception"
+    },
+    "unresolved_failed_blocks_acceptance": true,
+    "implementation": "D2"
+  },
+  "metrics_contract": {
+    "fills_reported": ["mid", "cross"],
+    "primary_fill": "cross",
+    "do_not_use_for_go_no_go": "robust_score",
+    "conditional_deployed_capital_view": {
+      "traded": "cycle_return_on_capital_at_risk = sum(pnl_total) / sum(capital_at_risk_dollars)",
+      "valid_no_trade": "NaN (zero denominator); excluded from conditional Sharpe and drawdown",
+      "label": "conditional on traded dates"
+    },
+    "calendar_aligned_view": {
+      "traded": "book cycle CAR return",
+      "valid_no_trade": 0,
+      "failed": "blocks presentation as a complete result",
+      "report": ["compounded_return", "cagr_or_annualized_return", "sharpe_sqrt52", "drawdown"]
+    },
+    "required_report_blocks": [
+      "full_history_and_primary_mean_cycle_car",
+      "conditional_traded_date_sharpe_and_drawdown",
+      "calendar_aligned_compounded_cagr_sharpe_drawdown",
+      "weekly_win_rate_and_profit_factor",
+      "year_by_year_return_sharpe_drawdown_and_date_class_counts",
+      "long_short_attribution",
+      "mid_versus_cross_cost_delta",
+      "top_five_ticker_concentration",
+      "trading_activity_availability_joint_coverage_structure_failures"
+    ],
+    "weekly_win_rate": "Fraction of finite traded book-return weeks with return > 0; report no-trade frequency separately",
+    "profit_factor": "sum(positive weekly book pnl) / abs(sum(negative weekly book pnl)); +inf if denom=0 and numer>0; NaN if both 0",
+    "implementation": "D3"
+  },
+  "manual_verification": {
+    "freeze_before_pnl": true,
+    "max_trades_hand_checked": 6,
+    "no_performance_based_replacement": true,
+    "samples": {
+      "S1": "Median A1 expected date; if traded, lowest-ticker included long and short that exist",
+      "S2": "Earliest traded date with both sides; else earliest long-traded and/or short-traded as available",
+      "S3": "Earliest valid_no_trade; else N/A",
+      "S4": "Earliest date with structure_ok=false; else N/A",
+      "shortfall": "If fewer than six qualifying trade rows, audit those available and document shortfall"
+    },
+    "per_trade_checks": [
+      "universe_membership",
+      "signal_ranks_and_cvg",
+      "legs_strikes_expiry",
+      "fill_prices",
+      "max_loss",
+      "settle_pnl",
+      "date_car_contribution"
+    ]
+  },
+  "reproducibility_and_evidence": {
+    "experiment_id": "sprint006_baseline_v1",
+    "require_clean_git_head": true,
+    "require_config_dump": true,
+    "require_input_digests": true,
+    "required_outputs": [
+      "trade_log",
+      "date_summary",
+      "run_summary",
+      "date_status_table",
+      "conditional_and_calendar_aligned_metrics"
+    ],
+    "command_requirement": "One documented command using explicit snapshot/derived paths only; mutable cache forbidden"
+  },
+  "pnl_firewall": {
+    "no_new_aggregate_pnl_before_acceptance": true,
+    "no_retuning_after_pnl_exposure": true,
+    "correctness_change_after_exposure": "Create a new versioned experiment ID; do not silently overwrite"
+  },
+  "handoff": {
+    "d0": "This contract freeze only",
+    "d1": "Trusted runner/CLI; fill pricing verification; tie-break pin",
+    "d2": "Joint min_count_pct enforcement; A1 expected-date status; all-leg max_leg_spread_pct",
+    "d3": "Decision report dual views and required metrics",
+    "d4": "Smoke, manual sample, full mid+cross execution, closeout"
+  }
+}

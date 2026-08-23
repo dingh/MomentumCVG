@@ -1,0 +1,19 @@
+Sprint 006 D4 smoke run - NOT the official baseline.
+
+Purpose: integration/plumbing check on one real date only.
+PG-1b resolution: Option A (outside-repository date-narrowed smoke contract).
+Smoke contract: C:/MomentumCVG_env/runs/sprint006_d4_smoke_20260823T020000Z/sprint006_smoke_contract.json
+Smoke contract SHA-256: 28e068fea5fce3f66b9351febd04b1e1a05dc57ce45b6d9a416ef00e62a781cb
+Frozen contract SHA-256 (unchanged, on-disk CRLF): 4012b4a472448004e1a1b14e8814f506911ea0e263e35157b4e13e27ed51a54c
+MEDIAN_DATE: 2022-09-02
+Adapter output directory: C:/MomentumCVG_env/runs/sprint006_d4_smoke_20260823T020000Z/run
+  -> NEVER CREATED. The run aborted during adapter preflight with exit code 2.
+
+OUTCOME: FAILED / BLOCKED.
+Reason: BacktestRunConfig.validate() (src/backtest/run_config.py:362) requires
+start_date < end_date strictly, so a single-date contract window is not
+constructible. No adapter artifacts were produced by this run.
+
+Smoke artifacts must not be cited as Sprint 006 economic evidence.
+No aggregate performance, decision_report.*, or run_summary_*.json content was
+produced or inspected.
