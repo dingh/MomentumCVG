@@ -1,7 +1,7 @@
 # Sprint 006 D3 — Decision-quality report and diagnostic observability plan
 
-**Status:** `ACCEPTED DESIGN — D3 IMPLEMENTED — AWAITING REVIEW`
-**Mode:** Build. Design commit `b924330` is **accepted**. Commits 1–3 are implemented (metrics; funnel/leg log; candidate view + decision report + D3 receipt). D3 awaits review; D4 remains deferred. Sprint 006 is **not** closed.
+**Status:** `ACCEPTED — D3 COMPLETE`
+**Mode:** Build. Design commit `b924330` is **accepted**. Commits 1–3 are implemented and **reviewed and accepted through `10133f6`** (`361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6`): metrics; funnel/leg log; candidate view + decision report + D3 receipt. Accepted scope remains D3 only. D4 is now in **planning** ([`sprint006_d4_execution_acceptance_plan.md`](sprint006_d4_execution_acceptance_plan.md), `PROPOSED — AWAITING ACCEPTANCE`); no D4 execution has started. Sprint 006 is **not** closed. No accepted real-data economic backtest or aggregate P&L was run or reviewed in D3.
 **Original proposal:** `688c2a3` (`docs: propose Sprint 006 D3 decision diagnostic report plan`)
 **Accepted design:** `b924330` (`docs: use domain name for D3 report module`)
 **This revision:** design-only corrections through `b924330`; Commit 1 implementation authorized

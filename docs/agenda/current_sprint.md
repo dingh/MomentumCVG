@@ -1,8 +1,8 @@
 # Current sprint — 006
 
-**Updated:** 2026-08-19
-**Status:** `ACTIVE — D0/D1/D2 COMPLETE; D3 IMPLEMENTED — AWAITING REVIEW`
-**Mode:** Build. D0 accepted and frozen. D1 accepted (`241b0d3` + review fix `c6b1735`). D2 accepted (`9224068`; design `aa72a86`). D3 design `b924330` **accepted**. Commit 1 (`361b333`) and Commit 2 (`bb40864` + correction `f009684`) accepted. **D3 Commit 3 implemented** (candidate view, decision report JSON/MD, adapter persistence, D3 receipt). D3 awaits review; **D4 and real-data conclusions remain deferred**. Do not mark the sprint closed.
+**Updated:** 2026-08-22
+**Status:** `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 PLANNING — PLAN PROPOSED, AWAITING ACCEPTANCE`
+**Mode:** Build. D0 accepted and frozen. D1 accepted (`241b0d3` + review fix `c6b1735`). D2 accepted (`9224068`; design `aa72a86`). D3 design `b924330` **accepted**; **D3 implementation accepted through `10133f6`** (`361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6`). **D4 planning has started**; the D4 plan is `PROPOSED — AWAITING ACCEPTANCE` and **no D4 execution has started** — no real-data economic run, no smoke run, no official run directory, no aggregate P&L inspected. Do not mark the sprint closed.
 **Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`)
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (design commit `1cdfad7`; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
 **D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
@@ -39,7 +39,7 @@ Do not reopen or redesign accepted Sprint 004/005 work.
 ```text
 Sprint 004: trusted immutable input snapshot          ← CLOSED
 Sprint 005: trusted full-history weekly Mom/CVG        ← CLOSED
-Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D0/D1/D2 complete; D3 implemented — awaiting review)
+Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D0/D1/D2/D3 complete; D4 plan proposed)
 Sprint 007: bounded robustness (only after 006 trusted)
 ```
 
@@ -112,13 +112,13 @@ Exercise and harden the existing `SurfaceRunner.run_single_config()` path so the
 
 Plan / implementation record: [`docs/tmp/sprint006_d2_eligibility_coverage_correctness_plan.md`](../tmp/sprint006_d2_eligibility_coverage_correctness_plan.md) (`ACCEPTED — D2 COMPLETE`). Accepted implementation: `9224068` (design `aa72a86`). Joint Mom+CVG count eligibility (`ceil` → 28 for `(42,8)`), A1 expected-date `date_status` accounting, iron-fly all-leg `max_leg_spread_pct`, and thin adapter persistence of `date_status`. Scope remains D2 only; D3–D4 deferred. No accepted real-data economic backtest or aggregate P&L.
 
-### D3 — Decision-quality evaluation report — **IMPLEMENTED — AWAITING REVIEW**
+### D3 — Decision-quality evaluation report — **ACCEPTED — COMPLETE**
 
-Plan: [`docs/tmp/sprint006_d3_decision_diagnostic_report_plan.md`](../tmp/sprint006_d3_decision_diagnostic_report_plan.md) (accepted design `b924330`). Commits 1–3 implemented: dual-view metrics; funnel/leg log/integrity checks; candidate view; deterministic `decision_report.json` / `.md`; D3 receipt digests. **D3 is not yet accepted.** D4 (real-data smoke, manual sample, full-history execution, conclusion) remains deferred. No accepted real-data economic backtest or aggregate P&L in D3.
+Plan: [`docs/tmp/sprint006_d3_decision_diagnostic_report_plan.md`](../tmp/sprint006_d3_decision_diagnostic_report_plan.md) (accepted design `b924330`). **Accepted implementation through `10133f6`** (`361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6`): dual-view metrics; funnel/leg log/integrity checks; candidate view; deterministic `decision_report.json` / `.md`; D3 receipt digests. Accepted scope remains D3 only; D4 (real-data smoke, manual sample, full-history execution, conclusion) stays deferred. No accepted real-data economic backtest or aggregate P&L in D3.
 
-### D4 — Verification, full execution, and closeout
+### D4 — Verification, full execution, and closeout — **PLANNING — PLAN PROPOSED, AWAITING ACCEPTANCE**
 
-Small real-data smoke; independent inspection of a limited trade sample; frozen full-history baseline under required fill assumptions; reproducibility evidence; documented conclusion; clean closeout.
+Plan: [`docs/tmp/sprint006_d4_execution_acceptance_plan.md`](../tmp/sprint006_d4_execution_acceptance_plan.md) (`PROPOSED — AWAITING ACCEPTANCE`). Small real-data smoke; independent inspection of a limited trade sample; frozen full-history baseline under required fill assumptions; reproducibility evidence; documented conclusion; clean closeout. **No D4 execution has started** and none is authorized until the plan is accepted.
 
 ---
 
@@ -228,3 +228,4 @@ The 12–18 hour budget is a review trigger, not an acceptance condition. A corr
 | 2026-08-18 | D3 design `b924330` accepted. Sprint status → `ACTIVE — D0/D1/D2 COMPLETE; D3 IMPLEMENTATION IN PROGRESS (COMMIT 1)`. Commit 1 authorizes pure `surface_decision_report` calculations and synthetic tests only. No real-data run or aggregate P&L inspection. Commits 2–3 deferred. |
 | 2026-08-19 | D3 Commit 1 (`361b333`) accepted. Commit 2 implemented: shared S2 eligibility helper, funnel_summary, constructable leg log, included-trade reconciliation checks. Status → `D3 IMPLEMENTATION IN PROGRESS (COMMIT 2)`. D3 not complete. No real-data run or aggregate P&L inspection. |
 | 2026-08-19 | D3 Commit 3 implemented: candidate view, dual-fill decision report JSON/MD, adapter persistence, D3 receipt (`deliverable=sprint006_d3`), deferred list = D4 only. Status → `ACTIVE — D0/D1/D2 COMPLETE; D3 IMPLEMENTED — AWAITING REVIEW`. Frozen contract unchanged; no real-data economic run; no aggregate P&L inspected. Sprint remains open; D4 deferred. |
+| 2026-08-22 | **D3 reviewed and accepted** through `10133f6` (`361b333`, `bb40864` + `f009684`, `6c7e44f`, `eaa8421`, `10133f6`); accepted scope remains D3 only. **D4 planning started**: [`sprint006_d4_execution_acceptance_plan.md`](../tmp/sprint006_d4_execution_acceptance_plan.md) written as `PROPOSED — AWAITING ACCEPTANCE`. HEAD at proposal: `10133f6`. Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 PLANNING — PLAN PROPOSED, AWAITING ACCEPTANCE`. **No D4 execution has started**: no real-data economic run, no smoke run, no official run directory, no aggregate P&L inspected; frozen JSON untouched; no production code changed. Plan records four planning gaps (median-date convention, no single-date smoke path in the CLI, unpinned input digests, no run-duration field) for human review. |
