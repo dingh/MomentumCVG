@@ -993,4 +993,4 @@ No item remains open for human decision. Acceptance of this plan is acceptance o
 
 ---
 
-**End of amended D4 plan.** Phases 1–4 are complete with evidence verdict `ACCEPTED` (memo [`../sprint_memos/sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md)). **Phase 5 remains unauthorized** until separately accepted. Aggregate economics stay closed. Smoke economics remain non-citable.
+**End of amended D4 plan.** Phases 1–4 are complete with evidence verdict `ACCEPTED` (memo [`../sprint_memos/sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md)). Phase 5 is authorized under §8 but has not started. Aggregate economics remain closed until Phase 5 is executed. Smoke economics remain non-citable.
