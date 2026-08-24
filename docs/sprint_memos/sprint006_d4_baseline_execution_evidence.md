@@ -148,4 +148,33 @@ Illustrative audit rows (not an economic report):
 
 **Phase 5 remains forbidden until separately authorized.** Aggregate returns, Sharpe, drawdowns, yearly tables, concentration, and report values stay closed.
 
-No raw run artifacts, verification scripts, or transcripts were copied into the repository.
+---
+
+## 7. Addendum — complete §7.4 source-reconstruction reverification
+
+**Date:** 2026-08-24 (verification-only; baseline not rerun)
+
+**Trigger.** Third-party review found the initial `phase4_s1_s4_audit.json` incomplete relative to plan §7.4 (missing explicit PIT snapshot/ATM/spread-rank rows, joint count gates, `dte_actual`/wing/spread-gate reconstruction, independent Tier A date-book sizing, and CAR built from independently reconstructed quantities).
+
+**Preservation checks (before expanding the audit):**
+
+- Recomputed all 16 non-receipt `RUN_DIR` SHA-256 digests — match receipt (V-10 identity).
+- Recomputed all 7 Phase 1 accepted-input digests — byte-identical to §1.6 baseline (V-14 identity).
+- Frozen samples unchanged: S1-L `2022-09-02/ACN/long`, S1-S `2022-09-02/AMC/short`, S2-L `2018-10-26/ABBV/long`, S2-S `2018-10-26/MRVL/short`, S3 N/A (`n_valid_no_trade=0`), S4 `2018-10-26/AMBA/short`. No replacements.
+
+**Expanded audit (outside repo, then copied into the review bundle):**
+
+- Script: `phase4_source_reconstruction_audit.py`
+- Results: `phase4_source_reconstruction_audit.json` / `.md`
+- Independently reconstructed PIT universe (snapshot date, ATM pair, dvol/spread fields, both ranks, AND gates), joint Mom/CVG eligibility (finite values, counts ≥ 28, ranks, direction/CVG retention), option selection (`dte_actual`, body/wings, spread gates, leg identity, mid↔cross half-spreads), full primary-cross included book through S5 for each sampled date (Tier A budgets/credit/fallback/quantity), and risk/P&L/CAR from those independent quantities.
+- Tolerance: abs `1e-6`, rel `1e-8`.
+
+**Audit result:** `PASS` — **184 PASS / 0 FAIL / 1 N/A**. Every required §7.4 coverage stage present. Only permitted N/A is S3. No sample replaced.
+
+**Lifecycle status:** `PHASE 4 REVERIFICATION COMPLETE — AWAITING REVIEW`
+
+This addendum does **not** independently re-declare final Phase 4 acceptance. **Phase 5 remains unauthorized** until this evidence is reviewed.
+
+**Phase 3 shell limitation (non-blocking, unchanged):** capturing-shell `EXIT_CODE` and stdout/stderr were not retained and were **not** recovered; the baseline was **not** rerun.
+
+Aggregate economics remained unopened during this reverification.

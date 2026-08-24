@@ -1,6 +1,6 @@
 # Sprint 006 D4 — Execution and acceptance plan
 
-**Status:** `ACCEPTED — D4 EXECUTION COMPLETE (EVIDENCE ONLY); PHASE 5 AWAITING REVIEW`
+**Status:** `ACCEPTED — PHASE 4 REVERIFICATION COMPLETE — AWAITING REVIEW`
 **Mode:** Build. Phases 1–2 accepted; Phases 3–4 executed at `e205b9a` with evidence verdict `ACCEPTED`. Evidence: [`../sprint_memos/sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md). **Phase 5 is not authorized** by this status — no aggregate economics may be opened until separately accepted.
 **Repo HEAD at proposal:** `10133f6c12facae26d818b7e112b94332f5e1e46` (`test(sprint006): verify D3 markdown values`), clean working tree on `main`
 **Accepted D3 implementation:** `361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6` (design `b924330`)
