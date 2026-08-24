@@ -36,9 +36,13 @@ The suite was executed at execution commit `e205b9a` **before** the official bas
 | Command | `& C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest -q` |
 | Result | **1494 passed**, 1 skipped |
 | Duration | `44.14s` |
-| Tested code baseline | `38920791de89a65b05a20985461b0eb1f37317d9` |
-| Date | 2026-08-09 |
+| Exit code | `0` |
+| Tested code baseline | `38920791de89a65b05a20985461b0eb1f37317d9` (`docs: record D5 SurfaceRunner consumer smoke`) |
+| Closeout commit | `c6929d308ea072459ed9e9e8ffcdc92e6c1dd1ae` (`docs: close Sprint 005`; documentation-only) |
+| Verification date | 2026-08-09 |
 | Source | [sprint_memos/005_closeout.md](sprint_memos/005_closeout.md) |
+
+The suite was executed against baseline `3892079` **before** the documentation-only closeout commit `c6929d3`. This file syncs that accepted result; it does **not** claim a new test run against `c6929d3`.
 
 ### Historical (Sprint 004 closeout gate)
 
