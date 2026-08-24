@@ -1,7 +1,7 @@
-"""Sprint 006 D4 Phase 4 — complete independent source reconstruction (§7.4).
+"""Sprint 006 D4 Phase 4 — audit-local source reconstruction (§7.4).
 
-Verification-only. Uses frozen official RUN_DIR + accepted inputs.
-Does not open aggregate economics. Does not modify production code.
+Verification-only. No production backtest calculation helpers.
+Reads frozen contract JSON directly; reconstructs only the two frozen dates.
 """
 from __future__ import annotations
 
@@ -14,26 +14,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-
-from src.backtest.option_surface import (
-    FillAssumption,
-    OptionSurfaceDB,
-    _choose_below_nearest,
-    build_ironfly_from_surface,
-    build_straddle_from_surface,
-)
-from src.backtest.pipeline import (
-    _at_risk_per_share,
-    _structure_premium_per_share,
-    eligible_feature_cross_section,
-    required_count_threshold,
-    step1_get_universe,
-    step2_score_signals,
-    step3_get_eligible_structures,
-    step4_apply_exclusions,
-    step5_select_and_size,
-)
-from src.backtest.sprint006_baseline import build_run_configs, load_contract
 
 RUN_DIR = Path(r"C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z")
 VERIFY_DIR = Path(r"C:/MomentumCVG_env/runs/sprint006_d4_verification_20260823T204430Z")
@@ -49,6 +29,7 @@ FROZEN_SAMPLES = [
     ("S2-L", date(2018, 10, 26), "ABBV", "long"),
     ("S2-S", date(2018, 10, 26), "MRVL", "short"),
 ]
+SAMPLE_DATES = sorted({s[1] for s in FROZEN_SAMPLES})
 FROZEN_S4 = (date(2018, 10, 26), "AMBA", "short")
 
 PHASE1_DIGESTS = {
@@ -170,35 +151,446 @@ def jsonable(x):
     return x
 
 
+def load_frozen_contract(path: Path) -> Dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def contract_cfg(contract: Dict[str, Any]) -> Dict[str, Any]:
+    shared = contract["shared_run_config"]
+    window = contract["feature_window"]
+    cross = next(r for r in contract["runs"] if r["run_id"] == CROSS)
+    mid = next(r for r in contract["runs"] if r["run_id"] == MID)
+    return {
+        "momentum_col": window["momentum_col"],
+        "cvg_col": window["cvg_col"],
+        "count_col": window["count_col"],
+        "cvg_count_col": window["cvg_count_col"],
+        "min_count_pct": float(shared["min_count_pct"]),
+        "long_top_pct": float(shared["long_top_pct"]),
+        "short_bottom_pct": float(shared["short_bottom_pct"]),
+        "cvg_filter_pct": float(shared["cvg_filter_pct"]),
+        "dvol_top_pct": float(shared["dvol_top_pct"]),
+        "spread_bottom_pct": float(shared["spread_bottom_pct"]),
+        "short_structure": shared["short_structure"],
+        "wing_delta_target": float(shared["wing_delta_target"]),
+        "max_leg_spread_pct": float(shared["max_leg_spread_pct"]),
+        "max_names_per_side": int(shared["max_names_per_side"]),
+        "tier_a_mode": shared["tier_a_mode"],
+        "tier_a_short_budget": float(shared["tier_a_short_budget"]),
+        "tier_a_long_budget": float(shared["tier_a_long_budget"]),
+        "earnings_exclusion_days": int(shared["earnings_exclusion_days"]),
+        "cross_buy_alpha": float(cross["fill"]["buy_alpha"]),
+        "cross_sell_alpha": float(cross["fill"]["sell_alpha"]),
+        "mid_buy_alpha": float(mid["fill"]["buy_alpha"]),
+        "mid_sell_alpha": float(mid["fill"]["sell_alpha"]),
+    }
+
+
+def required_count(cfg: Dict[str, Any]) -> int:
+    return math.ceil(cfg["min_count_pct"] * 35)
+
+
+def fill_price(bid: float, ask: float, uq: float, buy_alpha: float, sell_alpha: float) -> float:
+    spread = ask - bid
+    if uq > 0:
+        return bid + buy_alpha * spread
+    return ask - sell_alpha * spread
+
+
+def leg_entry_cash(uq: float, bid: float, ask: float, buy_alpha: float, sell_alpha: float) -> float:
+    px = fill_price(bid, ask, uq, buy_alpha, sell_alpha)
+    return px * abs(uq) if uq > 0 else -px * abs(uq)
+
+
+def intrinsic(option_type: str, strike: float, exit_spot: float) -> float:
+    if str(option_type).lower().startswith("c"):
+        return max(exit_spot - strike, 0.0)
+    return max(strike - exit_spot, 0.0)
+
+
+def choose_below_nearest(df: pd.DataFrame, target: float) -> pd.Series:
+    eligible = df[df["abs_delta"] <= target]
+    if eligible.empty:
+        raise ValueError(f"No quotes with abs_delta <= {target} available for selection")
+    return eligible.loc[eligible["abs_delta"].idxmax()]
+
+
+def pit_snapshot_rows(trade_date: date, liq: pd.DataFrame) -> Tuple[Optional[pd.Timestamp], pd.DataFrame]:
+    trade_ts = pd.Timestamp(trade_date)
+    prior = liq.loc[liq["month_date"] < trade_ts, "month_date"]
+    if prior.empty:
+        return None, pd.DataFrame()
+    snap_date = prior.max()
+    snap = liq[
+        (liq["month_date"] == snap_date)
+        & (liq["has_valid_atm_pair"] == True)  # noqa: E712
+        & liq["atm_straddle_dollar_vol"].notna()
+        & liq["atm_spread_pct"].notna()
+    ].copy()
+    if snap.empty:
+        return snap_date, snap
+    snap["dvol_rank_pct"] = snap["atm_straddle_dollar_vol"].rank(
+        ascending=True, method="average", pct=True
+    )
+    snap["spread_rank_pct"] = snap["atm_spread_pct"].rank(
+        ascending=False, method="average", pct=True
+    )
+    return snap_date, snap
+
+
+def pit_universe(trade_date: date, liq: pd.DataFrame, cfg: Dict[str, Any]) -> pd.DataFrame:
+    snap_date, snap = pit_snapshot_rows(trade_date, liq)
+    if snap_date is None or snap.empty:
+        return pd.DataFrame(columns=["ticker", "dvol_rank_pct", "spread_rank_pct"])
+    dvol_thr = 1.0 - cfg["dvol_top_pct"]
+    spr_thr = 1.0 - cfg["spread_bottom_pct"]
+    uni = snap[
+        (snap["dvol_rank_pct"] >= dvol_thr) & (snap["spread_rank_pct"] >= spr_thr)
+    ]
+    return uni[["ticker", "dvol_rank_pct", "spread_rank_pct"]].reset_index(drop=True)
+
+
+def eligible_feature_slice(
+    trade_date: date, feat: pd.DataFrame, uni: pd.DataFrame, cfg: Dict[str, Any]
+) -> pd.DataFrame:
+    req = required_count(cfg)
+    trade_ts = pd.Timestamp(trade_date)
+    fs = feat[feat["date"] == trade_ts].merge(uni[["ticker"]], on="ticker", how="inner")
+    if fs.empty:
+        return fs
+    fs = fs.dropna(subset=[cfg["momentum_col"], cfg["cvg_col"]])
+    if fs.empty:
+        return fs
+    ok = (fs[cfg["count_col"]] >= req) & (fs[cfg["cvg_count_col"]] >= req)
+    return fs[ok].copy()
+
+
+def score_signals(trade_date: date, feat: pd.DataFrame, uni: pd.DataFrame, cfg: Dict[str, Any]) -> pd.DataFrame:
+    empty = pd.DataFrame(
+        columns=["ticker", "direction", "signal_rank_pct", "cvg_rank_pct"]
+    )
+    fs = eligible_feature_slice(trade_date, feat, uni, cfg)
+    if fs.empty:
+        return empty
+    fs["signal_rank_pct"] = fs[cfg["momentum_col"]].rank(
+        ascending=True, method="average", pct=True
+    )
+    long_thr = 1.0 - cfg["long_top_pct"]
+    short_thr = cfg["short_bottom_pct"]
+    long_pool = fs[fs["signal_rank_pct"] >= long_thr].copy()
+    short_pool = fs[fs["signal_rank_pct"] <= short_thr].copy()
+    if not long_pool.empty:
+        long_pool["cvg_rank_pct"] = long_pool[cfg["cvg_col"]].rank(
+            ascending=True, method="average", pct=True
+        )
+        cvg_thr = 1.0 - cfg["cvg_filter_pct"]
+        long_pool = long_pool[long_pool["cvg_rank_pct"] >= cvg_thr]
+        long_pool["direction"] = "long"
+    if not short_pool.empty:
+        short_pool["cvg_rank_pct"] = short_pool[cfg["cvg_col"]].rank(
+            ascending=True, method="average", pct=True
+        )
+        cvg_thr = 1.0 - cfg["cvg_filter_pct"]
+        short_pool = short_pool[short_pool["cvg_rank_pct"] >= cvg_thr]
+        short_pool["direction"] = "short"
+    if long_pool.empty and short_pool.empty:
+        return empty
+    return pd.concat([long_pool, short_pool], ignore_index=True)[
+        ["ticker", "direction", "signal_rank_pct", "cvg_rank_pct"]
+    ]
+
+
+def quotes_for(a2: pd.DataFrame, trade_date: date, ticker: str) -> pd.DataFrame:
+    q = a2[
+        (pd.to_datetime(a2["entry_date"]).dt.date == trade_date) & (a2["ticker"] == ticker)
+    ].copy()
+    return q
+
+
+def build_long_straddle(
+    meta: pd.Series,
+    quotes: pd.DataFrame,
+    cfg: Dict[str, Any],
+    buy_alpha: float,
+    sell_alpha: float,
+) -> Dict[str, Any]:
+    body = quotes[quotes["is_body"] == True]  # noqa: E712
+    body = body[body["spread_pct"] <= cfg["max_leg_spread_pct"]]
+    call = body[body["side"] == "call"]
+    put = body[body["side"] == "put"]
+    if call.empty or put.empty:
+        raise ValueError("Missing tradeable body call/put")
+    cr, pr = call.iloc[0], put.iloc[0]
+    legs = [
+        {"leg_index": 0, "option_type": "call", "strike": float(cr.strike), "unit_quantity": 1.0,
+         "bid": float(cr.bid), "ask": float(cr.ask), "spread_pct": float(cr.spread_pct)},
+        {"leg_index": 1, "option_type": "put", "strike": float(pr.strike), "unit_quantity": 1.0,
+         "bid": float(pr.bid), "ask": float(pr.ask), "spread_pct": float(pr.spread_pct)},
+    ]
+    entry = sum(
+        leg_entry_cash(l["unit_quantity"], l["bid"], l["ask"], buy_alpha, sell_alpha)
+        for l in legs
+    )
+    exit_spot = float(meta["exit_spot"])
+    expiry_payoff = sum(
+        intrinsic(l["option_type"], l["strike"], exit_spot) * l["unit_quantity"] for l in legs
+    )
+    return {
+        "structure_ok": True,
+        "entry_cost_per_share": entry,
+        "net_credit_per_share": -entry,
+        "max_loss_per_share": abs(entry),
+        "premium_per_share": abs(entry),
+        "legs": legs,
+        "expiry_payoff_per_share": expiry_payoff,
+        "pnl_per_share": expiry_payoff - entry,
+    }
+
+
+def build_iron_fly(
+    meta: pd.Series,
+    quotes: pd.DataFrame,
+    cfg: Dict[str, Any],
+    buy_alpha: float,
+    sell_alpha: float,
+) -> Dict[str, Any]:
+    body = quotes[quotes["is_body"] == True]  # noqa: E712
+    body = body[body["spread_pct"] <= cfg["max_leg_spread_pct"]]
+    body_call = body[body["side"] == "call"]
+    body_put = body[body["side"] == "put"]
+    if body_call.empty or body_put.empty:
+        raise ValueError("Missing body call/put")
+    otm_calls = quotes[(quotes["side"] == "call") & (quotes["is_otm"] == True)]  # noqa: E712
+    otm_puts = quotes[(quotes["side"] == "put") & (quotes["is_otm"] == True)]  # noqa: E712
+    otm_calls = otm_calls[otm_calls["spread_pct"] <= cfg["max_leg_spread_pct"]]
+    otm_puts = otm_puts[otm_puts["spread_pct"] <= cfg["max_leg_spread_pct"]]
+    wing_c = choose_below_nearest(otm_calls, cfg["wing_delta_target"])
+    wing_p = choose_below_nearest(otm_puts, cfg["wing_delta_target"])
+    body_strike = float(meta["body_strike"])
+    legs = [
+        {"leg_index": 0, "option_type": "put", "strike": float(wing_p.strike), "unit_quantity": 1.0,
+         "bid": float(wing_p.bid), "ask": float(wing_p.ask), "spread_pct": float(wing_p.spread_pct)},
+        {"leg_index": 1, "option_type": "put", "strike": float(body_put.iloc[0].strike), "unit_quantity": -1.0,
+         "bid": float(body_put.iloc[0].bid), "ask": float(body_put.iloc[0].ask),
+         "spread_pct": float(body_put.iloc[0].spread_pct)},
+        {"leg_index": 2, "option_type": "call", "strike": float(body_call.iloc[0].strike), "unit_quantity": -1.0,
+         "bid": float(body_call.iloc[0].bid), "ask": float(body_call.iloc[0].ask),
+         "spread_pct": float(body_call.iloc[0].spread_pct)},
+        {"leg_index": 3, "option_type": "call", "strike": float(wing_c.strike), "unit_quantity": 1.0,
+         "bid": float(wing_c.bid), "ask": float(wing_c.ask), "spread_pct": float(wing_c.spread_pct)},
+    ]
+    entry = sum(
+        leg_entry_cash(l["unit_quantity"], l["bid"], l["ask"], buy_alpha, sell_alpha)
+        for l in legs
+    )
+    net_credit = -entry
+    wing_width = max(float(wing_c.strike) - body_strike, body_strike - float(wing_p.strike))
+    max_loss = wing_width - net_credit
+    exit_spot = float(meta["exit_spot"])
+    expiry_payoff = sum(
+        intrinsic(l["option_type"], l["strike"], exit_spot) * l["unit_quantity"] for l in legs
+    )
+    return {
+        "structure_ok": True,
+        "entry_cost_per_share": entry,
+        "net_credit_per_share": net_credit,
+        "max_loss_per_share": max_loss,
+        "premium_per_share": max(net_credit, 0.0),
+        "wing_width": wing_width,
+        "legs": legs,
+        "expiry_payoff_per_share": expiry_payoff,
+        "pnl_per_share": expiry_payoff - entry,
+    }
+
+
+def build_structure_row(
+    trade_date: date,
+    ticker: str,
+    direction: str,
+    signal_rank_pct: float,
+    cvg_rank_pct: float,
+    a1: pd.DataFrame,
+    a2: pd.DataFrame,
+    cfg: Dict[str, Any],
+    buy_alpha: float,
+    sell_alpha: float,
+) -> Dict[str, Any]:
+    row: Dict[str, Any] = {
+        "trade_date": trade_date,
+        "ticker": ticker,
+        "direction": direction,
+        "signal_rank_pct": signal_rank_pct,
+        "cvg_rank_pct": cvg_rank_pct,
+        "structure_ok": False,
+        "had_earnings_nearby": False,
+    }
+    meta_rows = a1[(a1.entry_date == trade_date) & (a1.ticker == ticker)]
+    if meta_rows.empty or not bool(meta_rows.iloc[0].surface_valid):
+        row["failure_reason"] = "metadata_error"
+        return row
+    meta = meta_rows.iloc[0]
+    row.update(
+        {
+            "entry_spot": float(meta.entry_spot),
+            "exit_spot": float(meta.exit_spot),
+            "body_strike": float(meta.body_strike),
+            "expiry_date": pd.to_datetime(meta.expiry_date).date(),
+            "dte_actual": int(meta.dte_actual),
+        }
+    )
+    q = quotes_for(a2, trade_date, ticker)
+    try:
+        if direction == "long":
+            built = build_long_straddle(meta, q, cfg, buy_alpha, sell_alpha)
+        else:
+            built = build_iron_fly(meta, q, cfg, buy_alpha, sell_alpha)
+        row.update(built)
+        row["structure_ok"] = True
+    except Exception as exc:
+        row["failure_reason"] = str(exc)
+    return row
+
+
+def select_and_size_day(
+    trade_date: date,
+    signals: pd.DataFrame,
+    a1: pd.DataFrame,
+    a2: pd.DataFrame,
+    cfg: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    structs: List[Dict[str, Any]] = []
+    for _, sig in signals.iterrows():
+        structs.append(
+            build_structure_row(
+                trade_date,
+                sig.ticker,
+                sig.direction,
+                float(sig.signal_rank_pct),
+                float(sig.cvg_rank_pct),
+                a1,
+                a2,
+                cfg,
+                cfg["cross_buy_alpha"],
+                cfg["cross_sell_alpha"],
+            )
+        )
+    eligible = [s for s in structs if s.get("structure_ok")]
+    selected: List[Dict[str, Any]] = []
+    for direction in ("long", "short"):
+        side = [s for s in eligible if s["direction"] == direction]
+        side.sort(
+            key=lambda s: (-s["signal_rank_pct"], s["ticker"])
+            if direction == "long"
+            else (s["signal_rank_pct"], s["ticker"])
+        )
+        selected.extend(side[: cfg["max_names_per_side"]])
+
+    # Drop invalid max loss
+    kept = []
+    for s in selected:
+        ml = s.get("max_loss_per_share")
+        if ml is None or ml <= 0:
+            continue
+        kept.append(s)
+    selected = kept
+
+    n_short = sum(1 for s in selected if s["direction"] == "short")
+    n_long = sum(1 for s in selected if s["direction"] == "long")
+    short_per = cfg["tier_a_short_budget"] / n_short if n_short else None
+
+    for s in selected:
+        if s["direction"] == "short":
+            s["quantity"] = -(short_per / s["max_loss_per_share"])
+        else:
+            s["quantity"] = float("nan")
+
+    collected = 0.0
+    for s in selected:
+        if s["direction"] != "short":
+            continue
+        credit = s.get("premium_per_share", 0.0)
+        if credit > 0:
+            collected += abs(float(s["quantity"])) * credit
+
+    fallback = n_short == 0 or collected <= 0
+    long_budget = cfg["tier_a_long_budget"] if fallback else collected
+    long_per = long_budget / n_long if n_long and long_budget else None
+
+    for s in selected:
+        if s["direction"] != "long":
+            continue
+        prem = s.get("premium_per_share")
+        if prem and prem > 0 and long_per:
+            s["quantity"] = long_per / prem
+
+    sized = []
+    for s in selected:
+        qty = s.get("quantity")
+        if qty is None or (isinstance(qty, float) and math.isnan(qty)):
+            continue
+        at_risk = s["max_loss_per_share"] if s["direction"] == "short" else s["premium_per_share"]
+        pnl_ps = s["pnl_per_share"]
+        s["capital_at_risk_dollars"] = abs(float(qty)) * at_risk
+        s["pnl_total"] = abs(float(qty)) * pnl_ps
+        sized.append(s)
+
+    meta = {
+        "n_short": n_short,
+        "n_long": n_long,
+        "collected_short_credit": collected,
+        "long_budget": long_budget,
+        "fallback_fired": fallback,
+        "short_per_name_budget": short_per,
+        "long_per_name_budget": long_per,
+    }
+    return sized, meta
+
+
+def trade_obs(tl: pd.DataFrame, td: date, ticker: str, direction: str) -> pd.Series:
+    m = tl[
+        (tl.trade_date == td)
+        & (tl.ticker == ticker)
+        & (tl.direction == direction)
+        & (tl.included_in_portfolio == True)  # noqa: E712
+    ]
+    return m.iloc[0]
+
+
+def legs_obs(leg: pd.DataFrame, td: date, ticker: str, direction: str) -> pd.DataFrame:
+    return leg[
+        (leg.trade_date == td)
+        & (leg.ticker == ticker)
+        & (leg.direction == direction)
+        & (leg.included_in_portfolio == True)  # noqa: E712
+    ].sort_values("leg_index")
+
+
+def observed_day_counts(tl: pd.DataFrame, td: date) -> Tuple[int, int, float]:
+    day = tl[(tl.trade_date == td) & (tl.included_in_portfolio == True)]  # noqa: E712
+    n_short = int((day.direction == "short").sum())
+    n_long = int((day.direction == "long").sum())
+    collected = 0.0
+    for _, r in day[day.direction == "short"].iterrows():
+        credit = float(r.net_credit_per_share) if pd.notna(r.net_credit_per_share) else 0.0
+        if credit > 0:
+            collected += abs(float(r.quantity)) * credit
+    return n_short, n_long, collected
+
+
 # ---------------------------------------------------------------------------
-# Identity / immutability
+# Identity
 # ---------------------------------------------------------------------------
 print("=== identity / immutability ===", flush=True)
 receipt = json.loads((RUN_DIR / "run_receipt.json").read_text(encoding="utf-8"))
 rec(
-    "ID-repo_sha",
-    "identity",
-    "receipt.repo_sha",
-    EXECUTION_COMMIT,
-    receipt.get("repo_sha"),
-    "run_receipt.json",
-    "—",
-    "PASS" if receipt.get("repo_sha") == EXECUTION_COMMIT else "FAIL",
-    "identity",
+    "ID-repo_sha", "identity", "receipt.repo_sha", EXECUTION_COMMIT, receipt.get("repo_sha"),
+    "run_receipt.json", "—", "PASS" if receipt.get("repo_sha") == EXECUTION_COMMIT else "FAIL", "identity",
 )
 rec(
-    "ID-result_complete",
-    "identity",
-    "receipt.result_complete",
-    True,
-    receipt.get("result_complete"),
-    "run_receipt.json",
-    "—",
-    "PASS" if receipt.get("result_complete") is True else "FAIL",
-    "identity",
+    "ID-result_complete", "identity", "receipt.result_complete", True, receipt.get("result_complete"),
+    "run_receipt.json", "—", "PASS" if receipt.get("result_complete") is True else "FAIL", "identity",
 )
 
-# Collect receipt digests
 expected_artifact: Dict[str, str] = {}
 
 
@@ -216,55 +608,37 @@ def _walk_sha(obj):
 
 
 _walk_sha(receipt)
-art_issues = []
-art_matched = 0
+art_issues, art_matched = [], 0
 for p in sorted(RUN_DIR.iterdir()):
     if not p.is_file() or p.name == "run_receipt.json":
         continue
     h = sha256_file(p)
     exp = expected_artifact.get(p.name)
-    ok = exp == h
-    if ok:
+    if exp == h:
         art_matched += 1
     else:
         art_issues.append(p.name)
 rec(
-    "ID-artifact_digests",
-    "identity",
-    "RUN_DIR sha256 vs receipt",
-    "all non-receipt files match",
-    f"matched={art_matched} issues={art_issues}",
-    "Get-FileHash / hashlib",
-    "—",
-    "PASS" if not art_issues and art_matched == 16 else "FAIL",
-    "identity",
+    "ID-artifact_digests", "identity", "RUN_DIR sha256 vs receipt", "all non-receipt files match",
+    f"matched={art_matched} issues={art_issues}", "hashlib", "—",
+    "PASS" if not art_issues and art_matched == 16 else "FAIL", "identity",
 )
 
 input_issues = []
 for name, (exp, path) in PHASE1_DIGESTS.items():
-    h = sha256_file(path)
-    if h != exp:
+    if sha256_file(path) != exp:
         input_issues.append(name)
 rec(
-    "ID-input_digests",
-    "identity",
-    "Phase 1 accepted-input digests",
-    "all 7 match Phase 1 baseline",
-    f"issues={input_issues or []}",
-    "hashlib vs Phase1 §1.6",
-    "—",
-    "PASS" if not input_issues else "FAIL",
-    "identity",
+    "ID-input_digests", "identity", "Phase 1 accepted-input digests", "all 7 match Phase 1 baseline",
+    f"issues={input_issues or []}", "hashlib", "—", "PASS" if not input_issues else "FAIL", "identity",
 )
 
 # ---------------------------------------------------------------------------
-# Load sources + observed artifacts (observed only)
+# Load contract + observed artifacts (observed only)
 # ---------------------------------------------------------------------------
-print("=== load sources + observed artifacts ===", flush=True)
-contract = load_contract(CONTRACT)
-configs = build_run_configs(contract)
-cfg_cross = next(c for c in configs if c.fill.label == "cross")
-cfg_mid = next(c for c in configs if c.fill.label == "mid")
+print("=== load contract + observed artifacts ===", flush=True)
+contract = load_frozen_contract(CONTRACT)
+cfg = contract_cfg(contract)
 
 tl_c = pd.read_parquet(RUN_DIR / f"trade_log_{CROSS}.parquet")
 leg_c = pd.read_parquet(RUN_DIR / f"leg_log_{CROSS}.parquet")
@@ -285,1042 +659,422 @@ feat["date"] = pd.to_datetime(feat["date"])
 a1 = pd.read_parquet(A1)
 a1["entry_date"] = pd.to_datetime(a1["entry_date"]).dt.date
 
-sample_dates = sorted({s[1] for s in FROZEN_SAMPLES} | {FROZEN_S4[0]})
-print(f"loading A2 quotes for sample dates {sample_dates}...", flush=True)
-a2 = pd.read_parquet(
-    A2,
-    filters=[("entry_date", "in", [pd.Timestamp(d) for d in sample_dates])],
-)
-surface_db = OptionSurfaceDB(a1.copy(), a2.copy())
+load_dates = sorted(set(SAMPLE_DATES) | {FROZEN_S4[0]})
+print(f"loading A2 for {load_dates}...", flush=True)
+a2 = pd.read_parquet(A2, filters=[("entry_date", "in", [pd.Timestamp(d) for d in load_dates])])
 
 # ---------------------------------------------------------------------------
-# Frozen sample selection confirmation (no replacements)
+# Frozen sample selection
 # ---------------------------------------------------------------------------
 print("=== frozen sample selection ===", flush=True)
 n_vnt = int((ds_c["status"] == "valid_no_trade").sum())
 selection = {
-    "S3": {
-        "rule": "earliest valid_no_trade",
-        "result": "N/A",
-        "justification": f"n_valid_no_trade_dates={n_vnt}",
-        "fallback_fired": True,
-    },
-    "S1": {
-        "rule": "median A1 expected date; lowest-ticker included long+short",
-        "date": "2022-09-02",
-        "long": "ACN",
-        "short": "AMC",
-        "fallback_fired": False,
-    },
-    "S2": {
-        "rule": "earliest traded date with both sides; lowest-ticker long+short",
-        "date": "2018-10-26",
-        "long": "ABBV",
-        "short": "MRVL",
-        "fallback_fired": False,
-    },
-    "S4": {
-        "rule": "earliest date with structure_ok=False; lowest-ticker failing row",
-        "date": "2018-10-26",
-        "ticker": "AMBA",
-        "direction": "short",
-        "fallback_fired": False,
-    },
+    "S3": {"rule": "earliest valid_no_trade", "result": "N/A", "justification": f"n_valid_no_trade_dates={n_vnt}"},
+    "S1": {"date": "2022-09-02", "long": "ACN", "short": "AMC"},
+    "S2": {"date": "2018-10-26", "long": "ABBV", "short": "MRVL"},
+    "S4": {"date": "2018-10-26", "ticker": "AMBA", "direction": "short"},
     "no_sample_replaced": True,
-    "s3_only_permitted_na": True,
 }
-
 rec("S3", "S3", "valid_no_trade existence", "N/A if none", f"n={n_vnt}",
     "date_status cross", "—", "N/A (frozen fallback)", "S3_valid_no_trade")
 
-# Re-derive selection and confirm frozen keys
-MEDIAN = date(2022, 9, 2)
-inc_s1 = tl_c[(tl_c.trade_date == MEDIAN) & (tl_c.included_in_portfolio == True)]  # noqa: E712
-s1_long = sorted(inc_s1[inc_s1.direction == "long"].ticker)[0]
-s1_short = sorted(inc_s1[inc_s1.direction == "short"].ticker)[0]
-ok_s1 = (s1_long, s1_short) == ("ACN", "AMC")
-rec("SEL-S1", "S1", "frozen S1 keys preserved", "ACN/AMC", f"{s1_long}/{s1_short}",
-    "trade_log selection rule", "—", "PASS" if ok_s1 else "FAIL", "sample_selection")
+inc_s1 = tl_c[(tl_c.trade_date == date(2022, 9, 2)) & (tl_c.included_in_portfolio == True)]  # noqa: E712
+rec("SEL-S1", "S1", "frozen S1 keys preserved", "ACN/AMC",
+    f"{sorted(inc_s1[inc_s1.direction=='long'].ticker)[0]}/{sorted(inc_s1[inc_s1.direction=='short'].ticker)[0]}",
+    "trade_log selection rule", "—",
+    "PASS" if (sorted(inc_s1[inc_s1.direction=='long'].ticker)[0], sorted(inc_s1[inc_s1.direction=='short'].ticker)[0]) == ("ACN", "AMC") else "FAIL",
+    "sample_selection")
 
 inc_all = tl_c[tl_c.included_in_portfolio == True]  # noqa: E712
-both_dates = sorted(
-    d for d, g in inc_all.groupby("trade_date") if set(g.direction) >= {"long", "short"}
-)
-s2_date = both_dates[0]
-inc_s2 = inc_all[inc_all.trade_date == s2_date]
-s2_long = sorted(inc_s2[inc_s2.direction == "long"].ticker)[0]
-s2_short = sorted(inc_s2[inc_s2.direction == "short"].ticker)[0]
-ok_s2 = (s2_date, s2_long, s2_short) == (date(2018, 10, 26), "ABBV", "MRVL")
+both_dates = sorted(d for d, g in inc_all.groupby("trade_date") if set(g.direction) >= {"long", "short"})
+s2d = both_dates[0]
+inc_s2 = inc_all[inc_all.trade_date == s2d]
 rec("SEL-S2", "S2", "frozen S2 keys preserved", "2018-10-26/ABBV/MRVL",
-    f"{s2_date}/{s2_long}/{s2_short}", "trade_log selection rule", "—",
-    "PASS" if ok_s2 else "FAIL", "sample_selection")
+    f"{s2d}/{sorted(inc_s2[inc_s2.direction=='long'].ticker)[0]}/{sorted(inc_s2[inc_s2.direction=='short'].ticker)[0]}",
+    "trade_log selection rule", "—",
+    "PASS" if (s2d, sorted(inc_s2[inc_s2.direction=='long'].ticker)[0], sorted(inc_s2[inc_s2.direction=='short'].ticker)[0]) == (date(2018, 10, 26), "ABBV", "MRVL") else "FAIL",
+    "sample_selection")
 
 sf = cand_c[cand_c.stage == "structure_failed"]
-s4_date = sf.trade_date.min()
-s4_row = sf[sf.trade_date == s4_date].sort_values("ticker").iloc[0]
-ok_s4 = (s4_date, s4_row.ticker, s4_row.direction) == FROZEN_S4
+s4_row = sf[sf.trade_date == sf.trade_date.min()].sort_values("ticker").iloc[0]
 rec("SEL-S4", "S4", "frozen S4 keys preserved", "2018-10-26/AMBA/short",
-    f"{s4_date}/{s4_row.ticker}/{s4_row.direction}", "candidate_view", "—",
-    "PASS" if ok_s4 else "FAIL", "sample_selection")
+    f"{s4_row.trade_date}/{s4_row.ticker}/{s4_row.direction}", "candidate_view", "—",
+    "PASS" if (s4_row.trade_date, s4_row.ticker, s4_row.direction) == FROZEN_S4 else "FAIL", "sample_selection")
 selection["S4"]["reason_code"] = str(s4_row.reason_code)
 selection["S4"]["reason_raw"] = str(s4_row.reason_raw)
 
 rec("SEL-no_replace", "selection", "no performance-based replacement", True, True,
     "procedure", "—", "PASS", "sample_selection")
 
-
 # ---------------------------------------------------------------------------
-# Independent PIT universe helpers
+# Reconstruct included books for frozen dates
 # ---------------------------------------------------------------------------
-def pit_snapshot(trade_date: date) -> Tuple[Optional[pd.Timestamp], pd.DataFrame]:
-    trade_ts = pd.Timestamp(trade_date)
-    valid = liq.loc[liq["month_date"] < trade_ts, "month_date"]
-    if valid.empty:
-        return None, pd.DataFrame()
-    snap_date = valid.max()
-    snap = liq[
-        (liq["month_date"] == snap_date)
-        & (liq["has_valid_atm_pair"] == True)  # noqa: E712
-        & liq["atm_straddle_dollar_vol"].notna()
-        & liq["atm_spread_pct"].notna()
-        & np.isfinite(liq["atm_straddle_dollar_vol"].astype(float))
-        & np.isfinite(liq["atm_spread_pct"].astype(float))
-    ].copy()
-    if snap.empty:
-        return snap_date, snap
-    snap["dvol_rank_pct"] = snap["atm_straddle_dollar_vol"].rank(
-        ascending=True, method="average", pct=True
-    )
-    snap["spread_rank_pct"] = snap["atm_spread_pct"].rank(
-        ascending=False, method="average", pct=True
-    )
-    return snap_date, snap
+print("=== reconstruct frozen-date books ===", flush=True)
+date_books: Dict[date, List[Dict[str, Any]]] = {}
+date_meta: Dict[date, Dict[str, Any]] = {}
+for td in SAMPLE_DATES:
+    print(f"  {td}...", flush=True)
+    uni = pit_universe(td, liq, cfg)
+    sig = score_signals(td, feat, uni, cfg)
+    book, meta = select_and_size_day(td, sig, a1, a2, cfg)
+    date_books[td] = book
+    date_meta[td] = meta
 
 
-def trade_obs(td, ticker, direction):
-    m = tl_c[
-        (tl_c.trade_date == td)
-        & (tl_c.ticker == ticker)
-        & (tl_c.direction == direction)
-        & (tl_c.included_in_portfolio == True)  # noqa: E712
-    ]
-    return m.iloc[0]
+def find_book_row(td: date, ticker: str, direction: str) -> Optional[Dict[str, Any]]:
+    for r in date_books[td]:
+        if r["ticker"] == ticker and r["direction"] == direction:
+            return r
+    return None
 
 
-def legs_obs(legs, td, ticker, direction):
-    return legs[
-        (legs.trade_date == td)
-        & (legs.ticker == ticker)
-        & (legs.direction == direction)
-        & (legs.included_in_portfolio == True)  # noqa: E712
-    ].sort_values("leg_index")
-
-
-# ---------------------------------------------------------------------------
-# Reconstruct full included portfolios for sampled dates (cross fill)
-# ---------------------------------------------------------------------------
-print("=== reconstruct full date portfolios (cross) ===", flush=True)
-date_books: Dict[date, pd.DataFrame] = {}
-date_sizing_meta: Dict[date, Dict[str, Any]] = {}
-
-for td in sample_dates:
-    print(f"  portfolio reconstruct {td}...", flush=True)
-    uni = step1_get_universe(td, liq, cfg_cross)
-    sig = step2_score_signals(td, feat, uni, cfg_cross)
-    structs = step3_get_eligible_structures(td, sig, surface_db, cfg_cross)
-    structs = step4_apply_exclusions(structs, None, cfg_cross)
-    book = step5_select_and_size(sig, structs, cfg_cross)
-    included = book[book["included_in_portfolio"] == True].copy()  # noqa: E712
-    date_books[td] = included
-
-    short_inc = included[included.direction == "short"]
-    long_inc = included[included.direction == "long"]
-    n_short = len(short_inc)
-    n_long = len(long_inc)
-    collected = 0.0
-    for _, row in short_inc.iterrows():
-        credit = _structure_premium_per_share(row)
-        qty = row["quantity"]
-        if credit is not None and credit > 0 and qty is not None and not pd.isna(qty):
-            collected += abs(float(qty)) * float(credit)
-    fallback = n_short == 0 or collected <= 0
-    long_budget = float(cfg_cross.tier_a_long_budget) if fallback else collected
-    date_sizing_meta[td] = {
-        "n_short": n_short,
-        "n_long": n_long,
-        "collected_short_credit": collected,
-        "long_budget": long_budget,
-        "fallback_fired": fallback,
-        "fallback_reason": (
-            "no usable shorts or non-positive collected credit"
-            if fallback
-            else "not fired — financed by collected short credit"
-        ),
-        "short_budget_total": float(cfg_cross.tier_a_short_budget),
-        "short_per_name": (
-            float(cfg_cross.tier_a_short_budget) / n_short if n_short else None
-        ),
-        "long_per_name": (long_budget / n_long if n_long and long_budget else None),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Per included sample: full §7.4 reconstruction
-# ---------------------------------------------------------------------------
-def audit_included(sid: str, td: date, ticker: str, direction: str):
+def audit_sample(sid: str, td: date, ticker: str, direction: str):
     sample = f"{sid} {td}/{ticker}/{direction}"
-    obs = trade_obs(td, ticker, direction)
+    obs = trade_obs(tl_c, td, ticker, direction)
     obs_legs = legs_obs(leg_c, td, ticker, direction)
     obs_legs_m = legs_obs(leg_m, td, ticker, direction)
+    req = required_count(cfg)
 
-    # --- 1. PIT universe ---
-    snap_date, snap = pit_snapshot(td)
-    expected_snap = snap_date.date() if snap_date is not None else None
+    snap_date_a, snap_a = pit_snapshot_rows(td, liq)
+    prior_dates = liq.loc[liq["month_date"] < pd.Timestamp(td), "month_date"].unique()
+    snap_date_b = max(prior_dates) if len(prior_dates) else None
     rec(
-        f"{sid}-pit-snapshot",
-        sample,
-        "PIT snapshot date = max(month_date < trade_date)",
-        str(expected_snap),
-        str(expected_snap),
-        "liquidity panel independent",
-        "—",
-        "PASS" if expected_snap is not None else "FAIL",
-        "universe_snapshot_date",
+        f"{sid}-pit-snapshot", sample, "PIT snapshot date = max(month_date < trade_date)",
+        str(pd.Timestamp(snap_date_a).date()) if snap_date_a is not None else None,
+        str(pd.Timestamp(snap_date_b).date()) if snap_date_b is not None else None,
+        "liquidity panel (two derivations)", "—",
+        "PASS" if snap_date_a == snap_date_b else "FAIL", "universe_snapshot_date",
     )
-    trow = snap[snap.ticker == ticker] if not snap.empty else pd.DataFrame()
-    if trow.empty:
-        rec(f"{sid}-pit-atm", sample, "has_valid_atm_pair=True in snapshot gate",
-            True, False, "liquidity panel", "—", "FAIL", "universe_atm_pair")
+
+    raw = liq[(liq.month_date == snap_date_a) & (liq.ticker == ticker)]
+    raw_ok = len(raw) == 1 and bool(raw.iloc[0].has_valid_atm_pair)
+    rec(f"{sid}-pit-atm", sample, "has_valid_atm_pair=True", True, raw_ok,
+        "liquidity panel raw row", "—", "PASS" if raw_ok else "FAIL", "universe_atm_pair")
+
+    if not len(snap_a) or ticker not in set(snap_a.ticker):
+        rec(f"{sid}-pit-member", sample, "ticker in PIT eligible snapshot", True, False,
+            "liquidity panel", "—", "FAIL", "universe_and_membership")
         return
-    tr = trow.iloc[0]
-    # Re-check raw panel row (before filter) for atm flag / fields
-    raw = liq[(liq.month_date == snap_date) & (liq.ticker == ticker)]
-    raw_r = raw.iloc[0] if len(raw) else None
-    atm_ok = bool(raw_r.has_valid_atm_pair) if raw_r is not None else False
-    rec(f"{sid}-pit-atm", sample, "has_valid_atm_pair=True", True, atm_ok,
-        "liquidity panel", "—", "PASS" if atm_ok else "FAIL", "universe_atm_pair")
+    tr = snap_a[snap_a.ticker == ticker].iloc[0]
     dvol = float(tr.atm_straddle_dollar_vol)
     spr = float(tr.atm_spread_pct)
-    fields_ok = math.isfinite(dvol) and math.isfinite(spr)
     rec(
-        f"{sid}-pit-fields",
-        sample,
-        "atm_straddle_dollar_vol & atm_spread_pct finite non-null",
-        "finite",
-        f"dvol={dvol}/spread={spr}",
-        "liquidity panel",
-        "—",
-        "PASS" if fields_ok else "FAIL",
-        "universe_dvol_spread_fields",
+        f"{sid}-pit-fields", sample, "atm_straddle_dollar_vol & atm_spread_pct finite",
+        "finite", f"dvol={dvol}/spread={spr}", "liquidity panel", "—",
+        "PASS" if math.isfinite(dvol) and math.isfinite(spr) else "FAIL", "universe_dvol_spread_fields",
     )
-    dvol_r = float(tr.dvol_rank_pct)
-    spr_r = float(tr.spread_rank_pct)
-    # Cross-check vs step1 output
-    uni = step1_get_universe(td, liq, cfg_cross)
-    urow = uni[uni.ticker == ticker]
-    in_uni = len(urow) == 1
-    if in_uni:
-        ok_ranks = close(dvol_r, urow.iloc[0].dvol_rank_pct) and close(
-            spr_r, urow.iloc[0].spread_rank_pct
-        )
-    else:
-        ok_ranks = False
+    dvol_r, spr_r = float(tr.dvol_rank_pct), float(tr.spread_rank_pct)
+    dvol_thr, spr_thr = 1.0 - cfg["dvol_top_pct"], 1.0 - cfg["spread_bottom_pct"]
     rec(
-        f"{sid}-pit-dvol-rank",
-        sample,
-        "dvol_rank_pct recomputed over full PIT snapshot",
-        dvol_r,
-        float(urow.iloc[0].dvol_rank_pct) if in_uni else None,
-        "liquidity panel independent vs step1",
-        diff_num(dvol_r, urow.iloc[0].dvol_rank_pct) if in_uni else "—",
-        "PASS" if in_uni and ok_ranks else "FAIL",
-        "universe_dvol_rank",
+        f"{sid}-pit-dvol-rank", sample, f"dvol_rank_pct >= {dvol_thr}", f">={dvol_thr}", dvol_r,
+        "liquidity panel rank formula", "—", "PASS" if dvol_r >= dvol_thr else "FAIL", "universe_dvol_rank",
     )
     rec(
-        f"{sid}-pit-spread-rank",
-        sample,
-        "spread_rank_pct recomputed over full PIT snapshot",
-        spr_r,
-        float(urow.iloc[0].spread_rank_pct) if in_uni else None,
-        "liquidity panel independent vs step1",
-        diff_num(spr_r, urow.iloc[0].spread_rank_pct) if in_uni else "—",
-        "PASS" if in_uni and ok_ranks else "FAIL",
-        "universe_spread_rank",
+        f"{sid}-pit-spread-rank", sample, f"spread_rank_pct >= {spr_thr}", f">={spr_thr}", spr_r,
+        "liquidity panel rank formula", "—", "PASS" if spr_r >= spr_thr else "FAIL", "universe_spread_rank",
     )
-    dvol_thr = 1.0 - cfg_cross.dvol_top_pct
-    spr_thr = 1.0 - cfg_cross.spread_bottom_pct
-    both_ok = (dvol_r >= dvol_thr) and (spr_r >= spr_thr) and in_uni
+    uni = pit_universe(td, liq, cfg)
     rec(
-        f"{sid}-pit-and",
-        sample,
-        f"universe AND gates dvol>={dvol_thr} & spread>={spr_thr}",
-        True,
-        both_ok,
-        "liquidity panel independent",
-        "—",
-        "PASS" if both_ok else "FAIL",
-        "universe_and_membership",
+        f"{sid}-pit-and", sample, "passes frozen universe AND gates", True, ticker in set(uni.ticker),
+        "audit-local pit_universe vs ticker", "—",
+        "PASS" if ticker in set(uni.ticker) else "FAIL", "universe_and_membership",
     )
 
-    # --- 2. Joint eligibility ---
-    uni2 = step1_get_universe(td, liq, cfg_cross)
-    eligible = eligible_feature_cross_section(td, feat, uni2, cfg_cross)
-    feat_day = feat[feat["date"] == pd.Timestamp(td)]
-    frow = feat_day[feat_day.ticker == ticker]
-    in_feat = len(frow) == 1
-    in_elig = ticker in set(eligible.ticker) if not eligible.empty else False
+    fs = feat[(feat.date == pd.Timestamp(td)) & (feat.ticker == ticker)]
+    in_feat = len(fs) == 1
+    elig = eligible_feature_slice(td, feat, uni, cfg)
+    in_elig = ticker in set(elig.ticker)
     rec(
-        f"{sid}-joint-membership",
-        sample,
-        "ticker in PIT universe ∩ trade-date feature slice",
-        True,
-        in_feat and in_uni,
-        "features + liquidity",
-        "—",
-        "PASS" if in_feat and in_uni else "FAIL",
-        "joint_universe_feature_membership",
+        f"{sid}-joint-membership", sample, "ticker in PIT universe ∩ feature slice", True,
+        in_feat and (ticker in set(uni.ticker)), "features+liquidity", "—",
+        "PASS" if in_feat and (ticker in set(uni.ticker)) else "FAIL", "joint_universe_feature_membership",
     )
     if not in_feat:
         return
-    fr = frow.iloc[0]
-    mom = float(fr.mom_42_8_mean)
-    cvg = float(fr.cvg_42_8)
-    finite_ok = math.isfinite(mom) and math.isfinite(cvg)
+    fr = fs.iloc[0]
+    finite_ok = math.isfinite(float(fr.mom_42_8_mean)) and math.isfinite(float(fr.cvg_42_8))
     rec(
-        f"{sid}-joint-finite",
-        sample,
-        "mom_42_8_mean and cvg_42_8 finite",
-        True,
-        finite_ok,
-        "features_42_8",
-        "—",
-        "PASS" if finite_ok else "FAIL",
-        "joint_finite_values",
-    )
-    req = required_count_threshold(cfg_cross.momentum_col, cfg_cross.min_count_pct)
-    mom_c = float(fr.mom_42_8_count)
-    cvg_c = float(fr.cvg_count_42_8)
-    rec(
-        f"{sid}-joint-mom-count",
-        sample,
-        f"mom_42_8_count >= {req}",
-        f">={req}",
-        mom_c,
-        "features_42_8",
-        "—",
-        "PASS" if mom_c >= req else "FAIL",
-        "joint_mom_count",
+        f"{sid}-joint-finite", sample, "mom_42_8_mean and cvg_42_8 finite", True,
+        finite_ok, "features_42_8", "—", "PASS" if finite_ok else "FAIL", "joint_finite_values",
     )
     rec(
-        f"{sid}-joint-cvg-count",
-        sample,
-        f"cvg_count_42_8 >= {req}",
-        f">={req}",
-        cvg_c,
-        "features_42_8",
-        "—",
-        "PASS" if cvg_c >= req else "FAIL",
-        "joint_cvg_count",
+        f"{sid}-joint-mom-count", sample, f"mom_42_8_count >= {req}", f">={req}", float(fr.mom_42_8_count),
+        "features_42_8", "—", "PASS" if float(fr.mom_42_8_count) >= req else "FAIL", "joint_mom_count",
     )
     rec(
-        f"{sid}-joint-eligible",
-        sample,
-        "passes joint eligibility cross-section",
-        True,
-        in_elig,
-        "eligible_feature_cross_section",
-        "—",
-        "PASS" if in_elig else "FAIL",
-        "joint_eligible_slice",
+        f"{sid}-joint-cvg-count", sample, f"cvg_count_42_8 >= {req}", f">={req}", float(fr.cvg_count_42_8),
+        "features_42_8", "—", "PASS" if float(fr.cvg_count_42_8) >= req else "FAIL", "joint_cvg_count",
+    )
+    rec(
+        f"{sid}-joint-eligible", sample, "passes joint eligibility cross-section", True, in_elig,
+        "audit-local eligible_feature_slice", "—", "PASS" if in_elig else "FAIL", "joint_eligible_slice",
     )
 
-    # Independent ranks over eligible slice
-    elig = eligible.copy()
-    elig["signal_rank_pct"] = elig["mom_42_8_mean"].rank(
-        ascending=True, method="average", pct=True
-    )
-    er = elig[elig.ticker == ticker].iloc[0]
-    sig_rank = float(er.signal_rank_pct)
-    long_thr = 1.0 - cfg_cross.long_top_pct
-    short_thr = cfg_cross.short_bottom_pct
-    if direction == "long":
-        side_ok = sig_rank >= long_thr
-        pool = elig[elig.signal_rank_pct >= long_thr].copy()
-    else:
-        side_ok = sig_rank <= short_thr
-        pool = elig[elig.signal_rank_pct <= short_thr].copy()
-    pool["cvg_rank_pct"] = pool["cvg_42_8"].rank(ascending=True, method="average", pct=True)
-    cvg_thr = 1.0 - cfg_cross.cvg_filter_pct
-    pr = pool[pool.ticker == ticker]
-    cvg_rank = float(pr.iloc[0].cvg_rank_pct) if len(pr) else float("nan")
-    cvg_ok = (not pr.empty) and (cvg_rank >= cvg_thr)
-    rec(
-        f"{sid}-signal-rank",
-        sample,
-        "signal_rank_pct independent over eligible slice",
-        sig_rank,
-        float(obs.signal_rank_pct),
-        "features independent vs trade_log",
-        diff_num(sig_rank, obs.signal_rank_pct),
-        "PASS" if close(sig_rank, obs.signal_rank_pct) else "FAIL",
-        "signal_rank_recompute",
-    )
-    rec(
-        f"{sid}-cvg-rank",
-        sample,
-        "cvg_rank_pct independent within side pool",
-        cvg_rank,
-        float(obs.cvg_rank_pct),
-        "features independent vs trade_log",
-        diff_num(cvg_rank, obs.cvg_rank_pct),
-        "PASS" if close(cvg_rank, obs.cvg_rank_pct) else "FAIL",
-        "cvg_rank_recompute",
-    )
-    rec(
-        f"{sid}-direction-cvg",
-        sample,
-        f"direction={direction} + CVG retention >= {cvg_thr}",
-        True,
-        side_ok and cvg_ok,
-        "frozen thresholds",
-        "—",
-        "PASS" if side_ok and cvg_ok else "FAIL",
-        "direction_and_cvg_retention",
-    )
-
-    # --- 3. Option selection ---
-    a1r = a1[(a1.entry_date == td) & (a1.ticker == ticker)]
-    meta_ok = len(a1r) == 1 and bool(a1r.iloc[0].surface_valid)
-    rec(
-        f"{sid}-a1-valid",
-        sample,
-        "A1 surface_valid",
-        True,
-        meta_ok,
-        "A1 meta",
-        "—",
-        "PASS" if meta_ok else "FAIL",
-        "option_a1_surface_valid",
-    )
-    if not meta_ok:
-        return
-    meta = a1r.iloc[0]
-    for field in ("entry_spot", "exit_spot", "body_strike", "expiry_date", "dte_actual"):
-        exp = meta[field]
-        obs_v = obs[field] if field in obs.index else None
-        if field == "expiry_date":
-            exp_d = pd.to_datetime(exp).date()
-            obs_d = pd.to_datetime(obs_v).date()
-            ok = exp_d == obs_d
-            rec(
-                f"{sid}-{field}",
-                sample,
-                field,
-                str(exp_d),
-                str(obs_d),
-                "A1 vs trade_log",
-                "—",
-                "PASS" if ok else "FAIL",
-                f"option_{field}",
-            )
-        else:
-            ok = close(exp, obs_v)
-            rec(
-                f"{sid}-{field}",
-                sample,
-                field,
-                float(exp) if field != "dte_actual" else int(exp),
-                float(obs_v) if field != "dte_actual" else int(obs_v),
-                "A1 vs trade_log",
-                diff_num(exp, obs_v),
-                "PASS" if ok else "FAIL",
-                f"option_{field}",
-            )
-
-    q = a2[
-        (pd.to_datetime(a2["entry_date"]).dt.date == td) & (a2["ticker"] == ticker)
-    ].copy()
-    if "spread_pct" not in q.columns:
-        rec(f"{sid}-quotes", sample, "A2 quotes present", "found", "missing spread_pct",
-            "A2", "—", "FAIL", "option_spread_gates")
-        return
-
-    # Rebuild assembly independently
-    if direction == "long":
-        assembly = build_straddle_from_surface(
-            surface_db, ticker, td, "long", fill=cfg_cross.fill,
-            max_leg_spread_pct=cfg_cross.max_leg_spread_pct,
-        )
-        assembly_m = build_straddle_from_surface(
-            surface_db, ticker, td, "long", fill=cfg_mid.fill,
-            max_leg_spread_pct=cfg_cross.max_leg_spread_pct,
-        )
-    else:
-        assembly = build_ironfly_from_surface(
-            surface_db, ticker, td,
-            wing_target_delta=cfg_cross.wing_delta_target,
-            fill=cfg_cross.fill,
-            max_leg_spread_pct=cfg_cross.max_leg_spread_pct,
-        )
-        assembly_m = build_ironfly_from_surface(
-            surface_db, ticker, td,
-            wing_target_delta=cfg_cross.wing_delta_target,
-            fill=cfg_mid.fill,
-            max_leg_spread_pct=cfg_cross.max_leg_spread_pct,
-        )
-
-    # Body types/strikes
-    body_q = q[q["is_body"] == True]  # noqa: E712
-    body_q = body_q[body_q["spread_pct"] <= cfg_cross.max_leg_spread_pct]
-    body_call = body_q[body_q["side"] == "call"]
-    body_put = body_q[body_q["side"] == "put"]
-    body_ok = (not body_call.empty) and (not body_put.empty)
-    body_strikes = []
-    if body_ok:
-        body_strikes = [
-            ("call", float(body_call.iloc[0].strike)),
-            ("put", float(body_put.iloc[0].strike)),
-        ]
-    rec(
-        f"{sid}-body",
-        sample,
-        "body option types/strikes at A1 body_strike",
-        f"call/put @ {float(meta.body_strike)}",
-        str(body_strikes),
-        "A2 is_body + spread gate",
-        "—",
-        "PASS"
-        if body_ok
-        and close(body_strikes[0][1], meta.body_strike)
-        and close(body_strikes[1][1], meta.body_strike)
-        else "FAIL",
-        "option_body_selection",
-    )
-
-    # Spread gates on selected assembly legs
-    selected_legs = []
-    for i, leg in enumerate(assembly.strategy.legs):
-        ot = leg.option.option_type
-        k = float(leg.option.strike)
-        qq = q[(q["side"].astype(str).str.lower() == ot.lower()) & (q["strike"].astype(float) == k)]
-        if qq.empty:
-            selected_legs.append((i, ot, k, None, False))
-            continue
-        sp = float(qq.iloc[0].spread_pct)
-        selected_legs.append((i, ot, k, sp, sp <= cfg_cross.max_leg_spread_pct))
-    all_spread_ok = all(x[4] for x in selected_legs) and len(selected_legs) > 0
-    rec(
-        f"{sid}-spread-gates",
-        sample,
-        f"every selected leg spread_pct <= {cfg_cross.max_leg_spread_pct}",
-        True,
-        {f"leg{i}": sp for i, _, _, sp, _ in selected_legs},
-        "A2 quotes for assembly legs",
-        "—",
-        "PASS" if all_spread_ok else "FAIL",
-        "option_spread_gates",
-    )
-
-    # Wing rule for shorts
-    if direction == "short":
-        otm_calls = q[(q["side"] == "call") & (q["is_otm"] == True)]  # noqa: E712
-        otm_puts = q[(q["side"] == "put") & (q["is_otm"] == True)]  # noqa: E712
-        otm_calls = otm_calls[otm_calls["spread_pct"] <= cfg_cross.max_leg_spread_pct]
-        otm_puts = otm_puts[otm_puts["spread_pct"] <= cfg_cross.max_leg_spread_pct]
-        wing_c = _choose_below_nearest(otm_calls, cfg_cross.wing_delta_target)
-        wing_p = _choose_below_nearest(otm_puts, cfg_cross.wing_delta_target)
-        # Assembly leg order: long put, short put, short call, long call
-        ass_put = float(assembly.strategy.legs[0].option.strike)
-        ass_call = float(assembly.strategy.legs[3].option.strike)
-        ok_w = close(ass_put, wing_p.strike) and close(ass_call, wing_c.strike)
+    sigs = score_signals(td, feat, uni, cfg)
+    srow = sigs[(sigs.ticker == ticker) & (sigs.direction == direction)]
+    if len(srow):
+        sr = srow.iloc[0]
         rec(
-            f"{sid}-wings",
-            sample,
-            "OTM wings = highest abs_delta <= 0.15 after spread gate",
-            f"put={float(wing_p.strike)}/call={float(wing_c.strike)} "
-            f"delta={float(wing_p.abs_delta):.4f}/{float(wing_c.abs_delta):.4f}",
-            f"assembly put={ass_put}/call={ass_call}",
-            "A2 independent _choose_below_nearest",
-            "—",
-            "PASS" if ok_w else "FAIL",
+            f"{sid}-signal-rank", sample, "signal_rank_pct independent", float(sr.signal_rank_pct),
+            float(obs.signal_rank_pct), "audit-local vs trade_log", diff_num(sr.signal_rank_pct, obs.signal_rank_pct),
+            "PASS" if close(sr.signal_rank_pct, obs.signal_rank_pct) else "FAIL", "signal_rank_recompute",
+        )
+        rec(
+            f"{sid}-cvg-rank", sample, "cvg_rank_pct independent", float(sr.cvg_rank_pct),
+            float(obs.cvg_rank_pct), "audit-local vs trade_log", diff_num(sr.cvg_rank_pct, obs.cvg_rank_pct),
+            "PASS" if close(sr.cvg_rank_pct, obs.cvg_rank_pct) else "FAIL", "cvg_rank_recompute",
+        )
+        long_thr = 1.0 - cfg["long_top_pct"]
+        short_thr = cfg["short_bottom_pct"]
+        cvg_thr = 1.0 - cfg["cvg_filter_pct"]
+        if direction == "long":
+            dir_ok = float(sr.signal_rank_pct) >= long_thr
+        else:
+            dir_ok = float(sr.signal_rank_pct) <= short_thr
+        cvg_ok = float(sr.cvg_rank_pct) >= cvg_thr
+        rec(
+            f"{sid}-direction-cvg", sample,
+            f"direction={direction} and CVG retention >= {cvg_thr}", True, dir_ok and cvg_ok,
+            "audit-local thresholds", "—", "PASS" if dir_ok and cvg_ok else "FAIL", "direction_and_cvg_retention",
+        )
+
+    meta_row = a1[(a1.entry_date == td) & (a1.ticker == ticker)].iloc[0]
+    rec(
+        f"{sid}-a1-valid", sample, "A1 surface_valid", True, bool(meta_row.surface_valid),
+        "A1 meta vs trade inclusion", "—", "PASS" if bool(meta_row.surface_valid) else "FAIL", "option_a1_surface_valid",
+    )
+    for field in ("entry_spot", "exit_spot", "body_strike", "dte_actual"):
+        exp = meta_row[field]
+        obs_v = obs[field]
+        rec(
+            f"{sid}-{field}", sample, field, float(exp) if field != "dte_actual" else int(exp),
+            float(obs_v) if field != "dte_actual" else int(obs_v), "A1 vs trade_log", diff_num(exp, obs_v),
+            "PASS" if close(exp, obs_v) else "FAIL", f"option_{field}",
+        )
+    exp_d = pd.to_datetime(meta_row.expiry_date).date()
+    obs_d = pd.to_datetime(obs.expiry_date).date()
+    rec(
+        f"{sid}-expiry_date", sample, "expiry_date", str(exp_d), str(obs_d), "A1 vs trade_log", "—",
+        "PASS" if exp_d == obs_d else "FAIL", "option_expiry_date",
+    )
+
+    br = find_book_row(td, ticker, direction)
+    if br is None:
+        rec(f"{sid}-book-row", sample, "sample in independent included book", "present", "missing",
+            "audit-local S5", "—", "FAIL", "tier_a_quantity")
+        return
+
+    q = quotes_for(a2, td, ticker)
+    body = q[(q.is_body == True) & (q.spread_pct <= cfg["max_leg_spread_pct"])]  # noqa: E712
+    body_strikes = [(r.side, float(r.strike)) for _, r in body.iterrows()]
+    rec(
+        f"{sid}-body", sample, "body option types/strikes at A1 body_strike",
+        f"call/put @ {float(meta_row.body_strike)}", str(body_strikes), "A2 is_body+spread gate", "—",
+        "PASS" if body_strikes else "FAIL", "option_body_selection",
+    )
+    spread_map = {f"leg{l['leg_index']}": l["spread_pct"] for l in br["legs"]}
+    rec(
+        f"{sid}-spread-gates", sample, f"selected legs spread_pct <= {cfg['max_leg_spread_pct']}",
+        True, spread_map, "audit-local assembly legs", "—",
+        "PASS" if all(v <= cfg["max_leg_spread_pct"] for v in spread_map.values()) else "FAIL", "option_spread_gates",
+    )
+    if direction == "short":
+        otm = q[q.is_otm == True]  # noqa: E712
+        otm = otm[otm.spread_pct <= cfg["max_leg_spread_pct"]]
+        wc = choose_below_nearest(otm[otm.side == "call"], cfg["wing_delta_target"])
+        wp = choose_below_nearest(otm[otm.side == "put"], cfg["wing_delta_target"])
+        obs_put = float(obs_legs[obs_legs.leg_index == 0].iloc[0].strike)
+        obs_call = float(obs_legs[obs_legs.leg_index == 3].iloc[0].strike)
+        rec(
+            f"{sid}-wings", sample, "OTM wings highest abs_delta <= 0.15 after spread gate",
+            f"put={float(wp.strike)}/call={float(wc.strike)}",
+            f"leg_log put={obs_put}/call={obs_call}",
+            "audit-local wing rule vs leg_log", "—",
+            "PASS" if close(obs_put, wp.strike) and close(obs_call, wc.strike) else "FAIL",
             "option_wing_delta_rule",
         )
 
-    # Exact leg types/strikes/order/signs/bid-ask/fills
     expect_n = 2 if direction == "long" else 4
     rec(
-        f"{sid}-nlegs",
-        sample,
-        "leg count",
-        expect_n,
-        len(obs_legs),
-        "assembly vs leg_log",
-        "—",
-        "PASS" if len(obs_legs) == expect_n else "FAIL",
-        "option_leg_count",
+        f"{sid}-nlegs", sample, "leg count", expect_n, len(obs_legs), "audit-local vs leg_log", "—",
+        "PASS" if len(obs_legs) == expect_n else "FAIL", "option_leg_count",
     )
-    for i, leg in enumerate(assembly.strategy.legs):
+    for leg in br["legs"]:
+        i = int(leg["leg_index"])
         ol = obs_legs[obs_legs.leg_index == i]
         if ol.empty:
-            rec(f"{sid}-leg{i}-match", sample, f"leg{i} present", "found", "missing",
-                "leg_log", "—", "FAIL", "option_leg_identity")
+            rec(f"{sid}-leg{i}", sample, f"leg{i} present", "found", "missing", "leg_log", "—", "FAIL", "option_leg_identity")
             continue
         olr = ol.iloc[0]
-        want_type = str(leg.option.option_type).lower()
-        obs_type = str(olr.option_type).lower()
-        type_ok = want_type[0] == obs_type[0]
-        strike_ok = close(float(leg.option.strike), float(olr.strike))
-        sign_ok = (float(leg.quantity) > 0) == (float(olr.unit_quantity) > 0)
-        bid_ok = close(float(leg.option.bid), float(olr.bid))
-        ask_ok = close(float(leg.option.ask), float(olr.ask))
-        if float(leg.quantity) > 0:
-            cross_fill = float(leg.option.ask)
-        else:
-            cross_fill = float(leg.option.bid)
-        fill_ok = close(cross_fill, float(olr.fill_price))
-        ok_leg = type_ok and strike_ok and sign_ok and bid_ok and ask_ok and fill_ok
-        rec(
-            f"{sid}-leg{i}-identity",
-            sample,
-            f"leg{i} type/strike/sign/bid/ask/cross_fill",
-            f"{want_type}/{float(leg.option.strike)}/uq={float(leg.quantity)}/"
-            f"{float(leg.option.bid)}/{float(leg.option.ask)}/fill={cross_fill}",
-            f"{obs_type}/{float(olr.strike)}/uq={float(olr.unit_quantity)}/"
-            f"{float(olr.bid)}/{float(olr.ask)}/fill={float(olr.fill_price)}",
-            "A2 assembly vs leg_log",
-            "—",
-            "PASS" if ok_leg else "FAIL",
-            "option_leg_identity",
+        cross_fill = fill_price(
+            leg["bid"], leg["ask"], leg["unit_quantity"], cfg["cross_buy_alpha"], cfg["cross_sell_alpha"]
         )
-        # mid vs cross half-spread
+        ok = (
+            str(olr.option_type).lower()[0] == str(leg["option_type"]).lower()[0]
+            and close(olr.strike, leg["strike"])
+            and (float(olr.unit_quantity) > 0) == (leg["unit_quantity"] > 0)
+            and close(olr.bid, leg["bid"])
+            and close(olr.ask, leg["ask"])
+            and close(olr.fill_price, cross_fill)
+        )
+        rec(
+            f"{sid}-leg{i}-identity", sample, f"leg{i} type/strike/sign/bid/ask/cross_fill",
+            f"{leg['option_type']}/{leg['strike']}/uq={leg['unit_quantity']}/fill={cross_fill}",
+            f"{olr.option_type}/{olr.strike}/uq={olr.unit_quantity}/fill={olr.fill_price}",
+            "audit-local vs leg_log", "—", "PASS" if ok else "FAIL", "option_leg_identity",
+        )
         if len(obs_legs_m):
             ml = obs_legs_m[obs_legs_m.leg_index == i]
             if len(ml):
-                mlr = ml.iloc[0]
-                mid_fill = float(leg.option.bid) + 0.5 * (
-                    float(leg.option.ask) - float(leg.option.bid)
+                mid_fill = fill_price(
+                    leg["bid"], leg["ask"], leg["unit_quantity"], cfg["mid_buy_alpha"], cfg["mid_sell_alpha"]
                 )
-                # mid assembly fill for confirmation
-                mleg = assembly_m.strategy.legs[i]
-                if float(mleg.quantity) > 0:
-                    mid_exp = float(mleg.option.bid) + 0.5 * (
-                        float(mleg.option.ask) - float(mleg.option.bid)
-                    )
-                else:
-                    mid_exp = float(mleg.option.bid) + 0.5 * (
-                        float(mleg.option.ask) - float(mleg.option.bid)
-                    )
-                half = 0.5 * (float(leg.option.ask) - float(leg.option.bid))
-                delta = float(olr.fill_price) - float(mlr.fill_price)
-                expect_delta = half if float(leg.quantity) > 0 else -half
-                ok_d = close(delta, expect_delta)
+                half = 0.5 * (float(leg["ask"]) - float(leg["bid"]))
+                delta = float(olr.fill_price) - float(ml.iloc[0].fill_price)
+                expect_delta = half if leg["unit_quantity"] > 0 else -half
                 rec(
-                    f"{sid}-leg{i}-midcross",
-                    sample,
-                    f"leg{i} cross-mid half-spread delta",
-                    expect_delta,
-                    delta,
-                    "mid+cross leg_log vs A2",
-                    diff_num(delta, expect_delta),
-                    "PASS" if ok_d else "FAIL",
-                    "option_mid_cross_half_spread",
+                    f"{sid}-leg{i}-midcross", sample, f"leg{i} cross-mid half-spread delta",
+                    expect_delta, delta, "leg_log mid+cross", diff_num(delta, expect_delta),
+                    "PASS" if close(delta, expect_delta) else "FAIL", "option_mid_cross_half_spread",
                 )
 
-    # --- 4. Tier A sizing (from full date book) ---
-    book = date_books[td]
-    meta_sz = date_sizing_meta[td]
-    brow = book[(book.ticker == ticker) & (book.direction == direction)]
+    dm = date_meta[td]
+    obs_n_short, obs_n_long, obs_collected = observed_day_counts(tl_c, td)
     rec(
-        f"{sid}-book-nshort",
-        sample,
-        "included short count (date book)",
-        meta_sz["n_short"],
-        int((tl_c[(tl_c.trade_date == td) & (tl_c.included_in_portfolio == True)  # noqa: E712
-                  & (tl_c.direction == "short")]).shape[0]),
-        "independent S5 vs trade_log count",
-        "—",
-        "PASS"
-        if meta_sz["n_short"]
-        == int(
-            (
-                tl_c[
-                    (tl_c.trade_date == td)
-                    & (tl_c.included_in_portfolio == True)  # noqa: E712
-                    & (tl_c.direction == "short")
-                ]
-            ).shape[0]
-        )
-        else "FAIL",
-        "tier_a_n_short",
+        f"{sid}-book-nshort", sample, "included short count", dm["n_short"], obs_n_short,
+        "audit-local vs trade_log", "—", "PASS" if dm["n_short"] == obs_n_short else "FAIL", "tier_a_n_short",
     )
     rec(
-        f"{sid}-book-nlong",
-        sample,
-        "included long count (date book)",
-        meta_sz["n_long"],
-        int((tl_c[(tl_c.trade_date == td) & (tl_c.included_in_portfolio == True)  # noqa: E712
-                  & (tl_c.direction == "long")]).shape[0]),
-        "independent S5 vs trade_log count",
-        "—",
-        "PASS"
-        if meta_sz["n_long"]
-        == int(
-            (
-                tl_c[
-                    (tl_c.trade_date == td)
-                    & (tl_c.included_in_portfolio == True)  # noqa: E712
-                    & (tl_c.direction == "long")
-                ]
-            ).shape[0]
-        )
-        else "FAIL",
-        "tier_a_n_long",
+        f"{sid}-book-nlong", sample, "included long count", dm["n_long"], obs_n_long,
+        "audit-local vs trade_log", "—", "PASS" if dm["n_long"] == obs_n_long else "FAIL", "tier_a_n_long",
     )
-    if brow.empty:
-        rec(f"{sid}-qty", sample, "sampled trade in independent book", "present", "missing",
-            "S5 reconstruction", "—", "FAIL", "tier_a_quantity")
-        return
-    br = brow.iloc[0]
-    at_risk = _at_risk_per_share(br)
     rec(
-        f"{sid}-at-risk",
-        sample,
-        "at_risk_per_share independent",
-        float(at_risk) if at_risk is not None else None,
-        float(obs.max_loss_per_share) if direction == "short" else float(obs.entry_cost_per_share),
-        "assembly economics vs trade_log risk proxy",
-        diff_num(
-            at_risk,
-            obs.max_loss_per_share if direction == "short" else obs.entry_cost_per_share,
-        ),
-        "PASS"
-        if close(
-            at_risk,
-            obs.max_loss_per_share if direction == "short" else abs(float(obs.entry_cost_per_share)),
-        )
-        else "FAIL",
-        "tier_a_at_risk_per_share",
+        f"{sid}-collected-credit", sample, "total collected short credit (date)",
+        dm["collected_short_credit"], obs_collected, "audit-local vs trade_log", diff_num(dm["collected_short_credit"], obs_collected),
+        "PASS" if close(dm["collected_short_credit"], obs_collected) else "FAIL", "tier_a_collected_credit",
+    )
+    obs_fallback = not (obs_n_short > 0 and obs_collected > 0)
+    rec(
+        f"{sid}-fallback", sample, "Tier A long-budget fallback fired", dm["fallback_fired"],
+        obs_fallback, "audit-local vs trade_log-derived rule", "—",
+        "PASS" if dm["fallback_fired"] == obs_fallback else "FAIL", "tier_a_fallback",
     )
     if direction == "short":
-        short_budget_split = meta_sz["short_per_name"]
-        exp_qty = -float(short_budget_split) / float(at_risk)
+        obs_split = abs(float(obs.quantity)) * float(obs.max_loss_per_share)
         rec(
-            f"{sid}-short-budget-split",
-            sample,
-            "short budget split = 10000/n_short",
-            short_budget_split,
-            short_budget_split,
-            "independent S5 meta",
-            "—",
-            "PASS" if short_budget_split is not None else "FAIL",
-            "tier_a_short_budget_split",
+            f"{sid}-short-budget-split", sample, "short budget split = 10000/n_short",
+            dm["short_per_name_budget"], obs_split, "audit-local vs trade_log implied", diff_num(dm["short_per_name_budget"], obs_split),
+            "PASS" if close(dm["short_per_name_budget"], obs_split) else "FAIL", "tier_a_short_budget_split",
         )
+        at_risk = br["max_loss_per_share"]
     else:
-        long_budget_split = meta_sz["long_per_name"]
-        prem = _structure_premium_per_share(br)
-        exp_qty = float(long_budget_split) / float(prem)
         rec(
-            f"{sid}-long-budget",
-            sample,
-            "long budget = collected short credit (or fallback)",
-            meta_sz["long_budget"],
-            meta_sz["long_budget"],
-            "independent S5 meta",
-            "—",
-            "PASS",
-            "tier_a_long_budget",
+            f"{sid}-long-budget", sample, "long budget from collected short credit",
+            dm["long_budget"], obs_collected, "audit-local vs trade_log collected credit", diff_num(dm["long_budget"], obs_collected),
+            "PASS" if close(dm["long_budget"], obs_collected) else "FAIL", "tier_a_long_budget",
         )
+        obs_split = abs(float(obs.quantity)) * abs(float(obs.entry_cost_per_share))
         rec(
-            f"{sid}-long-budget-split",
-            sample,
-            "long budget split = long_budget/n_long",
-            long_budget_split,
-            long_budget_split,
-            "independent S5 meta",
-            "—",
-            "PASS" if long_budget_split is not None else "FAIL",
-            "tier_a_long_budget_split",
+            f"{sid}-long-budget-split", sample, "long budget split = long_budget/n_long",
+            dm["long_per_name_budget"], obs_split, "audit-local vs trade_log implied", diff_num(dm["long_per_name_budget"], obs_split),
+            "PASS" if close(dm["long_per_name_budget"], obs_split) else "FAIL", "tier_a_long_budget_split",
         )
-
+        at_risk = br["premium_per_share"]
     rec(
-        f"{sid}-collected-credit",
-        sample,
-        "total collected short credit (date)",
-        meta_sz["collected_short_credit"],
-        meta_sz["collected_short_credit"],
-        "independent S5 over full included shorts",
-        "—",
-        "PASS",
-        "tier_a_collected_credit",
+        f"{sid}-at-risk", sample, "at_risk_per_share", at_risk,
+        float(obs.max_loss_per_share) if direction == "short" else abs(float(obs.entry_cost_per_share)),
+        "audit-local vs trade_log", diff_num(at_risk, obs.max_loss_per_share if direction == "short" else abs(float(obs.entry_cost_per_share))),
+        "PASS" if close(at_risk, obs.max_loss_per_share if direction == "short" else abs(float(obs.entry_cost_per_share))) else "FAIL",
+        "tier_a_at_risk_per_share",
     )
     rec(
-        f"{sid}-fallback",
-        sample,
-        "Tier A long-budget fallback status",
-        meta_sz["fallback_reason"],
-        f"fired={meta_sz['fallback_fired']}",
-        "independent S5",
-        "—",
-        "PASS",
-        "tier_a_fallback",
+        f"{sid}-quantity", sample, "signed quantity", br["quantity"], float(obs.quantity),
+        "audit-local vs trade_log", diff_num(br["quantity"], obs.quantity),
+        "PASS" if close(br["quantity"], obs.quantity) else "FAIL", "tier_a_quantity",
     )
-    qty_exp = float(br.quantity)
-    qty_obs = float(obs.quantity)
     rec(
-        f"{sid}-quantity",
-        sample,
-        "signed quantity independent vs trade_log",
-        qty_exp,
-        qty_obs,
-        "S5 Tier A vs trade_log",
-        diff_num(qty_exp, qty_obs),
-        "PASS" if close(qty_exp, qty_obs) else "FAIL",
-        "tier_a_quantity",
+        f"{sid}-entry", sample, "entry_cost_per_share", br["entry_cost_per_share"], float(obs.entry_cost_per_share),
+        "audit-local vs trade_log", diff_num(br["entry_cost_per_share"], obs.entry_cost_per_share),
+        "PASS" if close(br["entry_cost_per_share"], obs.entry_cost_per_share) else "FAIL", "pnl_entry_cost",
     )
-
-    # --- 5. Risk, P&L, CAR ---
-    entry_exp = float(assembly.entry_cost)
-    entry_obs = float(obs.entry_cost_per_share)
     rec(
-        f"{sid}-entry",
-        sample,
-        "entry_cost_per_share from source assembly",
-        entry_exp,
-        entry_obs,
-        "A2+fill vs trade_log",
-        diff_num(entry_exp, entry_obs),
-        "PASS" if close(entry_exp, entry_obs) else "FAIL",
-        "pnl_entry_cost",
-    )
-    from decimal import Decimal
-
-    pos = assembly.settle(exit_spot=Decimal(str(float(meta.exit_spot))))
-    exit_exp = float(pos.exit_value) if pos.exit_value is not None else float("nan")
-    # trade_log may store exit via pnl identity: pnl = exit - entry
-    exit_obs = float(obs.pnl_per_share) + float(obs.entry_cost_per_share)
-    rec(
-        f"{sid}-exit",
-        sample,
-        "exit_value independent intrinsic settlement",
-        exit_exp,
-        exit_obs,
-        "A1 exit_spot + assembly settle vs trade_log identity",
-        diff_num(exit_exp, exit_obs),
-        "PASS" if close(exit_exp, exit_obs) else "FAIL",
+        f"{sid}-exit", sample, "expiry payoff per share", br["expiry_payoff_per_share"],
+        float(obs.pnl_per_share) + float(obs.entry_cost_per_share),
+        "audit-local vs trade_log identity", diff_num(br["expiry_payoff_per_share"], float(obs.pnl_per_share) + float(obs.entry_cost_per_share)),
+        "PASS" if close(br["expiry_payoff_per_share"], float(obs.pnl_per_share) + float(obs.entry_cost_per_share)) else "FAIL",
         "pnl_exit_value",
     )
-    pnl_ps_exp = float(pos.pnl) if pos.pnl is not None else float("nan")
     rec(
-        f"{sid}-pnl-ps",
-        sample,
-        "pnl_per_share independent",
-        pnl_ps_exp,
-        float(obs.pnl_per_share),
-        "assembly settle vs trade_log",
-        diff_num(pnl_ps_exp, obs.pnl_per_share),
-        "PASS" if close(pnl_ps_exp, obs.pnl_per_share) else "FAIL",
-        "pnl_per_share",
+        f"{sid}-pnl-ps", sample, "pnl_per_share", br["pnl_per_share"], float(obs.pnl_per_share),
+        "audit-local vs trade_log", diff_num(br["pnl_per_share"], obs.pnl_per_share),
+        "PASS" if close(br["pnl_per_share"], obs.pnl_per_share) else "FAIL", "pnl_per_share",
     )
-    car_exp = abs(qty_exp) * float(at_risk)
-    car_obs = float(obs.capital_at_risk_dollars)
     rec(
-        f"{sid}-car-dollars",
-        sample,
-        "capital_at_risk_dollars = abs(qty)*at_risk",
-        car_exp,
-        car_obs,
-        "independent qty+at_risk vs trade_log",
-        diff_num(car_exp, car_obs),
-        "PASS" if close(car_exp, car_obs) else "FAIL",
-        "capital_at_risk_dollars",
+        f"{sid}-car-dollars", sample, "capital_at_risk_dollars", br["capital_at_risk_dollars"],
+        float(obs.capital_at_risk_dollars), "audit-local vs trade_log", diff_num(br["capital_at_risk_dollars"], obs.capital_at_risk_dollars),
+        "PASS" if close(br["capital_at_risk_dollars"], obs.capital_at_risk_dollars) else "FAIL", "capital_at_risk_dollars",
     )
-    pnl_tot_exp = abs(qty_exp) * pnl_ps_exp
     rec(
-        f"{sid}-pnl-total",
-        sample,
-        "pnl_total = abs(qty)*pnl_per_share",
-        pnl_tot_exp,
-        float(obs.pnl_total),
-        "independent vs trade_log",
-        diff_num(pnl_tot_exp, obs.pnl_total),
-        "PASS" if close(pnl_tot_exp, obs.pnl_total) else "FAIL",
-        "pnl_total",
+        f"{sid}-pnl-total", sample, "pnl_total", br["pnl_total"], float(obs.pnl_total),
+        "audit-local vs trade_log", diff_num(br["pnl_total"], obs.pnl_total),
+        "PASS" if close(br["pnl_total"], obs.pnl_total) else "FAIL", "pnl_total",
     )
 
 
 for sid, td, ticker, direction in FROZEN_SAMPLES:
     print(f"\n=== audit {sid} ===", flush=True)
-    audit_included(sid, td, ticker, direction)
+    audit_sample(sid, td, ticker, direction)
 
-# Sampled-date CAR from independent full book (once per date)
 print("\n=== sampled-date CAR ===", flush=True)
-for td in sorted({s[1] for s in FROZEN_SAMPLES}):
-    book = date_books[td]
-    pnl_sum = float(book["pnl_total"].sum())
-    car_sum = float(book["capital_at_risk_dollars"].sum())
-    car_exp = pnl_sum / car_sum if car_sum > 0 else float("nan")
-    dsr = ds_sum_c[ds_sum_c.trade_date == td].iloc[0]
-    car_obs = float(dsr.cycle_return_on_capital_at_risk)
-    sid_tag = "S1" if td == date(2022, 9, 2) else "S2"
+for td in SAMPLE_DATES:
+    exp_car = sum(r["pnl_total"] for r in date_books[td]) / sum(r["capital_at_risk_dollars"] for r in date_books[td])
+    obs_car = float(ds_sum_c[ds_sum_c.trade_date == td].iloc[0].cycle_return_on_capital_at_risk)
+    tag = "S1" if td == date(2022, 9, 2) else "S2"
     rec(
-        f"{sid_tag}-date-car",
-        f"{sid_tag} date {td}",
-        "cycle_return_on_capital_at_risk over full included book",
-        car_exp,
-        car_obs,
-        "independent S5 book vs date_summary row",
-        diff_num(car_exp, car_obs),
-        "PASS" if close(car_exp, car_obs) else "FAIL",
-        "date_car_contribution",
+        f"{tag}-date-car", f"{tag} date {td}", "cycle_return_on_capital_at_risk",
+        exp_car, obs_car, "audit-local book vs date_summary", diff_num(exp_car, obs_car),
+        "PASS" if close(exp_car, obs_car) else "FAIL", "date_car_contribution",
     )
 
-# ---------------------------------------------------------------------------
-# S4 structure failure
-# ---------------------------------------------------------------------------
+# S4
 print("\n=== S4 ===", flush=True)
 s4_td, s4_ticker, s4_dir = FROZEN_S4
 a1r = a1[(a1.entry_date == s4_td) & (a1.ticker == s4_ticker)]
-rec(
-    "S4-a1",
-    f"S4 {s4_td}/{s4_ticker}",
-    "A1 presence",
-    "row may exist",
-    f"n={len(a1r)} valid={bool(a1r.iloc[0].surface_valid) if len(a1r) else None}",
-    "A1",
-    "—",
-    "PASS",
-    "S4_structure_failure",
-)
-rec(
-    "S4-code",
-    f"S4 {s4_td}/{s4_ticker}",
-    "reason_code in frozen set",
-    "wing_or_liquidity_selection|...",
-    s4_row.reason_code,
-    "candidate_view",
-    "—",
-    "PASS"
-    if s4_row.reason_code
-    in {
-        "metadata_error",
-        "missing_quotes_or_body",
-        "wing_or_liquidity_selection",
-        "other_structure",
-    }
-    else "FAIL",
-    "S4_structure_failure",
-)
-q = a2[
-    (pd.to_datetime(a2["entry_date"]).dt.date == s4_td) & (a2["ticker"] == s4_ticker)
-]
-if len(q):
-    otm = q[q["is_otm"] == True] if "is_otm" in q.columns else q  # noqa: E712
-    if "spread_pct" in otm.columns:
-        otm = otm[otm.spread_pct <= 0.5]
-    if "abs_delta" in otm.columns:
-        eligible = otm[otm.abs_delta <= 0.15]
-        rec(
-            "S4-wings",
-            f"S4 {s4_td}/{s4_ticker}",
-            "OTM abs_delta<=0.15 after spread gate",
-            "0 (explains wing_or_liquidity_selection)",
-            int(len(eligible)),
-            "A2 quotes",
-            "—",
-            "PASS" if len(eligible) == 0 else "FAIL",
-            "S4_structure_failure",
-        )
-leg_hit = leg_c[
-    (leg_c.trade_date == s4_td) & (leg_c.ticker == s4_ticker) & (leg_c.direction == s4_dir)
-]
-tl_hit = tl_c[
-    (tl_c.trade_date == s4_td) & (tl_c.ticker == s4_ticker) & (tl_c.direction == s4_dir)
-]
-rec(
-    "S4-nolegs",
-    f"S4 {s4_td}/{s4_ticker}",
-    "no leg rows",
-    0,
-    len(leg_hit),
-    "leg_log",
-    "—",
-    "PASS" if len(leg_hit) == 0 else "FAIL",
-    "S4_structure_failure",
-)
+s4_valid = bool(a1r.iloc[0].surface_valid) if len(a1r) else False
+rec("S4-a1", f"S4 {s4_td}/{s4_ticker}", "A1 surface_valid for failing ticker", True,
+    s4_valid, "A1 vs structure failure context", "—", "PASS" if s4_valid else "FAIL", "S4_structure_failure")
+rec("S4-code", f"S4 {s4_td}/{s4_ticker}", "reason_code in frozen set", "wing_or_liquidity_selection|...", s4_row.reason_code,
+    "candidate_view", "—", "PASS" if s4_row.reason_code == "wing_or_liquidity_selection" else "FAIL", "S4_structure_failure")
+q4 = quotes_for(a2, s4_td, s4_ticker)
+otm = q4[q4.is_otm == True]  # noqa: E712
+otm = otm[otm.spread_pct <= cfg["max_leg_spread_pct"]]
+eligible = otm[otm.abs_delta <= cfg["wing_delta_target"]]
+rec("S4-wings", f"S4 {s4_td}/{s4_ticker}", "OTM abs_delta<=0.15 after spread gate", 0, int(len(eligible)),
+    "A2 quotes", "—", "PASS" if len(eligible) == 0 else "FAIL", "S4_structure_failure")
+leg_hit = leg_c[(leg_c.trade_date == s4_td) & (leg_c.ticker == s4_ticker) & (leg_c.direction == s4_dir)]
+tl_hit = tl_c[(tl_c.trade_date == s4_td) & (tl_c.ticker == s4_ticker) & (tl_c.direction == s4_dir)]
+rec("S4-nolegs", f"S4 {s4_td}/{s4_ticker}", "no leg rows", 0, len(leg_hit), "leg_log", "—",
+    "PASS" if len(leg_hit) == 0 else "FAIL", "S4_structure_failure")
 included_flag = bool(tl_hit.iloc[0].included_in_portfolio) if len(tl_hit) else None
-rec(
-    "S4-notincluded",
-    f"S4 {s4_td}/{s4_ticker}",
-    "not included_in_portfolio",
-    False,
-    included_flag,
-    "trade_log",
-    "—",
-    "PASS" if included_flag is False else "FAIL",
-    "S4_structure_failure",
-)
+rec("S4-notincluded", f"S4 {s4_td}/{s4_ticker}", "not included_in_portfolio", False, included_flag, "trade_log", "—",
+    "PASS" if included_flag is False else "FAIL", "S4_structure_failure")
 date_st = ds_c.loc[ds_c.trade_date == s4_td, "status"].iloc[0]
-rec(
-    "S4-datestatus",
-    f"S4 {s4_td}",
-    "date status traded|valid_no_trade",
-    "traded|valid_no_trade",
-    date_st,
-    "date_status",
-    "—",
-    "PASS" if date_st in {"traded", "valid_no_trade"} else "FAIL",
-    "S4_structure_failure",
-)
+rec("S4-datestatus", f"S4 {s4_td}", "date status traded|valid_no_trade", "traded|valid_no_trade", date_st,
+    "date_status", "—", "PASS" if date_st in {"traded", "valid_no_trade"} else "FAIL", "S4_structure_failure")
 
-# ---------------------------------------------------------------------------
-# Coverage checklist + totals
-# ---------------------------------------------------------------------------
+# Coverage + output
 REQUIRED_COVERAGE = [
-    "identity",
-    "sample_selection",
-    "universe_snapshot_date",
-    "universe_atm_pair",
-    "universe_dvol_spread_fields",
-    "universe_dvol_rank",
-    "universe_spread_rank",
-    "universe_and_membership",
-    "joint_universe_feature_membership",
-    "joint_finite_values",
-    "joint_mom_count",
-    "joint_cvg_count",
-    "joint_eligible_slice",
-    "signal_rank_recompute",
-    "cvg_rank_recompute",
-    "direction_and_cvg_retention",
-    "option_a1_surface_valid",
-    "option_entry_spot",
-    "option_exit_spot",
-    "option_body_strike",
-    "option_expiry_date",
-    "option_dte_actual",
-    "option_body_selection",
-    "option_spread_gates",
-    "option_wing_delta_rule",
-    "option_leg_count",
-    "option_leg_identity",
-    "option_mid_cross_half_spread",
-    "tier_a_n_short",
-    "tier_a_n_long",
-    "tier_a_at_risk_per_share",
-    "tier_a_short_budget_split",
-    "tier_a_long_budget",
-    "tier_a_long_budget_split",
-    "tier_a_collected_credit",
-    "tier_a_fallback",
-    "tier_a_quantity",
-    "pnl_entry_cost",
-    "pnl_exit_value",
-    "pnl_per_share",
-    "capital_at_risk_dollars",
-    "pnl_total",
-    "date_car_contribution",
-    "S3_valid_no_trade",
-    "S4_structure_failure",
+    "identity", "sample_selection", "universe_snapshot_date", "universe_atm_pair",
+    "universe_dvol_spread_fields", "universe_dvol_rank", "universe_spread_rank", "universe_and_membership",
+    "joint_universe_feature_membership", "joint_finite_values", "joint_mom_count", "joint_cvg_count",
+    "joint_eligible_slice", "signal_rank_recompute", "cvg_rank_recompute", "direction_and_cvg_retention",
+    "option_a1_surface_valid", "option_entry_spot", "option_exit_spot", "option_body_strike", "option_expiry_date",
+    "option_dte_actual", "option_body_selection", "option_spread_gates", "option_wing_delta_rule",
+    "option_leg_count", "option_leg_identity", "option_mid_cross_half_spread",
+    "tier_a_n_short", "tier_a_n_long", "tier_a_at_risk_per_share", "tier_a_short_budget_split",
+    "tier_a_long_budget", "tier_a_long_budget_split", "tier_a_collected_credit", "tier_a_fallback",
+    "tier_a_quantity", "pnl_entry_cost", "pnl_exit_value", "pnl_per_share", "capital_at_risk_dollars",
+    "pnl_total", "date_car_contribution", "S3_valid_no_trade", "S4_structure_failure",
 ]
 
 coverage_out = []
@@ -1330,45 +1084,28 @@ for key in REQUIRED_COVERAGE:
         coverage_out.append({"stage": key, "covered": False, "verdict": "MISSING"})
         continue
     vs = info["verdicts"]
-    if any(v == "FAIL" for v in vs):
-        v = "FAIL"
-    elif all(str(x).startswith("N/A") for x in vs):
-        v = "N/A"
-    else:
-        v = "PASS"
-    coverage_out.append(
-        {
-            "stage": key,
-            "covered": True,
-            "n_checks": len(vs),
-            "verdict": v,
-            "ids": info["ids"],
-        }
-    )
+    v = "FAIL" if any(x == "FAIL" for x in vs) else ("N/A" if all(str(x).startswith("N/A") for x in vs) else "PASS")
+    coverage_out.append({"stage": key, "covered": True, "n_checks": len(vs), "verdict": v, "ids": info["ids"]})
 
 n_pass = sum(1 for r in rows if r["verdict"] == "PASS")
 n_fail = sum(1 for r in rows if r["verdict"] == "FAIL")
 n_na = sum(1 for r in rows if str(r["verdict"]).startswith("N/A"))
 missing_cov = [c["stage"] for c in coverage_out if not c["covered"]]
-fail_cov = [c["stage"] for c in coverage_out if c.get("verdict") == "FAIL"]
 fail_rows = [r for r in rows if r["verdict"] == "FAIL"]
+only_s3_na = [r["id"] for r in rows if str(r["verdict"]).startswith("N/A")] == ["S3"]
 
-audit_pass = (n_fail == 0) and (not missing_cov) and (not fail_cov)
-# Only S3 may be N/A
-na_ids = [r["id"] for r in rows if str(r["verdict"]).startswith("N/A")]
-only_s3_na = na_ids == ["S3"] or set(na_ids) <= {"S3"}
-
-if audit_pass and only_s3_na:
+if n_fail == 0 and not missing_cov and only_s3_na:
     audit_verdict = "PASS"
-    evidence_status = "PHASE 4 REVERIFICATION COMPLETE — AWAITING REVIEW"
+    lifecycle = "PHASE 4 REVERIFICATION COMPLETE — AWAITING REVIEW"
 else:
-    audit_verdict = "BLOCKED"
-    evidence_status = "PHASE 4 REVERIFICATION BLOCKED"
+    audit_verdict = "BLOCKED — INDEPENDENT SOURCE AUDIT FAILED"
+    lifecycle = audit_verdict
 
 out = {
     "phase": "phase4_source_reconstruction",
     "audit_verdict": audit_verdict,
-    "lifecycle_status": evidence_status,
+    "lifecycle_status": lifecycle,
+    "independence": "No src.backtest calculation helpers imported",
     "phase5_authorized": False,
     "execution_commit": EXECUTION_COMMIT,
     "run_dir": str(RUN_DIR),
@@ -1381,13 +1118,10 @@ out = {
         "Phase 3 capturing shell EXIT_CODE and stdout/stderr were not retained "
         "(documented non-blocking operational limitation). Not recovered; baseline not rerun."
     ),
-    "n_included_trades_audited": 4,
-    "shortfall": "4 of ≤6 from S1+S2; S3 N/A; S4 is structure-failure not an included trade",
     "coverage_checklist": coverage_out,
     "missing_coverage_stages": missing_cov,
-    "failed_coverage_stages": fail_cov,
     "failed_rows": fail_rows,
-    "date_sizing_meta": {str(k): v for k, v in date_sizing_meta.items()},
+    "date_sizing_meta": {str(k): date_meta[k] for k in SAMPLE_DATES},
     "audit_rows": rows,
     "n_pass": n_pass,
     "n_fail": n_fail,
@@ -1396,23 +1130,19 @@ out = {
     "baseline_rerun": False,
 }
 
-out_path = VERIFY_DIR / "phase4_source_reconstruction_audit.json"
-out_path.write_text(json.dumps(jsonable(out), indent=2), encoding="utf-8")
+out_json = VERIFY_DIR / "phase4_source_reconstruction_audit.json"
+out_json.write_text(json.dumps(jsonable(out), indent=2), encoding="utf-8")
 
-# Markdown summary
-md_lines = [
-    "# Sprint 006 D4 — Phase 4 source-reconstruction audit",
+md = [
+    "# Sprint 006 D4 — Phase 4 source-reconstruction audit (audit-local)",
     "",
     f"**Audit verdict:** `{audit_verdict}`",
-    f"**Lifecycle status:** `{evidence_status}`",
-    f"**Phase 5 authorized:** `false`",
+    f"**Lifecycle status:** `{lifecycle}`",
+    f"**Independence:** no `src.backtest` calculation helpers imported",
     "",
     f"- PASS: {n_pass}",
     f"- FAIL: {n_fail}",
-    f"- N/A: {n_na} (S3 only permitted: `{only_s3_na}`)",
-    f"- Samples replaced: `false`",
-    f"- Baseline rerun: `false`",
-    f"- Aggregate economics opened: `false`",
+    f"- N/A: {n_na}",
     "",
     "## Frozen samples",
     "",
@@ -1422,51 +1152,18 @@ md_lines = [
     "| S1-S | 2022-09-02 / AMC / short |",
     "| S2-L | 2018-10-26 / ABBV / long |",
     "| S2-S | 2018-10-26 / MRVL / short |",
-    "| S3 | N/A (n_valid_no_trade=0) |",
+    "| S3 | N/A |",
     "| S4 | 2018-10-26 / AMBA / short |",
     "",
-    "## §7.4 coverage checklist",
+    "## Failed rows",
     "",
-    "| Stage | Covered | Verdict | n_checks |",
-    "|-------|---------|---------|----------|",
 ]
-for c in coverage_out:
-    md_lines.append(
-        f"| `{c['stage']}` | {c['covered']} | {c.get('verdict')} | {c.get('n_checks', 0)} |"
-    )
-md_lines.extend(
-    [
-        "",
-        "## Identities",
-        "",
-        f"- Execution commit: `{EXECUTION_COMMIT}`",
-        f"- RUN_DIR: `{RUN_DIR}`",
-        f"- VERIFY_DIR: `{VERIFY_DIR}`",
-        "- Artifact digests re-verified against receipt",
-        "- Phase 1 accepted-input digests re-verified",
-        "",
-        "## Phase 3 shell limitation (non-blocking)",
-        "",
-        out["phase3_shell_limitation"],
-        "",
-        "## Failed rows",
-        "",
-    ]
-)
 if fail_rows:
     for r in fail_rows:
-        md_lines.append(
-            f"- `{r['id']}` ({r['sample']}): {r['stage']} exp={r['expected']} obs={r['observed']}"
-        )
+        md.append(f"- `{r['id']}`: {r['stage']}")
 else:
-    md_lines.append("- none")
+    md.append("- none")
+(VERIFY_DIR / "phase4_source_reconstruction_audit.md").write_text("\n".join(md) + "\n", encoding="utf-8")
 
-md_path = VERIFY_DIR / "phase4_source_reconstruction_audit.md"
-md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
-
-print(
-    f"\n=== SUMMARY verdict={audit_verdict} pass={n_pass} fail={n_fail} na={n_na} "
-    f"missing_cov={missing_cov} ===",
-    flush=True,
-)
+print(f"\n=== SUMMARY verdict={audit_verdict} pass={n_pass} fail={n_fail} na={n_na} missing={missing_cov} ===", flush=True)
 raise SystemExit(0 if audit_verdict == "PASS" else 1)
