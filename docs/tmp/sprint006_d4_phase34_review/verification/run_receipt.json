@@ -1,0 +1,207 @@
+{
+  "deliverable": "sprint006_d3",
+  "experiment_id": "sprint006_baseline_v1",
+  "generated_utc": "2026-08-23T23:41:49+00:00",
+  "command": [
+    "run_sprint006_baseline.py",
+    "--contract",
+    "configs/sprint006_baseline_v1.json",
+    "--output-dir",
+    "C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z"
+  ],
+  "repo_sha": "e205b9acc5d0400aa38169de721acb7fb8268f29",
+  "result_complete": true,
+  "has_unresolved_failures": false,
+  "contract": {
+    "path": "C:\\MomentumCVG\\configs\\sprint006_baseline_v1.json",
+    "sha256": "4012b4a472448004e1a1b14e8814f506911ea0e263e35157b4e13e27ed51a54c",
+    "contract_id": "sprint006_baseline_v1",
+    "contract_version": 1,
+    "status": "accepted"
+  },
+  "accepted_inputs": {
+    "a1_surface_meta": "C:\\MomentumCVG_env\\snapshots\\20260724T045049097520Z_40b16886\\cache\\surface\\option_surface_meta_weekly_2018_2026.parquet",
+    "a2_surface_quotes": "C:\\MomentumCVG_env\\snapshots\\20260724T045049097520Z_40b16886\\cache\\surface\\option_surface_quotes_weekly_2018_2026.parquet",
+    "baseline_feature_file": "C:\\MomentumCVG_env\\derived\\e2c1f8fd44d72176\\features\\features_42_8.parquet",
+    "d3_receipt": "C:\\MomentumCVG_env\\derived\\e2c1f8fd44d72176\\features_backfill_v1.lineage.json",
+    "earnings_path": null,
+    "features_dir": "C:\\MomentumCVG_env\\derived\\e2c1f8fd44d72176\\features",
+    "liquidity_panel": "C:\\MomentumCVG_env\\snapshots\\20260724T045049097520Z_40b16886\\input\\liquidity\\ticker_liquidity_panel.parquet",
+    "manifest": "C:\\MomentumCVG_env\\snapshots\\20260724T045049097520Z_40b16886\\manifests\\input_snapshot_e2c1f8fd44d72176.json"
+  },
+  "runs": [
+    {
+      "run_id": "sprint006_baseline_v1_mid",
+      "fill_label": "mid",
+      "effective_config": {
+        "run_id": "sprint006_baseline_v1_mid",
+        "momentum_col": "mom_42_8_mean",
+        "cvg_col": "cvg_42_8",
+        "count_col": "mom_42_8_count",
+        "min_count_pct": 0.8,
+        "long_top_pct": 0.1,
+        "short_bottom_pct": 0.1,
+        "cvg_filter_pct": 0.5,
+        "dvol_top_pct": 0.2,
+        "spread_bottom_pct": 1.0,
+        "short_structure": "ironfly",
+        "wing_selection_rule": "closest_delta",
+        "wing_delta_target": 0.15,
+        "max_names_per_side": 25,
+        "max_loss_budget_per_trade": 500.0,
+        "earnings_exclusion_days": 0,
+        "cost_model": "mid",
+        "start_date": "2018-10-26",
+        "end_date": "2026-07-10",
+        "fill": {
+          "buy_alpha": 0.5,
+          "sell_alpha": 0.5,
+          "label": "mid"
+        },
+        "cvg_count_col": "cvg_count_42_8",
+        "max_leg_spread_pct": 0.5,
+        "max_spread_cost_ratio": null,
+        "condor_short_delta_target": null,
+        "condor_long_delta_target": null,
+        "include_diagnostics": true,
+        "sizing_mode": "conceptual",
+        "tier_a_mode": "equal_max_loss",
+        "tier_a_short_budget": 10000.0,
+        "tier_a_long_budget": 10000.0,
+        "tier_b_short_max_loss_budget": null,
+        "contract_multiplier": 100.0,
+        "deployable_capital": null
+      },
+      "outputs": {
+        "candidate_view": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\candidate_view_sprint006_baseline_v1_mid.parquet",
+          "sha256": "60be70ea409ed2c2f6d2856eee0368348390e5b037db414f68453af337b7bc57"
+        },
+        "date_status": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\date_status_sprint006_baseline_v1_mid.parquet",
+          "sha256": "d150217e2b5eae8f845d34c75a8cdb3c59103def3633093078b67dd4ddf13b4c"
+        },
+        "date_summary": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\date_summary_sprint006_baseline_v1_mid.parquet",
+          "sha256": "d5c989127525d5c646cea3c3765c945b648c9d7836339143acb5f32faf3126dd"
+        },
+        "funnel_summary": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\funnel_summary_sprint006_baseline_v1_mid.parquet",
+          "sha256": "38fc55b84c463d58680a19ac1cffcee5dc9e150ca57cf129a1345c8b24eea8f2"
+        },
+        "leg_log": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\leg_log_sprint006_baseline_v1_mid.parquet",
+          "sha256": "5108cd1a39b2ebebde7a8b3f4e13e1a0965232097d10e7b07ddad7e91a23794f"
+        },
+        "run_summary": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\run_summary_sprint006_baseline_v1_mid.json",
+          "sha256": "571da0c02573329383252db9b58792c9e98b3b4f91f29789ee83c6b23faaeee1"
+        },
+        "trade_log": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\trade_log_sprint006_baseline_v1_mid.parquet",
+          "sha256": "9c42aa2c45521a8b54488a222105025c69f145bcdd9add8364b4622b31394e73"
+        }
+      },
+      "n_expected_dates": 403,
+      "n_traded_dates": 403,
+      "n_valid_no_trade_dates": 0,
+      "n_failed_dates": 0,
+      "has_unresolved_failures": false,
+      "n_feature_dates_absent_from_a1": 0,
+      "feature_dates_absent_from_a1": []
+    },
+    {
+      "run_id": "sprint006_baseline_v1_cross",
+      "fill_label": "cross",
+      "effective_config": {
+        "run_id": "sprint006_baseline_v1_cross",
+        "momentum_col": "mom_42_8_mean",
+        "cvg_col": "cvg_42_8",
+        "count_col": "mom_42_8_count",
+        "min_count_pct": 0.8,
+        "long_top_pct": 0.1,
+        "short_bottom_pct": 0.1,
+        "cvg_filter_pct": 0.5,
+        "dvol_top_pct": 0.2,
+        "spread_bottom_pct": 1.0,
+        "short_structure": "ironfly",
+        "wing_selection_rule": "closest_delta",
+        "wing_delta_target": 0.15,
+        "max_names_per_side": 25,
+        "max_loss_budget_per_trade": 500.0,
+        "earnings_exclusion_days": 0,
+        "cost_model": "mid",
+        "start_date": "2018-10-26",
+        "end_date": "2026-07-10",
+        "fill": {
+          "buy_alpha": 1.0,
+          "sell_alpha": 1.0,
+          "label": "cross"
+        },
+        "cvg_count_col": "cvg_count_42_8",
+        "max_leg_spread_pct": 0.5,
+        "max_spread_cost_ratio": null,
+        "condor_short_delta_target": null,
+        "condor_long_delta_target": null,
+        "include_diagnostics": true,
+        "sizing_mode": "conceptual",
+        "tier_a_mode": "equal_max_loss",
+        "tier_a_short_budget": 10000.0,
+        "tier_a_long_budget": 10000.0,
+        "tier_b_short_max_loss_budget": null,
+        "contract_multiplier": 100.0,
+        "deployable_capital": null
+      },
+      "outputs": {
+        "candidate_view": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\candidate_view_sprint006_baseline_v1_cross.parquet",
+          "sha256": "935cc73388ba5abbbd0e89c747c1ea5d56f271114d88e5503bb8a54065686815"
+        },
+        "date_status": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\date_status_sprint006_baseline_v1_cross.parquet",
+          "sha256": "d150217e2b5eae8f845d34c75a8cdb3c59103def3633093078b67dd4ddf13b4c"
+        },
+        "date_summary": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\date_summary_sprint006_baseline_v1_cross.parquet",
+          "sha256": "3e8e33c7b6fb7dfa522a2b4b8ca2b7643131bf95c252ca0c48bd2b9ef602fc61"
+        },
+        "funnel_summary": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\funnel_summary_sprint006_baseline_v1_cross.parquet",
+          "sha256": "504ac70f51e1e32773b6ece4a957fa38c0044414c31a5ca7be15717bf5dc2e4e"
+        },
+        "leg_log": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\leg_log_sprint006_baseline_v1_cross.parquet",
+          "sha256": "07a2568ba24006cf3ff1baa02029e4920958c45964ea4eba241e37a183337f6d"
+        },
+        "run_summary": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\run_summary_sprint006_baseline_v1_cross.json",
+          "sha256": "94176b7c5f8ef509a9c4103332b8faf7c62f425cf0f46bbd5451a8c2c2fabdbb"
+        },
+        "trade_log": {
+          "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\trade_log_sprint006_baseline_v1_cross.parquet",
+          "sha256": "3894ab2f8fdaf8372b0f3007dabddeaf1aa3a726bb43cf62b58339d638955fb5"
+        }
+      },
+      "n_expected_dates": 403,
+      "n_traded_dates": 403,
+      "n_valid_no_trade_dates": 0,
+      "n_failed_dates": 0,
+      "has_unresolved_failures": false,
+      "n_feature_dates_absent_from_a1": 0,
+      "feature_dates_absent_from_a1": []
+    }
+  ],
+  "decision_report": {
+    "decision_report_json": {
+      "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\decision_report.json",
+      "sha256": "8150885854adb7e0454b068ab0a89590fff48b9f6ec96b0f89d60e66980d3b37"
+    },
+    "decision_report_md": {
+      "path": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z\\decision_report.md",
+      "sha256": "18ea6421985c99fe20f0f9d0a1589ce20a6554943e39e2930a8268ad7f372fb8"
+    }
+  },
+  "deferred": [
+    "real-data smoke, manual trade sample, and full-history execution (D4)"
+  ]
+}

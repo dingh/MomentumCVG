@@ -1,0 +1,236 @@
+{
+  "phase": "phase4_v1_v20",
+  "execution_commit": "e205b9acc5d0400aa38169de721acb7fb8268f29",
+  "run_dir": "C:\\MomentumCVG_env\\runs\\sprint006_baseline_v1_20260823T204430Z",
+  "n_a1": 403,
+  "median_date": "2022-09-02",
+  "start_utc_reconstructed": "2026-08-23T20:44:30+00:00",
+  "end_utc_from_receipt": "2026-08-23T23:41:49+00:00",
+  "results": [
+    {
+      "check": "V-1",
+      "verdict": "PASS",
+      "expected": true,
+      "observed": true,
+      "source": "receipt",
+      "detail": ""
+    },
+    {
+      "check": "V-2",
+      "verdict": "PASS",
+      "expected": false,
+      "observed": false,
+      "source": "receipt",
+      "detail": ""
+    },
+    {
+      "check": "V-3",
+      "verdict": "PASS",
+      "expected": 0,
+      "observed": "0",
+      "source": "receipt+date_status",
+      "detail": ""
+    },
+    {
+      "check": "V-4",
+      "verdict": "PASS",
+      "expected": 403,
+      "observed": [
+        403,
+        403
+      ],
+      "source": "receipt+A1",
+      "detail": ""
+    },
+    {
+      "check": "V-5/mid",
+      "verdict": "PASS",
+      "expected": "n=403",
+      "observed": "n=403 [2018-10-26..2026-07-10]",
+      "source": "date_status",
+      "detail": ""
+    },
+    {
+      "check": "V-6/mid",
+      "verdict": "PASS",
+      "expected": "[2018-10-26,2026-07-10]",
+      "observed": "[2018-10-26,2026-07-10]",
+      "source": "date_status",
+      "detail": ""
+    },
+    {
+      "check": "V-5/cross",
+      "verdict": "PASS",
+      "expected": "n=403",
+      "observed": "n=403 [2018-10-26..2026-07-10]",
+      "source": "date_status",
+      "detail": ""
+    },
+    {
+      "check": "V-6/cross",
+      "verdict": "PASS",
+      "expected": "[2018-10-26,2026-07-10]",
+      "observed": "[2018-10-26,2026-07-10]",
+      "source": "date_status",
+      "detail": ""
+    },
+    {
+      "check": "V-7",
+      "verdict": "PASS",
+      "expected": "recorded",
+      "observed": "sprint006_baseline_v1_mid:absent=0; sprint006_baseline_v1_cross:absent=0",
+      "source": "receipt",
+      "detail": ""
+    },
+    {
+      "check": "V-8",
+      "verdict": "PASS",
+      "expected": "17",
+      "observed": "n=17 miss=[] extra=[]",
+      "source": "listing",
+      "detail": ""
+    },
+    {
+      "check": "V-9",
+      "verdict": "PASS",
+      "expected": [
+        "by_fill",
+        "concentration_primary_cross_top5",
+        "contract_id",
+        "experiment_id",
+        "fill_assumption_sensitivity",
+        "fills",
+        "has_unresolved_failures",
+        "limitations",
+        "repo_sha",
+        "result_complete",
+        "windows"
+      ],
+      "observed": "issues=[] top=['by_fill', 'concentration_primary_cross_top5', 'contract_id', 'experiment_id', 'fill_assumption_sensitivity', 'fills', 'has_unresolved_failures', 'limitations', 'repo_sha', 'result_complete', 'windows'] n_paths=607",
+      "source": "schemas+key walk",
+      "detail": ""
+    },
+    {
+      "check": "V-10",
+      "verdict": "PASS",
+      "expected": "all non-receipt files match receipt sha",
+      "observed": "matched=16 issues=[]",
+      "source": "hash vs receipt",
+      "detail": ""
+    },
+    {
+      "check": "V-11",
+      "verdict": "PASS",
+      "expected": "e205b9acc5d0400aa38169de721acb7fb8268f29",
+      "observed": "e205b9acc5d0400aa38169de721acb7fb8268f29",
+      "source": "receipt",
+      "detail": ""
+    },
+    {
+      "check": "V-12",
+      "verdict": "PASS",
+      "expected": "4012b4a472448004\u2026",
+      "observed": "sha=4012b4a472448004\u2026 id=sprint006_baseline_v1 v=1 st=accepted",
+      "source": "receipt.contract",
+      "detail": ""
+    },
+    {
+      "check": "V-13",
+      "verdict": "PASS",
+      "expected": "receipt paths match \u00a72.2; earnings null; no mutable cache",
+      "observed": "issues=[] earnings=None keys=['a1_surface_meta', 'a2_surface_quotes', 'baseline_feature_file', 'd3_receipt', 'earnings_path', 'features_dir', 'liquidity_panel', 'manifest']",
+      "source": "receipt.accepted_inputs",
+      "detail": ""
+    },
+    {
+      "check": "V-14",
+      "verdict": "PASS",
+      "expected": "Phase1 digests",
+      "observed": "all 7 match",
+      "source": "\u00a71.6 rerun",
+      "detail": ""
+    },
+    {
+      "check": "V-15",
+      "verdict": "PASS",
+      "expected": "ids+deliverable=d3 expected",
+      "observed": "exp=sprint006_baseline_v1 runs=['sprint006_baseline_v1_mid', 'sprint006_baseline_v1_cross'] deliv=sprint006_d3",
+      "source": "receipt",
+      "detail": ""
+    },
+    {
+      "check": "V-16",
+      "verdict": "PASS",
+      "expected": "17 files; mtimes in window",
+      "observed": "n=17 mtime_issues=[]",
+      "source": "listing+mtime",
+      "detail": ""
+    },
+    {
+      "check": "V-17/mid",
+      "verdict": "PASS",
+      "expected": "monotone+splits",
+      "observed": "issues=0",
+      "source": "funnel",
+      "detail": ""
+    },
+    {
+      "check": "V-17/cross",
+      "verdict": "PASS",
+      "expected": "monotone+splits",
+      "observed": "issues=0",
+      "source": "funnel",
+      "detail": ""
+    },
+    {
+      "check": "V-18/mid",
+      "verdict": "PASS",
+      "expected": "2/4 legs, no orphans",
+      "observed": "n_included=10486 bad_n=0 bad_idx=0 orphans=0",
+      "source": "independent",
+      "detail": ""
+    },
+    {
+      "check": "V-19/mid",
+      "verdict": "PASS",
+      "expected": "4 identities",
+      "observed": "n_included=10486 n_bad_identity_cells=0",
+      "source": "independent",
+      "detail": ""
+    },
+    {
+      "check": "V-18/cross",
+      "verdict": "PASS",
+      "expected": "2/4 legs, no orphans",
+      "observed": "n_included=10486 bad_n=0 bad_idx=0 orphans=0",
+      "source": "independent",
+      "detail": ""
+    },
+    {
+      "check": "V-19/cross",
+      "verdict": "PASS",
+      "expected": "4 identities",
+      "observed": "n_included=10486 n_bad_identity_cells=0",
+      "source": "independent",
+      "detail": ""
+    },
+    {
+      "check": "V-20/mid",
+      "verdict": "PASS",
+      "expected": "consistent",
+      "observed": "ok",
+      "source": "cand+trade",
+      "detail": ""
+    },
+    {
+      "check": "V-20/cross",
+      "verdict": "PASS",
+      "expected": "consistent",
+      "observed": "ok",
+      "source": "cand+trade",
+      "detail": ""
+    }
+  ],
+  "n_pass": 26,
+  "n_fail": 0
+}
