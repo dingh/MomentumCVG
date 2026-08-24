@@ -74,6 +74,8 @@ These remain useful for Sprint 001 gap history. They are **not** active specific
 | 005 (D4) | [Feature quality audit evidence](sprint_memos/sprint005_d4_quality_audit_evidence.md) |
 | 005 (D5) | [SurfaceRunner consumer smoke evidence](sprint_memos/sprint005_d5_surface_runner_smoke_evidence.md) |
 | 005 | [Sprint 005 closeout](sprint_memos/005_closeout.md) _(CLOSED 2026-08-09 — accepted with documented limitations)_ |
+| 006 (D4) | [Baseline execution evidence](sprint_memos/sprint006_d4_baseline_execution_evidence.md) _(Phase 4 evidence; technical record)_ |
+| 006 | [Sprint 006 closeout](sprint_memos/006_closeout.md) _(CLOSED 2026-08-24 — evidence accepted; frozen 42:8 economics weak/negative; hypothesis rejected/deferred)_ |
 | — | [Week 0 review notes](sprint_memos/week0_review_notes.md) _(archived from agenda)_ |
 
 ## Related (repo root)

@@ -1,8 +1,8 @@
 # Baseline status
 
 **Status:** Active
-**Last recorded:** 2026-08-09 (Sprint 005 closeout documentation sync)
-**Sprint 005 status:** `CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`
+**Last recorded:** 2026-08-24 (Sprint 006 closeout documentation sync)
+**Sprint 006 status:** `CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE; HYPOTHESIS REJECTED/DEFERRED`
 
 ---
 
@@ -21,15 +21,24 @@
 | Item | Value |
 |------|-------|
 | Command | `& C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest -q` |
+| Full suite | **1597 passed**, 1 skipped |
+| Focused Sprint 006 subset | **332 passed** |
+| Tested baseline / execution commit | `e205b9acc5d0400aa38169de721acb7fb8268f29` |
+| Verification date | 2026-08-23 (Sprint 006 D4 Phase 1 gate) |
+| Source | [sprint_memos/006_closeout.md](sprint_memos/006_closeout.md) §14; [tmp/sprint006_d4_phase12_checkpoint.md](tmp/sprint006_d4_phase12_checkpoint.md) |
+
+The suite was executed at execution commit `e205b9a` **before** the official baseline run and Sprint 006 closeout documentation commits. This file syncs that accepted Phase 1 result; it does **not** claim a new test run at closeout.
+
+### Historical (Sprint 005 closeout gate)
+
+| Item | Value |
+|------|-------|
+| Command | `& C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest -q` |
 | Result | **1494 passed**, 1 skipped |
 | Duration | `44.14s` |
-| Exit code | `0` |
-| Tested code baseline | `38920791de89a65b05a20985461b0eb1f37317d9` (`docs: record D5 SurfaceRunner consumer smoke`) |
-| Closeout commit | `c6929d308ea072459ed9e9e8ffcdc92e6c1dd1ae` (`docs: close Sprint 005`; documentation-only) |
-| Verification date | 2026-08-09 |
+| Tested code baseline | `38920791de89a65b05a20985461b0eb1f37317d9` |
+| Date | 2026-08-09 |
 | Source | [sprint_memos/005_closeout.md](sprint_memos/005_closeout.md) |
-
-The suite was executed against baseline `3892079` **before** the documentation-only closeout commit `c6929d3`. This file syncs that accepted result; it does **not** claim a new test run against `c6929d3`.
 
 ### Historical (Sprint 004 closeout gate)
 
@@ -50,6 +59,8 @@ C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_fetch_split
 Accepted production snapshot (C8.5): `C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886` — see [sprint_memos/004_closeout.md](sprint_memos/004_closeout.md). Mutable producer root `C:/MomentumCVG_env/input/adjusted_liquid` is for rebuild/repair only ([sprint_memos/004_c5_adjusted_liquid.md](sprint_memos/004_c5_adjusted_liquid.md)).
 
 Accepted Sprint 005 features: `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/features/` — see [sprint_memos/005_closeout.md](sprint_memos/005_closeout.md).
+
+Sprint 006 official economic run: `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` — see [sprint_memos/006_closeout.md](sprint_memos/006_closeout.md).
 
 No integration or end-to-end economic backtest smoke test in CI yet.
 
@@ -82,6 +93,16 @@ python scripts/run_surface_search.py `
 
 **Status:** Not an accepted Sprint 005 economic gate. D5 proved one-date consumability only ([sprint005_d5_surface_runner_smoke_evidence.md](sprint_memos/sprint005_d5_surface_runner_smoke_evidence.md)).
 
+### Sprint 006 frozen baseline (accepted path)
+
+```powershell
+& C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint006_baseline.py `
+  --contract configs/sprint006_baseline_v1.json `
+  --output-dir C:/MomentumCVG_env/runs/<new_run_dir>
+```
+
+**Status:** Accepted execution path for the frozen contract. Sprint 006 closeout recorded one official run; do not retune the contract after P&L ([006_closeout.md](sprint_memos/006_closeout.md)).
+
 ### Legacy backtest
 
 ```powershell
@@ -96,8 +117,8 @@ python scripts/run_backtest.py configs/baseline_sp500.json
 
 - `BacktestEngineV2.run()` not implemented
 - No automated economic backtest smoke in test suite
-- Sprint 006 economic backtesting requires separate authorization
 - v1 portfolio caps (max-loss budget, sector cap) not fully pinned in code
+- Sprint 006 frozen `42:8` hypothesis rejected/deferred under cross fills — see [006_closeout.md](sprint_memos/006_closeout.md)
 
 ---
 
@@ -110,3 +131,4 @@ python scripts/run_backtest.py configs/baseline_sp500.json
 | 2026-07-04 | C5 closeout: adjusted-liquid path constants + audit regression subset documented |
 | 2026-07-26 | Sprint 004 closeout gate: 1321 passed, 1 skipped |
 | 2026-08-09 | Sync accepted Sprint 005 closeout baseline: 1494 passed, 1 skipped in 44.14s at `3892079`; closeout docs commit `c6929d3` (no new suite run claimed) |
+| 2026-08-24 | Sync Sprint 006 closeout: Phase 1 gate at `e205b9a` — 1597 passed / 1 skipped full suite, 332 passed focused subset (no new suite run claimed at closeout) |

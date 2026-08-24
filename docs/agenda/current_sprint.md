@@ -1,11 +1,10 @@
 # Current sprint — 006
 
 **Updated:** 2026-08-24
-**Status:** `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 PHASE 4 ACCEPTED; PHASE 5 ECONOMIC REVIEW COMPLETE — AWAITING REVIEW`
-**Mode:** Build. D0–D3 accepted as before. **D4 Phase 4 accepted** through independent source audit `326e13d`. **Phase 5 economic review complete** — aggregate economics opened only from the accepted official report at `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` (`decision_report.json` authoritative). Review checkpoint: [`docs/tmp/sprint006_d4_phase5_economic_review.md`](../tmp/sprint006_d4_phase5_economic_review.md). Proposed characterization **`WEAK/NEGATIVE`** and proposed recommendation **reject/defer the economic hypothesis** — both **pending review**. Do not mark the sprint closed.
+**Status:** `CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE; HYPOTHESIS REJECTED/DEFERRED`
+**Mode:** Closed. **Evidence verdict:** `ACCEPTED`. **Economic characterization:** `WEAK/NEGATIVE`. **Recommendation:** reject/defer this frozen `42:8` economic hypothesis. Closeout: [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md). D4 evidence: [`docs/sprint_memos/sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md). Official run: `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` at execution commit `e205b9a`. Sprint 007 is **not** authorized by this closeout.
 **Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`)
 **D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (design commit `1cdfad7`; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
-**D0 plan:** [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md) (`ACCEPTED — D0 COMPLETE`)
 
 **Architecture (006):** end-to-end acceptance of the canonical **single-configuration** Surface path (`SurfaceRunner.run_single_config`) on the frozen D0 baseline—not a search platform. D1 hardens that path (any new command = thin contract adapter only). Sprint 007 may reuse the accepted runner/result schema for a bounded preregistered study; it must not retune the 006 baseline or add a separate economic execution path.
 
@@ -39,8 +38,8 @@ Do not reopen or redesign accepted Sprint 004/005 work.
 ```text
 Sprint 004: trusted immutable input snapshot          ← CLOSED
 Sprint 005: trusted full-history weekly Mom/CVG        ← CLOSED
-Sprint 006: first trusted real-data economic backtest  ← THIS SPRINT (D4 Phase 4 accepted; Phase 5 economic review complete — awaiting review)
-Sprint 007: bounded robustness (only after 006 trusted)
+Sprint 006: first trusted real-data economic backtest  ← CLOSED ([`006_closeout.md`](../sprint_memos/006_closeout.md))
+Sprint 007: not authorized by Sprint 006 closeout
 ```
 
 ---
@@ -100,27 +99,27 @@ Design each deliverable immediately before implementing it. **D0** freezes every
 
 ### D0 — Baseline experiment contract — **COMPLETE**
 
-Frozen in [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json). Plan: [`docs/tmp/sprint006_d0_baseline_experiment_contract_plan.md`](../tmp/sprint006_d0_baseline_experiment_contract_plan.md).
+Frozen in [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json). Record: [`006_closeout.md`](../sprint_memos/006_closeout.md) §2.
 
 ### D1 — Trusted baseline runner — **ACCEPTED — COMPLETE**
 
-Design and implementation record: [`docs/tmp/sprint006_d1_trusted_baseline_runner_plan.md`](../tmp/sprint006_d1_trusted_baseline_runner_plan.md) (`ACCEPTED — D1 COMPLETE`). Accepted implementation: `241b0d3` + review fix `c6b1735`. Scope remains D1 only; D2–D4 limitations stay deferred. No accepted real-data economic backtest or aggregate P&L was run or reviewed in D1.
+Design and implementation record: [`006_closeout.md`](../sprint_memos/006_closeout.md) §2 (`ACCEPTED — D1 COMPLETE`). Accepted implementation: `241b0d3` + review fix `c6b1735`.
 
 Exercise and harden the existing `SurfaceRunner.run_single_config()` path so the frozen D0 twin mid/cross configs run reproducibly from accepted snapshot/derived artifacts, with identity/config recording and fill-pricing verification (no stacked `cost_model` deduction). Any new command must be only a **thin frozen-contract adapter**—not a separate backtest implementation or generalized framework. Repairing or redesigning the parameter-search workflow is deferred unless a shared defect blocks fixed-contract execution.
 
 ### D2 — Eligibility and coverage correctness — **ACCEPTED — COMPLETE**
 
-Plan / implementation record: [`docs/tmp/sprint006_d2_eligibility_coverage_correctness_plan.md`](../tmp/sprint006_d2_eligibility_coverage_correctness_plan.md) (`ACCEPTED — D2 COMPLETE`). Accepted implementation: `9224068` (design `aa72a86`). Joint Mom+CVG count eligibility (`ceil` → 28 for `(42,8)`), A1 expected-date `date_status` accounting, iron-fly all-leg `max_leg_spread_pct`, and thin adapter persistence of `date_status`. Scope remains D2 only; D3–D4 deferred. No accepted real-data economic backtest or aggregate P&L.
+Plan / implementation record: [`006_closeout.md`](../sprint_memos/006_closeout.md) §2 (`ACCEPTED — D2 COMPLETE`). Accepted implementation: `9224068` (design `aa72a86`).
 
 ### D3 — Decision-quality evaluation report — **ACCEPTED — COMPLETE**
 
-Plan: [`docs/tmp/sprint006_d3_decision_diagnostic_report_plan.md`](../tmp/sprint006_d3_decision_diagnostic_report_plan.md) (accepted design `b924330`). **Accepted implementation through `10133f6`** (`361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6`): dual-view metrics; funnel/leg log/integrity checks; candidate view; deterministic `decision_report.json` / `.md`; D3 receipt digests. Accepted scope remains D3 only; D4 (real-data smoke, manual sample, full-history execution, conclusion) stays deferred. No accepted real-data economic backtest or aggregate P&L in D3.
+Record: [`006_closeout.md`](../sprint_memos/006_closeout.md) §2 (accepted design `b924330`). **Accepted implementation through `10133f6`** (`361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6`).
 
-### D4 — Verification, full execution, and closeout — **PHASE 4 ACCEPTED; PHASE 5 ECONOMIC REVIEW COMPLETE — AWAITING REVIEW**
+### D4 — Verification, full execution, and closeout — **CLOSED**
 
-Plan: [`docs/tmp/sprint006_d4_execution_acceptance_plan.md`](../tmp/sprint006_d4_execution_acceptance_plan.md). Evidence: [`docs/sprint_memos/sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md) — **Phase 4 accepted through `326e13d`**.
+Evidence: [`sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md). Closeout: [`006_closeout.md`](../sprint_memos/006_closeout.md).
 
-Official run at execution commit `e205b9a`: `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` (~3h wall; both fills). Phase 4 V-1…V-20 passed; corrected independent §7.4 source audit passed (`184 PASS / 0 FAIL / 1 N/A`; S3=N/A only). **Phase 5:** economics opened from official `decision_report.json` only; review checkpoint [`docs/tmp/sprint006_d4_phase5_economic_review.md`](../tmp/sprint006_d4_phase5_economic_review.md) proposes **`WEAK/NEGATIVE`** and **reject/defer** — pending review. Sprint not closed.
+Official run at execution commit `e205b9a`: `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z`. Phase 4 **ACCEPTED** through `326e13d` (184/0/1 audit). Phase 5: economics **`WEAK/NEGATIVE`**; recommendation **reject/defer** this frozen hypothesis.
 
 Superseded pre-acceptance history remains on record below for audit trail only:
 
@@ -138,24 +137,22 @@ The plan's Phase 2 is now the minimal valid **two-date** window (median `2022-09
 
 Success is evidence quality, not a required Sharpe or positive-return threshold.
 
-- [ ] One frozen baseline runs reproducibly from accepted inputs
-- [ ] The accepted result can be reproduced through one documented command using the recorded inputs and frozen configuration
-- [ ] Input, configuration, code, and output identities are recorded
-- [ ] Joint feature eligibility and complete date handling are verified
-- [ ] Every expected decision date is classified as `traded`, `valid_no_trade`, or `failed`; no date is silently absent, and unresolved failures block acceptance
-- [ ] A small sample of trades is independently checked from signal through settlement and aggregation
-- [ ] Full-history diagnostic (mid) and conservative-fill (cross) runs complete
-- [ ] Final report has enough economic and operational evidence to judge credibility
-- [ ] Result and limitations are documented **without** changing parameters in response to observed P&L
-- [ ] Sprint records a clear recommendation: proceed to bounded Sprint 007 robustness work, investigate a specific defect, or reject/defer the hypothesis
+- [x] One frozen baseline runs reproducibly from accepted inputs — [`006_closeout.md`](../sprint_memos/006_closeout.md) §3, 12; evidence memo §1
+- [x] The accepted result can be reproduced through one documented command using the recorded inputs and frozen configuration — evidence memo §1
+- [x] Input, configuration, code, and output identities are recorded — V-10…V-14; receipt
+- [x] Joint feature eligibility and complete date handling are verified — D2; V-3…V-7, V-17
+- [x] Every expected decision date is classified as `traded`, `valid_no_trade`, or `failed`; no date is silently absent, and unresolved failures block acceptance — 403/403 traded; V-5
+- [x] A small sample of trades is independently checked from signal through settlement and aggregation — §7.4 audit 184/0/1 (`326e13d`)
+- [x] Full-history diagnostic (mid) and conservative-fill (cross) runs complete — official run; 17 artifacts
+- [x] Final report has enough economic and operational evidence to judge credibility — `decision_report.json`
+- [x] Result and limitations are documented **without** changing parameters in response to observed P&L — frozen contract unchanged
+- [x] Sprint records a clear recommendation: proceed to bounded Sprint 007 robustness work, investigate a specific defect, or reject/defer the hypothesis — **reject/defer** ([`006_closeout.md`](../sprint_memos/006_closeout.md) §5)
 
 ---
 
 ## 8. Sprint 007 handoff
 
-Sprint 007 begins only after the Sprint 006 baseline is trusted. It may **reuse** the accepted single-config runner and result schema for a bounded, preregistered candidate study (and related robustness items such as walk-forward correctness or Tier B sizing). It must **not** retrospectively retune the Sprint 006 baseline or introduce a separate economic execution path.
-
-Sprint 006 does **not** pre-build those capabilities.
+Sprint 006 is **closed** ([`006_closeout.md`](../sprint_memos/006_closeout.md)). Sprint 007 is **not** authorized by this closeout. Any future work requires a separately motivated, preregistered experiment — not retuning of the Sprint 006 frozen baseline after these P&L results.
 
 ---
 
@@ -246,4 +243,5 @@ The 12–18 hour budget is a review trigger, not an acceptance condition. A corr
 | 2026-08-23 | **D4 Phases 3–4 executed at `e205b9a`; evidence verdict `ACCEPTED`.** Official twin-fill run → `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` (~3h; 17 artifacts; receipt `result_complete=true`, `repo_sha=e205b9a…`). Phase 4: V-1…V-20 all PASS; S1–S4 all PASS with S3=N/A (zero valid_no_trade). Memo: [`sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md). Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 EXECUTION COMPLETE (EVIDENCE ONLY); PHASE 5 AWAITING REVIEW`. **Phase 5 not started**; no aggregate economics opened or interpreted; no raw artifacts committed. Frozen JSON / production code / tests unchanged. |
 | 2026-08-24 | **Complete §7.4 source-reconstruction reverification (verification-only).** Artifact + Phase 1 input digests re-confirmed unchanged; frozen samples preserved. Expanded audit `PASS` (184 PASS / 0 FAIL / 1 N/A); every required §7.4 coverage stage present. Review bundle + evidence memo addendum §7 updated. Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; PHASE 4 REVERIFICATION COMPLETE — AWAITING REVIEW`. **Phase 5 not authorized**; baseline not rerun; aggregate economics unopened; frozen JSON / production code / tests unchanged. |
 | 2026-08-24 | **D4 Phase 4 accepted after review of `326e13d`.** Corrected independent source audit accepted (`184 PASS / 0 FAIL / 1 N/A`; S3=N/A only; no sample substitution; audit-local verifier). V-1…V-20 acceptance reaffirmed. Phase 3 shell limitation accepted as non-blocking. No baseline rerun or aggregate economics inspection in acceptance. Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 PHASE 4 ACCEPTED; PHASE 5 AUTHORIZED — NOT STARTED`. **Phase 5 not started** in that commit. |
-| 2026-08-24 | **D4 Phase 5 economic review complete — awaiting review.** Economics opened only from official `decision_report.json` at `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` (identity matches accepted run; MD agrees with JSON). Checkpoint: [`sprint006_d4_phase5_economic_review.md`](../tmp/sprint006_d4_phase5_economic_review.md). Proposed characterization **`WEAK/NEGATIVE`**; proposed recommendation **reject/defer the economic hypothesis** — both pending review. Baseline not rerun; Sprint 006 not closed. |
+| 2026-08-24 | **D4 Phase 5 economic review complete — awaiting review.** Economics opened only from official `decision_report.json` at `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z`. Proposed **`WEAK/NEGATIVE`** / **reject/defer** — accepted in closeout. |
+| 2026-08-24 | **Sprint 006 closed.** Evidence **`ACCEPTED`**; economics **`WEAK/NEGATIVE`**; recommendation **reject/defer this frozen `42:8` hypothesis**. Closeout: [`006_closeout.md`](../sprint_memos/006_closeout.md). Five D0–D4 plans + Phase 5 checkpoint deleted from `docs/tmp/` per closeout cleanup. Sprint 007 not authorized. |
