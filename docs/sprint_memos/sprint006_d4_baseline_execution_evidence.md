@@ -148,6 +148,8 @@ Illustrative audit rows (not an economic report):
 
 **Phase 5 remains forbidden until separately authorized.** Aggregate returns, Sharpe, drawdowns, yearly tables, concentration, and report values stay closed.
 
+*(Historical note: this section recorded the initial Phase 4 evidence verdict before §7.4 reverification and final acceptance.)*
+
 ---
 
 ## 7. Addendum — complete §7.4 source-reconstruction reverification
@@ -178,3 +180,25 @@ This addendum does **not** independently re-declare final Phase 4 acceptance. **
 **Phase 3 shell limitation (non-blocking, unchanged):** capturing-shell `EXIT_CODE` and stdout/stderr were not retained and were **not** recovered; the baseline was **not** rerun.
 
 Aggregate economics remained unopened during this reverification.
+
+---
+
+## 8. Phase 4 acceptance (after review of `326e13d`)
+
+**Date:** 2026-08-24 (documentation-only; no baseline rerun; no aggregate economics opened)
+
+**Accepted through:** `326e13de46ab13ddc5f584e0bfc3fb431052fbd2`
+
+**Acceptance record:**
+
+- Phase 4 **accepted** on review of the corrected independent source-reconstruction audit in commit `326e13d`.
+- V-1…V-20: all **PASS** (unchanged from the initial Phase 4 evidence verdict).
+- Corrected independent source audit: **184 PASS / 0 FAIL / 1 N/A** (`phase4_source_reconstruction_audit.json` in the review bundle).
+- **S3** is the only permitted **N/A** (`n_valid_no_trade_dates=0`).
+- Frozen included samples preserved without substitution: S1-L `2022-09-02/ACN/long`, S1-S `2022-09-02/AMC/short`, S2-L `2018-10-26/ABBV/long`, S2-S `2018-10-26/MRVL/short`; S4 `2018-10-26/AMBA/short`.
+- Verifier confirmed **audit-local** — no production calculation helpers from `src.backtest.*`.
+- Phase 3 shell **EXIT_CODE** / stdout / stderr accepted as a documented **non-blocking** operational limitation (not recovered; baseline not rerun).
+
+**Lifecycle status:** `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 PHASE 4 ACCEPTED; PHASE 5 AUTHORIZED — NOT STARTED`
+
+**Phase 5:** Authorized under the existing accepted D4 plan (§8). **Not started** by this acceptance commit. Opening aggregate returns, Sharpe, drawdown, yearly results, attribution, concentration, or `decision_report` values remains for a separate Phase 5 execution step.

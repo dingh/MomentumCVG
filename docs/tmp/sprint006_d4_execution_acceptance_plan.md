@@ -1,7 +1,7 @@
 # Sprint 006 D4 — Execution and acceptance plan
 
-**Status:** `ACCEPTED — PHASE 4 REVERIFICATION COMPLETE — AWAITING REVIEW`
-**Mode:** Build. Phases 1–2 accepted; Phases 3–4 executed at `e205b9a` with evidence verdict `ACCEPTED`. Evidence: [`../sprint_memos/sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md). **Phase 5 is not authorized** by this status — no aggregate economics may be opened until separately accepted.
+**Status:** `ACCEPTED — D4 PHASE 4 ACCEPTED; PHASE 5 AUTHORIZED — NOT STARTED`
+**Mode:** Build. Phases 1–4 accepted through independent source audit `326e13d`. Evidence: [`../sprint_memos/sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md). **Phase 5 is authorized** under §8 of this plan but **not started** by this status — no aggregate economics may be opened until Phase 5 is executed under the blind boundary.
 **Repo HEAD at proposal:** `10133f6c12facae26d818b7e112b94332f5e1e46` (`test(sprint006): verify D3 markdown values`), clean working tree on `main`
 **Accepted D3 implementation:** `361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6` (design `b924330`)
 **Confirmed ancestors:** D0 `1cdfad7`; D1 `241b0d3` + `c6b1735`; D2 `9224068` (acceptance `62bdf38`); D3 design `b924330`
