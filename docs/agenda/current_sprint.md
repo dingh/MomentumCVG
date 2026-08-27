@@ -1,247 +1,226 @@
-# Current sprint — 006
+# Current sprint — 007
 
-**Updated:** 2026-08-24
-**Status:** `CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE; HYPOTHESIS REJECTED/DEFERRED`
-**Mode:** Closed. **Evidence verdict:** `ACCEPTED`. **Economic characterization:** `WEAK/NEGATIVE`. **Recommendation:** reject/defer this frozen `42:8` economic hypothesis. Closeout: [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md). D4 evidence: [`docs/sprint_memos/sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md). Official run: `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` at execution commit `e205b9a`. Sprint 007 is **not** authorized by this closeout.
-**Previous:** Sprint 005 — [`CLOSED — ACCEPTED WITH DOCUMENTED LIMITATIONS`](../sprint_memos/005_closeout.md) (closeout baseline `1517b1b`)
-**D0 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) (design commit `1cdfad7`; SHA-256 of committed LF bytes `3cd57f4dc8cdf8a62af266e529459d88b4f729f369a5fb455fe84621aceef715`)
-
-**Architecture (006):** end-to-end acceptance of the canonical **single-configuration** Surface path (`SurfaceRunner.run_single_config`) on the frozen D0 baseline—not a search platform. D1 hardens that path (any new command = thin contract adapter only). Sprint 007 may reuse the accepted runner/result schema for a bounded preregistered study; it must not retune the 006 baseline or add a separate economic execution path.
+**Updated:** 2026-08-26  
+**Status:** `PROPOSED — AWAITING ACCEPTANCE`  
+**Mode:** **Audit** — agenda and D0 design only. No implementation, new economic run, or granular diagnostic output is authorized yet.  
+**Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](sprint7_shortfall_plan.md) — canonical path; do not duplicate under `docs/tmp/`.  
+**Previous:** Sprint 006 — [`CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE`](../sprint_memos/006_closeout.md)  
+**Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence, not a Sprint 007 starting configuration to edit.
 
 ---
 
 ## 1. Sprint intent
 
-Bridge from trusted historical features to the **first economic backtest result we can genuinely trust**, by accepting the canonical single-configuration Surface execution and evaluation path on the frozen D0 baseline.
+Diagnose the implementation shortfall exposed by Sprint 006 before conducting any signal-window search or strategy retuning.
 
-**Central question:** Does the frozen `42:8` Momentum+CVG signal produce believable economic results on the accepted real dataset after conservative transaction costs?
+Sprint 006 established a trusted result for the frozen `42:8` Momentum+CVG baseline:
 
-A weak or negative strategy result is still a successful Sprint 006 outcome if the evidence is correct and complete. This is not another general infrastructure sprint, and it is **not** a parameter-search sprint.
+- midpoint economics were materially positive;
+- conservative full-cross economics were deeply negative;
+- the same 9,212 primary-window date/ticker/direction keys were included under both fills;
+- fill changes affected both trade economics and portfolio quantities;
+- short iron-fly losses dominated the primary cross result;
+- the official twin-fill full-history run required approximately three hours.
 
----
-
-## 2. Starting point (Sprint 005)
-
-Sprint 005 closed with accepted, lineaged artifacts and a one-date `SurfaceRunner` consumability smoke — not an economic evaluation.
-
-| Input | Identity |
-|-------|----------|
-| Snapshot | `e2c1f8fd44d72176` / build `20260724T045049097520Z_40b16886` |
-| Snapshot root | `C:/MomentumCVG_env/snapshots/20260724T045049097520Z_40b16886` |
-| Derived root | `C:/MomentumCVG_env/derived/e2c1f8fd44d72176/` |
-| Features | Frozen 281-window grid; baseline `(42,8)` ready interval `2018-10-26` → `2026-07-10` |
-| Existing execution path | Canonical: `SurfaceRunner.run_single_config()` → S1→S8 pipeline + surface metrics. The grid-search CLI (`scripts/run_surface_search.py` / `SurfaceSearch`) is **not** the Sprint 006 acceptance path |
-| Sprint 006 D0 baseline | Frozen in `configs/sprint006_baseline_v1.json` — do not retune after P&L |
-
-Do not reopen or redesign accepted Sprint 004/005 work.
-
-```text
-Sprint 004: trusted immutable input snapshot          ← CLOSED
-Sprint 005: trusted full-history weekly Mom/CVG        ← CLOSED
-Sprint 006: first trusted real-data economic backtest  ← CLOSED ([`006_closeout.md`](../sprint_memos/006_closeout.md))
-Sprint 007: not authorized by Sprint 006 closeout
-```
+The Sprint 006 result remains accepted and unchanged. Sprint 007 is not an attempt to rescue it. Sprint 007 asks whether the loss between apparent gross economics and implementable economics is selectively avoidable, structurally reducible, fundamental to the current implementation, or unresolved without execution evidence.
 
 ---
 
-## 3. Agenda-level decisions (fixed for this sprint)
+## 2. Central question
 
-These are locked at the agenda level. Exact numeric values and detailed economic rules are frozen in **D0** (see contract above) before any new P&L is inspected:
+> For the frozen `42:8` selected option book, where does the midpoint-to-cross implementation shortfall come from, how much implementation cost can the apparent gross margin tolerate, and what single next action is justified by the evidence?
 
-* One fixed `42:8` Momentum+CVG baseline — not a parameter search
-* Accepted Sprint 005 feature and surface artifacts as inputs
-* Weekly option positions held to expiration
-* Long ATM straddles; short iron flies
-* Diagnostic mid-price results **and** conservative cross-price results, with **cross fills as the primary economic view**
-* Full accepted historical coverage, with a clearly identified primary reporting period
-* Joint Momentum and CVG eligibility and data-coverage checks
-* Reproducible inputs, configuration, code identity, outputs, and evidence
-* Decision-oriented reporting: returns, risk, stability, costs, side attribution, concentration, trading activity, and data availability
-* Manual verification of a small trade sample before accepting the full result
-* No retuning after observing the result
+The analysis follows this economic chain:
+
+> **signal → trade selection → instrument/payoff expression → execution → realized economics**
+
+Sprint 007 may diagnose the frozen selected trade expression. It must not claim that post-signal artifacts alone identify the intrinsic quality of Momentum or CVG as signal families.
 
 ---
 
-## 4. What must be achieved
+## 3. Sprint outcome
 
-By sprint end: a reproducible, trustworthy answer to the central question — positive, negative, or inconclusive — with enough evidence to recommend the next step without changing parameters in response to observed P&L.
+By sprint end, the project must have a reproducible and evidence-bounded answer to four questions:
 
----
+1. **Gross-expression margin:** Does the frozen selected option book possess broad enough midpoint economic margin to justify additional implementation work, and on which side?
+2. **Shortfall mechanism:** Which economically distinct mechanisms reconcile the midpoint-to-cross gap?
+3. **Required execution:** What effective execution quality must the current expression achieve, and how much headroom remains for unmodeled frictions?
+4. **Decision:** Does the evidence justify one preregistered redesign, an execution-shadow experiment, stopping the current implementation, or resolving a specific evidence gap first?
 
-## 5. In scope / out of scope
-
-### In scope
-
-* Freeze and run one fixed baseline on accepted real artifacts via the existing Surface path
-* Joint eligibility / coverage correctness so failed or no-trade dates cannot disappear silently
-* Diagnostic mid + conservative cross evaluation; decision-quality reporting
-* Small-sample manual verification, full-history execution, reproducibility evidence, and closeout recommendation
-
-### Explicitly out of scope
-
-* Searching or ranking all 281 feature windows
-* Broad hyperparameter optimization
-* Walk-forward model or parameter selection
-* Tier B integer-lot portfolio construction or a production dollar capital budget
-* Live or shadow trading integration
-* Broker connectivity, scheduling, monitoring, or order management
-* A generic multi-strategy research platform
-* New feature engineering unless a defect directly invalidates baseline correctness
-* PIT earnings filtering without a trusted accepted earnings artifact
-* Iron-condor comparison while KB-001 remains open
-* Unrelated refactoring, cleanup, or known-bug fixes that do not block the baseline
+Success is a trustworthy diagnosis and justified next decision. A positive backtest or identified cure is not required.
 
 ---
 
-## 6. High-level deliverables
+## 4. Starting point and evidence authority
 
-Design each deliverable immediately before implementing it. **D0** freezes every choice capable of materially changing P&L before any new P&L is inspected. **D1–D4** may defer engineering decisions only (CLI, manifests, module boundaries, tests, presentation).
+### Accepted evidence
 
-### D0 — Baseline experiment contract — **COMPLETE**
+| Item | Authority |
+|---|---|
+| Sprint 006 closeout | [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md) |
+| Official run | `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` |
+| Execution commit | `e205b9acc5d0400aa38169de721acb7fb8268f29` |
+| Repository closeout baseline | `9535c3a` |
+| Frozen contract | [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) |
+| Primary reporting period | `2020-01-01` → `2026-07-10` |
+| Full-history period | `2018-10-26` → `2026-07-10` |
 
-Frozen in [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json). Record: [`006_closeout.md`](../sprint_memos/006_closeout.md) §2.
+The official run contains paired mid/cross trade, leg, candidate, funnel, date-status, date-summary, run-summary, and decision-report artifacts. These are the default Sprint 007 inputs.
 
-### D1 — Trusted baseline runner — **ACCEPTED — COMPLETE**
+### Interpretation boundary
 
-Design and implementation record: [`006_closeout.md`](../sprint_memos/006_closeout.md) §2 (`ACCEPTED — D1 COMPLETE`). Accepted implementation: `241b0d3` + review fix `c6b1735`.
-
-Exercise and harden the existing `SurfaceRunner.run_single_config()` path so the frozen D0 twin mid/cross configs run reproducibly from accepted snapshot/derived artifacts, with identity/config recording and fill-pricing verification (no stacked `cost_model` deduction). Any new command must be only a **thin frozen-contract adapter**—not a separate backtest implementation or generalized framework. Repairing or redesigning the parameter-search workflow is deferred unless a shared defect blocks fixed-contract execution.
-
-### D2 — Eligibility and coverage correctness — **ACCEPTED — COMPLETE**
-
-Plan / implementation record: [`006_closeout.md`](../sprint_memos/006_closeout.md) §2 (`ACCEPTED — D2 COMPLETE`). Accepted implementation: `9224068` (design `aa72a86`).
-
-### D3 — Decision-quality evaluation report — **ACCEPTED — COMPLETE**
-
-Record: [`006_closeout.md`](../sprint_memos/006_closeout.md) §2 (accepted design `b924330`). **Accepted implementation through `10133f6`** (`361b333` → `bb40864` + `f009684` → `6c7e44f` → `eaa8421` → `10133f6`).
-
-### D4 — Verification, full execution, and closeout — **CLOSED**
-
-Evidence: [`sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md). Closeout: [`006_closeout.md`](../sprint_memos/006_closeout.md).
-
-Official run at execution commit `e205b9a`: `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z`. Phase 4 **ACCEPTED** through `326e13d` (184/0/1 audit). Phase 5: economics **`WEAK/NEGATIVE`**; recommendation **reject/defer** this frozen hypothesis.
-
-Superseded pre-acceptance history remains on record below for audit trail only:
-
-* At `5c31e49`, Phase 1 pre-execution checks were attempted. They did **not** satisfy the literal §1.7 criterion (`C:/MomentumCVG_env/runs` did not exist), so Phase 1 is **not accepted** as the official gate.
-* The original single-date smoke was **blocked**: `BacktestRunConfig` intentionally requires `start_date < end_date`, so equal start/end dates abort in preflight and write nothing.
-* A provisional two-date smoke (`2022-09-02` … `2022-09-09`) later passed plumbing checks, but it ran **before** the plan was amended and accepted, so it is **not** official D4 evidence.
-* Those attempts were superseded by the accepted rerun above; none of their artifacts was reused or cited.
-* **No smoke's economics are evidence** — provisional or accepted. All smoke artifacts stay outside the repository under `C:/MomentumCVG_env/runs/`.
-
-The plan's Phase 2 is now the minimal valid **two-date** window (median `2022-09-02` → next A1 date `2022-09-09`), still exactly four changed contract fields in an outside-repository copy. Adding single-date CLI support or changing the validator remains out of scope.
+- Midpoint is an optimistic gross-expression reference.
+- Full cross is the accepted Sprint 006 conservative execution case.
+- Neither is automatically expected real execution.
+- The observed mid/cross difference is fill-assumption sensitivity, not a pure transaction-cost number, because fill prices also change sizing and capital at risk.
+- Historical quote artifacts can estimate required execution quality; they cannot establish package-order fill probability or actual attainable execution.
 
 ---
 
-## 7. Definition of done (outcomes)
+## 5. Architecture and efficiency principle
 
-Success is evidence quality, not a required Sharpe or positive-return threshold.
+Sprint 007 is **artifact-first**.
 
-- [x] One frozen baseline runs reproducibly from accepted inputs — [`006_closeout.md`](../sprint_memos/006_closeout.md) §3, 12; evidence memo §1
-- [x] The accepted result can be reproduced through one documented command using the recorded inputs and frozen configuration — evidence memo §1
-- [x] Input, configuration, code, and output identities are recorded — V-10…V-14; receipt
-- [x] Joint feature eligibility and complete date handling are verified — D2; V-3…V-7, V-17
-- [x] Every expected decision date is classified as `traded`, `valid_no_trade`, or `failed`; no date is silently absent, and unresolved failures block acceptance — 403/403 traded; V-5
-- [x] A small sample of trades is independently checked from signal through settlement and aggregation — §7.4 audit 184/0/1 (`326e13d`)
-- [x] Full-history diagnostic (mid) and conservative-fill (cross) runs complete — official run; 17 artifacts
-- [x] Final report has enough economic and operational evidence to judge credibility — `decision_report.json`
-- [x] Result and limitations are documented **without** changing parameters in response to observed P&L — frozen contract unchanged
-- [x] Sprint records a clear recommendation: proceed to bounded Sprint 007 robustness work, investigate a specific defect, or reject/defer the hypothesis — **reject/defer** ([`006_closeout.md`](../sprint_memos/006_closeout.md) §5)
+Use the accepted Sprint 006 outputs for D0–D3 wherever they contain the required evidence. Do not rerun `SurfaceRunner`, invoke `scripts/run_surface_search.py`, or optimize the full engine merely to reproduce information already present in the official artifacts.
 
----
+Any enabling implementation must be a narrow, read-only post-pass over accepted artifacts and must reuse existing report/reconciliation logic where practical. It must not become:
 
-## 8. Sprint 007 handoff
+- a second economic engine;
+- a generic research framework;
+- a new storage contract;
+- a strategy-search system;
+- or a broad performance-refactoring project.
 
-Sprint 006 is **closed** ([`006_closeout.md`](../sprint_memos/006_closeout.md)). Sprint 007 is **not** authorized by this closeout. Any future work requires a separately motivated, preregistered experiment — not retuning of the Sprint 006 frozen baseline after these P&L results.
+Full-engine efficiency work is deferred until an accepted next experiment actually requires new structures, selections, or full-history reruns.
 
 ---
 
-## 9. Scope-control principles
+## 6. In scope
 
-* Prefer the narrowest change that answers the sprint question
-* Reuse accepted artifacts and existing backtest code (`SurfaceRunner` / pipeline / surface metrics)
-* Design each deliverable immediately before implementing it
-* Do not add speculative abstractions or flexibility
-* Treat non-blocking imperfections as follow-up items
-* Block only on economic correctness, look-ahead bias, reproducibility, silent data loss, or inability to interpret the result
-* Evidence and decision quality matter more than architectural polish
-
----
-
-## 10. Decision boundaries
-
-### Must be frozen in D0 before any new P&L is viewed
-
-* Signal-selection and CVG-retention thresholds
-* Momentum and CVG count-eligibility thresholds
-* Liquidity and spread-selection rules
-* Per-side position limits, ranking, and tie handling
-* Option-selection and iron-fly wing rules
-* Entry timing, holding period, and settlement treatment
-* Sizing and capital-at-risk normalization
-* Mid and cross fill definitions
-* Exact full-history and primary reporting dates
-* Manual trade-sample selection method
-* Required decision metrics and evidence expectations
-
-**D0 status:** frozen in `configs/sprint006_baseline_v1.json`. Before any new P&L is inspected, only coverage- and schema-level preflight may run. Do not inspect aggregate P&L, Sharpe, strategy rankings, or side-level performance.
-
-### May be decided in the relevant deliverable design
-
-* CLI interface and command shape
-* Configuration and manifest representation
-* Report and output-file layout
-* Module boundaries and internal implementation
-* Focused test organization
-* Diagnostic presentation details
+- Verify that accepted Sprint 006 artifacts can support a trusted, fast investigation.
+- Evaluate midpoint economics of the **current selected trade expression**, including side, breadth, stability, and concentration only as needed to answer the sprint questions.
+- Reconcile the mid-to-cross gap into economically distinct mechanisms, including direct quote concession and fill-dependent sizing/capital feedback.
+- Attribute the dominant mechanism further only when doing so discriminates among competing explanations.
+- Determine the execution quality required by the current expression while clearly separating requirement from attainability.
+- Classify the evidence and specify exactly one justified next action.
+- Add only the minimum deterministic analysis code and focused tests required for trusted evidence.
 
 ---
 
-## 11. Implementation authorization and stop rules
+## 7. Explicitly out of scope
 
-Sprint 006 is implementation-light, not implementation-free. A proposed code change is authorized only when all three conditions hold:
-
-1. Without it, a Definition-of-Done outcome cannot be achieved or trusted.
-2. It is the narrowest practical change that reuses the existing backtest path.
-3. Its acceptance evidence is defined before implementation begins.
-
-If a change does not pass this test, record it as follow-up work rather than implementing it.
-
-Each deliverable starts with a short design covering the required behavior, minimum expected changes, focused tests, acceptance evidence, and explicit non-goals. Stop the deliverable once that evidence passes.
-
-Pause and request rescoping before implementation if the work:
-
-* Introduces a new framework, generalized abstraction, data product, or storage contract
-* Pre-builds a Sprint 007 capability
-* Expands into a subsystem not identified in the accepted deliverable design
-* Is expected to push total enabling implementation materially beyond the planned 12–18 focused hours
-* Requires changing the frozen experiment after P&L has been viewed
-
-The 12–18 hour budget is a review trigger, not an acceptance condition. A correctness-driven change after P&L exposure must be documented and versioned as a new experiment run; it must not silently replace the original result.
+- Changing or replacing the accepted Sprint 006 result.
+- Retuning `42:8`, searching the 281 feature windows, or broad hyperparameter search.
+- Selecting a spread/liquidity threshold by historical P&L, Sharpe, or best retained subset.
+- Testing multiple filters, sides, structures, maturities, holding frequencies, or execution policies and selecting a winner.
+- Treating same-sample exploratory diagnostics as validation of a cure.
+- Running an alternative structure solely because the frozen result was disappointing.
+- Full-universe Momentum IC, CVG incremental-value testing, or new feature engineering.
+- Broker integration, order placement, live trading, or execution-shadow implementation.
+- Broad `SurfaceRunner` optimization, a new engine, or unrelated refactoring.
+- Iron-condor evaluation while KB-001 remains open unless a later separately accepted experiment explicitly resolves that dependency.
 
 ---
 
-## Progress log
+## 8. High-level deliverables
 
-| Date | Notes |
-|------|-------|
-| 2026-08-09 | Sprint 005 closed — [`005_closeout.md`](../sprint_memos/005_closeout.md). Sprint 006 not started. |
-| 2026-08-12 | Proposed Sprint 006 agenda written into this document (`PROPOSED — AWAITING ACCEPTANCE`). HEAD at proposal: `1517b1b`. Refined with D0 experiment-freeze boundaries, deliverable-level implementation authorization, and minimal-implementation stop rules. |
-| 2026-08-15 | D0 accepted at design commit `1cdfad7` (including §13). Contract frozen as `configs/sprint006_baseline_v1.json` (SHA-256 of committed LF bytes `3cd57f4d…ef715`). Sprint status → `ACTIVE — D0 COMPLETE; D1 AWAITING DESIGN`. No runtime changes; no economic backtest; no P&L inspected. |
-| 2026-08-16 | D1 design accepted and implemented in commit `241b0d3` (parent `b380d38`): thin frozen-contract adapter + one CLI over `SurfaceRunner.run_single_config` (both mid and cross), light run receipt, overwrite refusal, S5 cap tie-break pinned to `ticker` ascending. Tests: 33 focused, 238 regression subset, full suite 1528 passed / 1 skipped. Frozen contract unchanged; no real-data economic run; no P&L inspected. D1 → `IMPLEMENTED — AWAITING REVIEW`. Review fix `c6b1735`: run output directory must also be outside the repo and outside the mutable producer cache. |
-| 2026-08-16 | D1 reviewed and accepted (`241b0d3` + `c6b1735`). Sprint status → `ACTIVE — D0/D1 COMPLETE; D2 AWAITING DESIGN`. Accepted scope remains D1 only; D2–D4 deferred. No accepted real-data economic backtest or aggregate P&L in D1. Next authorized activity: D2 design only (not implementation). |
-| 2026-08-16 | D2 design accepted at `aa72a86` and implemented: joint Mom+CVG ceil eligibility, A1 `date_status` on `SurfaceRunResult`, iron-fly body spread gate, adapter persistence/receipt fields. Frozen JSON untouched; no real-data economic run; no P&L inspected. Sprint status → `ACTIVE — D0/D1 COMPLETE; D2 IMPLEMENTED — AWAITING REVIEW`. |
-| 2026-08-16 | D2 reviewed and accepted (`9224068`). Correctness review found no D2 blockers. Sprint status → `ACTIVE — D0/D1/D2 COMPLETE; D3 AWAITING DESIGN`. Scope remains D2 only; D3–D4 deferred. No accepted real-data economic backtest or aggregate P&L. Next authorized activity: D3 design only (not implementation). |
-| 2026-08-17 | D3 design proposed: `docs/tmp/sprint006_d3_decision_diagnostic_report_plan.md` (`PROPOSED — AWAITING ACCEPTANCE`; file deleted at Sprint 006 closeout, retained in Git history). HEAD at proposal: `62bdf38`. Sprint status → `ACTIVE — D0/D1/D2 COMPLETE; D3 DESIGN UNDER REVIEW`. No D3 code, frozen-config change, real-data run, or P&L inspection. Implementation is not authorized until the plan is accepted. |
-| 2026-08-17 | D3 design corrected in-place (follow-up to `688c2a3`): short-iron-fly `abs(quantity)` scaling; abort on broken traded-date economics; remove `outcome_status` and drop-ticker/drop-week; funnel null vs zero; fill-assumption labeling; small structure-failure classes. Status remains `D3 DESIGN UNDER REVIEW` / `PROPOSED — AWAITING ACCEPTANCE`. No implementation, frozen-config change, real-data run, or P&L inspection. |
-| 2026-08-18 | D3 design `b924330` accepted. Sprint status → `ACTIVE — D0/D1/D2 COMPLETE; D3 IMPLEMENTATION IN PROGRESS (COMMIT 1)`. Commit 1 authorizes pure `surface_decision_report` calculations and synthetic tests only. No real-data run or aggregate P&L inspection. Commits 2–3 deferred. |
-| 2026-08-19 | D3 Commit 1 (`361b333`) accepted. Commit 2 implemented: shared S2 eligibility helper, funnel_summary, constructable leg log, included-trade reconciliation checks. Status → `D3 IMPLEMENTATION IN PROGRESS (COMMIT 2)`. D3 not complete. No real-data run or aggregate P&L inspection. |
-| 2026-08-19 | D3 Commit 3 implemented: candidate view, dual-fill decision report JSON/MD, adapter persistence, D3 receipt (`deliverable=sprint006_d3`), deferred list = D4 only. Status → `ACTIVE — D0/D1/D2 COMPLETE; D3 IMPLEMENTED — AWAITING REVIEW`. Frozen contract unchanged; no real-data economic run; no aggregate P&L inspected. Sprint remains open; D4 deferred. |
-| 2026-08-22 | **D3 reviewed and accepted** through `10133f6` (`361b333`, `bb40864` + `f009684`, `6c7e44f`, `eaa8421`, `10133f6`); accepted scope remains D3 only. **D4 planning started**: `docs/tmp/sprint006_d4_execution_acceptance_plan.md` written as `PROPOSED — AWAITING ACCEPTANCE` (file deleted at Sprint 006 closeout, retained in Git history). HEAD at proposal: `10133f6`. Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 PLANNING — PLAN PROPOSED, AWAITING ACCEPTANCE`. **No D4 execution has started**: no real-data economic run, no smoke run, no official run directory, no aggregate P&L inspected; frozen JSON untouched; no production code changed. Plan records four planning gaps (median-date convention, no single-date smoke path in the CLI, unpinned input digests, no run-duration field) for human review. |
-| 2026-08-22 | **Unaccepted D4 activity at `5c31e49`, then plan amended.** Phase 1 checks ran but failed §1.7's literal parent-directory criterion → **not accepted** as the official gate. The original single-date smoke was **blocked**: `BacktestRunConfig` requires `start_date < end_date`, so the adapter aborted in preflight and wrote nothing. A provisional two-date smoke (`2022-09-02` … `2022-09-09`) then passed plumbing checks, but ran **before** the plan was amended and accepted, so it is **not** official D4 evidence. A copy of those smoke artifacts was mistakenly committed as `docs/tmp/sprint006_d4_phase12_review/` and is **deleted** in this commit; outside-repository originals under `C:/MomentumCVG_env/runs/` are untouched and are never cited. Plan Phase 2 corrected to the minimal valid **two-date** window (four contract fields: start → `MEDIAN_DATE`, end → `SMOKE_END_DATE`); validator and CLI unchanged; single-date support stays out of scope. Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 BLOCKED — AMENDED PLAN AWAITING ACCEPTANCE`. **Phase 3 and the official full-history run have not started**; no aggregate P&L reviewed. Phase 1 and amended Phase 2 must be rerun in full from the final accepted plan commit. Frozen JSON untouched; no production code or test changed. |
-| 2026-08-23 | **Amended D4 plan accepted at `e205b9a`; Phases 1–2 rerun from scratch and passed.** Phase 1 gate: clean tree on `main`, `10133f6` an ancestor, full suite 1597 passed / 1 skipped, focused subset 332 passed, dry run clean with no side effect, contract blob `805faa5c…` / on-disk `4012b4a4…` / LF `3cd57f4d…` all matching, snapshot+lineage identity confirmed, seven input digests recorded as the PG-2 pre-run baseline, and `C:/MomentumCVG_env/runs` confirmed present and writable. Phase 2: dates derived from the A1 calendar (`n=403`, `MEDIAN_DATE=2022-09-02`, `SMOKE_END_DATE=2022-09-09`), outside-repository smoke contract with exactly four changed date fields, both fills run in one invocation (exit 0), S-1…S-10 all `PASS` with S-9 restricted to `2022-09-02`. Evidence: [`sprint006_d4_phase12_checkpoint.md`](../tmp/sprint006_d4_phase12_checkpoint.md). Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 PHASES 1–2 PASSED, AWAITING REVIEW BEFORE PHASE 3`. **Phase 3 not started and not authorized**; `RUN_DIR` derived but never created. No aggregate economics opened; no raw artifacts entered the repository; frozen JSON, production code, and tests unchanged. |
-| 2026-08-23 | **D4 Phases 3–4 executed at `e205b9a`; evidence verdict `ACCEPTED`.** Official twin-fill run → `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` (~3h; 17 artifacts; receipt `result_complete=true`, `repo_sha=e205b9a…`). Phase 4: V-1…V-20 all PASS; S1–S4 all PASS with S3=N/A (zero valid_no_trade). Memo: [`sprint006_d4_baseline_execution_evidence.md`](../sprint_memos/sprint006_d4_baseline_execution_evidence.md). Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 EXECUTION COMPLETE (EVIDENCE ONLY); PHASE 5 AWAITING REVIEW`. **Phase 5 not started**; no aggregate economics opened or interpreted; no raw artifacts committed. Frozen JSON / production code / tests unchanged. |
-| 2026-08-24 | **Complete §7.4 source-reconstruction reverification (verification-only).** Artifact + Phase 1 input digests re-confirmed unchanged; frozen samples preserved. Expanded audit `PASS` (184 PASS / 0 FAIL / 1 N/A); every required §7.4 coverage stage present. Review bundle + evidence memo addendum §7 updated. Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; PHASE 4 REVERIFICATION COMPLETE — AWAITING REVIEW`. **Phase 5 not authorized**; baseline not rerun; aggregate economics unopened; frozen JSON / production code / tests unchanged. |
-| 2026-08-24 | **D4 Phase 4 accepted after review of `326e13d`.** Corrected independent source audit accepted (`184 PASS / 0 FAIL / 1 N/A`; S3=N/A only; no sample substitution; audit-local verifier). V-1…V-20 acceptance reaffirmed. Phase 3 shell limitation accepted as non-blocking. No baseline rerun or aggregate economics inspection in acceptance. Status → `ACTIVE — D0/D1/D2/D3 COMPLETE; D4 PHASE 4 ACCEPTED; PHASE 5 AUTHORIZED — NOT STARTED`. **Phase 5 not started** in that commit. |
-| 2026-08-24 | **D4 Phase 5 economic review complete — awaiting review.** Economics opened only from official `decision_report.json` at `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z`. Proposed **`WEAK/NEGATIVE`** / **reject/defer** — accepted in closeout. |
-| 2026-08-24 | **Sprint 006 closed.** Evidence **`ACCEPTED`**; economics **`WEAK/NEGATIVE`**; recommendation **reject/defer this frozen `42:8` hypothesis**. Closeout: [`006_closeout.md`](../sprint_memos/006_closeout.md). Five D0–D4 plans + Phase 5 checkpoint deleted from `docs/tmp/` per closeout cleanup. Sprint 007 not authorized. |
+Detailed methods are designed immediately before each deliverable and accepted before its new granular outputs are generated. The sprint-level questions and inference boundaries below are fixed.
+
+### D0 — Investigation readiness and evidence contract
+
+**Question:** Can the accepted Sprint 006 artifacts answer the diagnostic questions reproducibly and efficiently without a full economic rerun?
+
+D0 establishes artifact identity, schema sufficiency, reconciliation prerequisites (including primary unit = dollar P&L), the minimal analysis path, and the rules that separate descriptive evidence from new hypotheses.
+
+### D1 — Gross economics of the frozen trade expression
+
+**Question:** At midpoint, where—if anywhere—does the frozen selected option book contain broad enough gross economic margin to justify further implementation work?
+
+D1 evaluates the current selection plus current payoff expression against the sprint-level continue/stop gate. It must not label its result as pure Momentum/CVG signal quality.
+
+### D2 — Implementation-shortfall mechanism
+
+**Question:** What mechanisms account for the entire midpoint-to-cross gap?
+
+D2 first performs a complete dollar-P&L reconciliation with a fixed-position reference. It then examines only the dominant terms needed to distinguish selective tradability, side/structure concentration, sizing feedback, or diffuse unavoidable friction, in that discrimination order.
+
+### D3 — Required execution envelope
+
+**Question:** What effective execution quality must the current expression achieve to preserve economically meaningful margin?
+
+D3 estimates the requirement and remaining headroom. It states requirement and unknown attainability only; it does not claim that the required package execution is attainable from historical end-of-day quote data.
+
+### D4 — Diagnosis, next hypothesis, and closeout
+
+**Question:** Which explanation best fits D1–D3, and what single next action is justified?
+
+D4 synthesizes existing Sprint 007 evidence. It does not run a collection of cure backtests. It selects one of the following outcomes:
+
+- `SELECTIVE_FRICTION_HYPOTHESIS`
+- `STRUCTURE_OR_SIZING_HYPOTHESIS`
+- `EXECUTION_CALIBRATION_REQUIRED`
+- `CURRENT_IMPLEMENTATION_NOT_VIABLE`
+- `EVIDENCE_INCONCLUSIVE`
+
+---
+
+## 9. Evidence and inference boundaries
+
+1. **Frozen evidence remains frozen.** No Sprint 007 result silently replaces or reinterprets the accepted Sprint 006 cross result.
+2. **Current-expression economics are not pure signal economics.** The accepted artifacts already embed selection, structure, holding period, and sizing.
+3. **Primary reconciliation unit is dollar P&L.** The mid→cross bridge reconciles aggregate `pnl_total` on the matched included key set. Capital-at-risk / quantity change is a required companion. View A mean cycle CAR is a secondary portfolio view, not the attribution residual target.
+4. **D1 continue/stop is gated before metrics are opened.** Midpoint margin is “economically meaningful” only if predeclared sign, breadth, location, and stability criteria all hold (see working plan). Exact concentration/year formulas are frozen in the D1 design; the four-part gate is not reinvented after output.
+5. **Competing explanations are discriminated in order.** Reconcile the dollar bridge first; attribute by side/structure role next; test ex-ante package tradability only after that. Structure/side concentration alone is not selective friction.
+6. **Required execution is not attainable execution.** Historical quotes can establish a break-even requirement; shadow orders are needed to estimate fill opportunities and no-fill behavior. Language claiming recoverability, likely package fills, or ORATS-implied attainability is forbidden without shadow evidence. Break-even strictly between mid and full cross maps to `EXECUTION_CALIBRATION_REQUIRED` when D1 continues.
+7. **Attribution is not a counterfactual cure.** Wing cost does not prove that a wingless payoff would be superior; short-side damage does not validate a long-only strategy.
+8. **Same-sample diagnostics generate hypotheses.** Any cost-aware filter or expression change motivated by Sprint 007 requires a separately preregistered evaluation.
+9. **No threshold winner.** Descriptive cost relationships may be examined only under rules frozen before output; Sprint 007 must not select the historically best cutoff.
+
+---
+
+## 10. Definition of done
+
+Sprint 007 is complete when:
+
+- [ ] The official Sprint 006 artifacts remain unchanged and are identity-checked.
+- [ ] D0 confirms a trusted artifact-first path or records a specific blocker.
+- [ ] D1 states whether the current selected expression has gross margin worth investigating and where that margin resides.
+- [ ] D2 reconciles the observed implementation shortfall with no material unexplained residual.
+- [ ] D3 states the execution quality required and what cannot be inferred about attainability.
+- [ ] D4 records one evidence classification and exactly one next action.
+- [ ] Every new diagnostic rule is frozen before its granular output is opened.
+- [ ] Exploratory findings are clearly separated from accepted evidence.
+- [ ] No signal window, spread threshold, structure, side, or execution policy is selected because it improved the same-sample backtest.
+- [ ] Relevant focused tests pass and evidence is reproducible.
+- [ ] Remaining limitations and stop conditions are documented.
+
+---
+
+## 11. Authorization sequence
+
+Acceptance of this agenda authorizes **D0 design only**.
+
+For each deliverable:
+
+1. Inspect the current repository, accepted artifacts, and prior accepted evidence.
+2. Write a short one-page design (question, frozen decisions, reuse, footprint, tests, acceptance evidence, inference boundaries, non-goals, stop rule). Do not rewrite the sprint contract between deliverables unless a stop condition fires.
+3. Wait for review and acceptance.
+4. Implement or execute only the accepted deliverable.
+5. Present evidence and request acceptance before designing the next deliverable.
+
+D1–D4 are not authorized by acceptance of this agenda or the sprint-level working plan.
+
+Pause and request rescoping if proposed work:
+
+- changes a P&L-sensitive rule;
+- requires a full-history rerun not justified by D0;
+- evaluates several potential cures;
+- introduces a general framework or second economic path;
+- or cannot support a clear inference about the sprint questions.
+
+---
+
+## 12. Initial next action
+
+After this agenda and the working plan are accepted, Cursor should prepare **D0 design only**. It must not implement D0, open new granular economic diagnostics, or begin D1.
+
