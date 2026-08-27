@@ -95,7 +95,7 @@ The sprint should discriminate among explanations rather than execute a predeter
 | **Current-expression gross weakness** | Midpoint margin is absent, unstable, or dependent on a small number of trades, dates, or one fragile component. | Broad, persistent midpoint margin with adequate economic headroom. |
 | **Selectively avoidable friction** | Most shortfall is associated with an ex-ante-observable package-cost or tradability characteristic, while economically meaningful gross margin remains away from the expensive region. | Shortfall is diffuse across clearly tradable and expensive opportunities alike. |
 | **Structure or sizing friction** | Shortfall is systematically concentrated in one current expression, side, leg role, or fill-dependent sizing mechanism after simple tradability differences are considered. | The same implementation loss appears broadly across sides and structure components. |
-| **Full cross is severe relative to attainable package execution** | The current expression has gross margin and can tolerate an effective package fill meaningfully worse than midpoint, but historical data cannot determine whether that quality is attainable. | Break-even requires midpoint-or-better execution or leaves no room for commissions, missed fills, or adverse selection. |
+| **Execution attainability unresolved** | The current expression has gross margin and can tolerate an effective package fill meaningfully worse than midpoint; historical ORATS quotes can establish the execution requirement, but not whether that quality is attainable. | Break-even requires midpoint-or-better execution or leaves no room for commissions, missed fills, or adverse selection. |
 | **Fundamental current-implementation mismatch** | Gross margin is too small relative to widespread unavoidable quoted cost, or required execution is economically implausible even for clearly tradable opportunities. | Loss is concentrated in an identifiable and economically avoidable mechanism. |
 
 These explanations are not mutually exclusive at the trade level. D4 must identify the explanation that best controls the decision and disclose material secondary findings.
@@ -162,8 +162,8 @@ If any part fails, lean toward `CURRENT_IMPLEMENTATION_NOT_VIABLE` for the curre
 
 When attributing shortfall, follow this order and do not skip ahead:
 
-1. Reconcile the dollar P&L bridge (direct price concession vs sizing/capital vs trade-set difference vs residual).
-2. Attribute the dominant residual by **side / structure role** (long vs short; body vs wing or equivalent current-expression roles) under the frozen bridge.
+1. Reconcile the dollar P&L bridge (direct price concession vs sizing/capital vs trade-set difference vs unexplained residual). Any unexplained residual must reconcile within the predeclared tolerance; otherwise it is a **blocker** — stop and resolve the calculation/evidence problem. It is not an attribution target.
+2. Attribute the dominant **reconciled shortfall component** by **side / structure role** (long vs short; body vs wing or equivalent current-expression roles) under the frozen bridge.
 3. Only then examine **ex-ante observable package tradability** (e.g. quoted width, package cost vs credit/debit) as a selective-friction candidate.
 
 **Tie-break rules:**
@@ -224,7 +224,11 @@ Inspect and reuse, where applicable:
 - `src/backtest/surface_decision_report.py`
 - `src/backtest/sprint006_baseline.py`
 - `src/backtest/surface_runner.py`
+- `src/backtest/pipeline.py`
+- `src/backtest/surface_metrics.py`
 - official `trade_log_*`, `leg_log_*`, `candidate_view_*`, `date_summary_*`, `date_status_*`, `funnel_summary_*`, `run_summary_*`, and `decision_report.json`
+
+Existing sizing, financing, and CAR behavior in these modules must be reused or minimally extracted with regression protection — not independently reimplemented.
 
 Do not assume a new module, CLI, or artifact contract is required before inspection.
 
@@ -318,7 +322,11 @@ D2 must first produce a complete, auditable bridge between accepted midpoint and
 - any trade-set or opportunity difference, recorded explicitly even when it is zero in the frozen run;
 - and any unexplained residual.
 
-Because attribution can depend on bridge order when sizing changes, D2's design must freeze and justify its attribution convention before output. A fixed-position reference must be available so direct execution-price effect is not silently mixed with resizing. CAR may be reported as a companion portfolio view; it must not replace the dollar residual.
+Because attribution can depend on bridge order when sizing changes, D2's design must freeze and justify its attribution convention before output. A fixed-position reference must be available so direct execution-price effect is not silently mixed with resizing. CAR may be reported as a companion portfolio view; it must not replace the dollar residual. Any unexplained residual outside the predeclared tolerance is a blocker per §6.6, not an attribution target.
+
+If the sizing/capital component is material, D2 must trace the existing Tier-A dependency chain as a conditional diagnostic (not a prescription for additional experiments):
+
+> short fill economics → short max loss and quantity → collected short credit → long budget → long quantity
 
 ### Adaptive diagnosis rule
 
