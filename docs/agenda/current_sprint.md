@@ -1,9 +1,10 @@
 # Current sprint — 007
 
 **Updated:** 2026-08-26  
-**Status:** `PROPOSED — AWAITING ACCEPTANCE`  
-**Mode:** **Audit** — agenda and D0 design only. No implementation, new economic run, or granular diagnostic output is authorized yet.  
+**Status:** `ACTIVE — PLAN ACCEPTED; D0 DESIGN PROPOSED — AWAITING REVIEW`  
+**Mode:** **Audit** — D0 design under review. No D0 implementation, new economic run, or granular diagnostic output is authorized yet.  
 **Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](sprint7_shortfall_plan.md) — canonical path; do not duplicate under `docs/tmp/`.  
+**D0 design:** [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md) — `PROPOSED — AWAITING ACCEPTANCE`  
 **Previous:** Sprint 006 — [`CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence, not a Sprint 007 starting configuration to edit.
 
@@ -198,7 +199,9 @@ Sprint 007 is complete when:
 
 ## 11. Authorization sequence
 
-Acceptance of this agenda authorizes **D0 design only**.
+Sprint 007 agenda and working plan were **accepted 2026-08-26**. That acceptance authorized D0 design only.
+
+D0 design is **proposed** at [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md) (`PROPOSED — AWAITING ACCEPTANCE`). D0 implementation is **not** authorized until the design is reviewed and accepted.
 
 For each deliverable:
 
@@ -208,7 +211,7 @@ For each deliverable:
 4. Implement or execute only the accepted deliverable.
 5. Present evidence and request acceptance before designing the next deliverable.
 
-D1–D4 are not authorized by acceptance of this agenda or the sprint-level working plan.
+D1–D4 are not authorized. D0 implementation is not authorized until D0 design acceptance.
 
 Pause and request rescoping if proposed work:
 
@@ -222,5 +225,13 @@ Pause and request rescoping if proposed work:
 
 ## 12. Initial next action
 
-After this agenda and the working plan are accepted, Cursor should prepare **D0 design only**. It must not implement D0, open new granular economic diagnostics, or begin D1.
+D0 design is proposed at [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md). **Await D0 design review.** Do not implement D0, open new granular economic diagnostics, or begin D1 until the design is accepted.
 
+---
+
+## Changelog
+
+| Date | Event |
+|------|-------|
+| 2026-08-26 | Sprint 007 agenda and working plan **accepted**. D0 design proposed — `PROPOSED — AWAITING REVIEW`. |
+| 2026-08-26 | Sprint 007 agenda and working plan written (`PROPOSED — AWAITING ACCEPTANCE`). |
