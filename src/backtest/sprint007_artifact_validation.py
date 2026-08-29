@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -34,6 +35,7 @@ OFFICIAL_CONTRACT_SHA256 = (
     "4012b4a472448004e1a1b14e8814f506911ea0e263e35157b4e13e27ed51a54c"
 )
 ACCEPTED_PRIMARY_INCLUDED_KEYS = 9212
+FILL_TOLERANCE = 1e-9
 
 TRADE_KEY = ("trade_date", "ticker", "direction")
 LEG_KEY = ("trade_date", "ticker", "direction", "expiry_date", "option_type", "strike", "leg_index")
@@ -66,10 +68,15 @@ LEG_LOG_COLUMNS = (
     "option_type",
     "strike",
     "leg_index",
+    "unit_quantity",
+    "portfolio_quantity",
     "bid",
     "ask",
     "mid",
     "fill_price",
+    "entry_cash_per_unit",
+    "pnl_per_unit",
+    "pnl_total_leg",
     "exit_spot",
     "expiry_payoff_per_unit",
     "included_in_portfolio",
@@ -92,6 +99,15 @@ CANDIDATE_VIEW_COLUMNS = (
 FUNNEL_SUMMARY_COLUMNS = ("trade_date", "n_included", "n_jointly_eligible")
 
 DECISION_REPORT_KEYS = ("by_fill", "windows", "fill_assumption_sensitivity", "limitations")
+RUN_OUTPUT_NAMES = (
+    "candidate_view",
+    "date_status",
+    "date_summary",
+    "funnel_summary",
+    "leg_log",
+    "run_summary",
+    "trade_log",
+)
 
 
 class ArtifactValidationError(Exception):
@@ -124,6 +140,47 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def get_current_repo_sha(repo_root: Path | None = None) -> str | None:
+    root = repo_root or Path(__file__).resolve().parents[2]
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return completed.stdout.strip() or None
+
+
+def _float_equal(left: Any, right: Any, *, tol: float = FILL_TOLERANCE) -> bool:
+    try:
+        return abs(float(left) - float(right)) <= tol
+    except (TypeError, ValueError):
+        return left == right
+
+
+def expected_cross_fill_price(bid: Any, ask: Any, unit_quantity: Any) -> float:
+    qty = float(unit_quantity)
+    if qty > 0:
+        return float(ask)
+    if qty < 0:
+        return float(bid)
+    raise ValueError("unit_quantity must be non-zero for fill validation")
+
+
+def leg_fill_convention_ok(row: pd.Series, *, fill_label: str) -> bool:
+    fill_price = row["fill_price"]
+    if fill_label == "mid":
+        return _float_equal(fill_price, row["mid"])
+    if fill_label == "cross":
+        expected = expected_cross_fill_price(row["bid"], row["ask"], row["unit_quantity"])
+        return _float_equal(fill_price, expected)
+    return False
+
+
 def _load_parquet_columns(path: Path, columns: tuple[str, ...]) -> pd.DataFrame:
     table = pq.read_table(path, columns=list(columns))
     frame = table.to_pandas()
@@ -132,6 +189,10 @@ def _load_parquet_columns(path: Path, columns: tuple[str, ...]) -> pd.DataFrame:
     if "expiry_date" in frame.columns:
         frame["expiry_date"] = pd.to_datetime(frame["expiry_date"]).dt.date
     return frame.sort_values(list(columns[:3])).reset_index(drop=True)
+
+
+def _parquet_columns(path: Path) -> list[str]:
+    return pq.ParquetFile(path).schema_arrow.names
 
 
 def _included_trade_keys(trade_log: pd.DataFrame) -> set[tuple[date, str, str]]:
@@ -179,12 +240,11 @@ def _compare_paired_legs(
         tuple(row[col] for col in LEG_KEY) for _, row in cross_frame.iterrows()
     }
 
-    missing_in_cross = sorted(mid_leg_keys - cross_leg_keys)
-    missing_in_mid = sorted(cross_leg_keys - mid_leg_keys)
-
     quote_mismatches = 0
     settlement_mismatches = 0
-    fill_same_count = 0
+    unit_quantity_mismatches = 0
+    mid_fill_convention_violations = 0
+    cross_fill_convention_violations = 0
 
     mid_index = {
         tuple(row[col] for col in LEG_KEY): row for _, row in mid_frame.iterrows()
@@ -192,36 +252,82 @@ def _compare_paired_legs(
     cross_index = {
         tuple(row[col] for col in LEG_KEY): row for _, row in cross_frame.iterrows()
     }
+
+    for _, row in mid_frame.iterrows():
+        if not leg_fill_convention_ok(row, fill_label="mid"):
+            mid_fill_convention_violations += 1
+
+    for _, row in cross_frame.iterrows():
+        if not leg_fill_convention_ok(row, fill_label="cross"):
+            cross_fill_convention_violations += 1
+
     for key in sorted(mid_leg_keys & cross_leg_keys):
         mid_row = mid_index[key]
         cross_row = cross_index[key]
         for col in LEG_QUOTE_COLS:
-            if mid_row[col] != cross_row[col]:
+            if not _float_equal(mid_row[col], cross_row[col]):
                 quote_mismatches += 1
                 break
         for col in LEG_SETTLEMENT_COLS:
-            if mid_row[col] != cross_row[col]:
+            if not _float_equal(mid_row[col], cross_row[col]):
                 settlement_mismatches += 1
                 break
-        if mid_row["fill_price"] == cross_row["fill_price"]:
-            fill_same_count += 1
+        if int(mid_row["unit_quantity"]) != int(cross_row["unit_quantity"]):
+            unit_quantity_mismatches += 1
 
     return {
         "n_included_trade_keys": len(trade_keys),
         "n_mid_legs": len(mid_frame),
         "n_cross_legs": len(cross_frame),
-        "missing_leg_keys_in_cross": len(missing_in_cross),
-        "missing_leg_keys_in_mid": len(missing_in_mid),
+        "missing_leg_keys_in_cross": len(mid_leg_keys - cross_leg_keys),
+        "missing_leg_keys_in_mid": len(cross_leg_keys - mid_leg_keys),
         "quote_mismatches": quote_mismatches,
         "settlement_mismatches": settlement_mismatches,
-        "fill_price_same_count": fill_same_count,
+        "unit_quantity_mismatches": unit_quantity_mismatches,
+        "mid_fill_convention_violations": mid_fill_convention_violations,
+        "cross_fill_convention_violations": cross_fill_convention_violations,
     }
 
 
 def _assert_columns(path: Path, required: tuple[str, ...]) -> list[str]:
-    actual = pq.ParquetFile(path).schema_arrow.names
-    missing = [col for col in required if col not in actual]
-    return missing
+    actual = _parquet_columns(path)
+    return [col for col in required if col not in actual]
+
+
+def _artifact_record(path: Path, *, role: str, fill_label: str | None = None) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "role": role,
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "fill_label": fill_label,
+    }
+    if path.suffix == ".parquet":
+        record["columns"] = _parquet_columns(path)
+    return record
+
+
+def collect_artifact_inventory(receipt: dict[str, Any], run_dir: Path) -> list[dict[str, Any]]:
+    inventory: list[dict[str, Any]] = []
+    receipt_path = run_dir / "run_receipt.json"
+    inventory.append(
+        _artifact_record(receipt_path, role="run_receipt")
+    )
+    for run in receipt.get("runs", []):
+        fill_label = run.get("fill_label")
+        for output_name in RUN_OUTPUT_NAMES:
+            artifact = run.get("outputs", {}).get(output_name)
+            if artifact is None:
+                continue
+            path = Path(artifact["path"])
+            inventory.append(
+                _artifact_record(path, role=output_name, fill_label=fill_label)
+            )
+    for report_name, artifact in receipt.get("decision_report", {}).items():
+        path = Path(artifact["path"])
+        inventory.append(
+            _artifact_record(path, role=report_name, fill_label=None)
+        )
+    return inventory
 
 
 def verify_receipt_integrity(receipt: dict[str, Any], run_dir: Path) -> GateResult:
@@ -236,28 +342,56 @@ def verify_receipt_integrity(receipt: dict[str, Any], run_dir: Path) -> GateResu
     if contract_sha != OFFICIAL_CONTRACT_SHA256:
         failures.append("contract sha256 mismatch")
 
+    inventory = collect_artifact_inventory(receipt, run_dir)
+    expected_count = 1 + (len(RUN_OUTPUT_NAMES) * 2) + 2
+    if len(inventory) != expected_count:
+        failures.append(f"inventory count {len(inventory)} != {expected_count}")
+
+    expected_hashes: dict[str, str] = {}
     for run in receipt.get("runs", []):
         for artifact in run.get("outputs", {}).values():
-            path = Path(artifact["path"])
-            if not path.exists():
-                failures.append(f"missing artifact {path.name}")
-                continue
-            actual = sha256_file(path)
-            if actual != artifact["sha256"]:
-                failures.append(f"hash mismatch {path.name}")
-
+            expected_hashes[Path(artifact["path"]).name] = artifact["sha256"]
     for artifact in receipt.get("decision_report", {}).values():
-        path = Path(artifact["path"])
+        expected_hashes[Path(artifact["path"]).name] = artifact["sha256"]
+
+    for record in inventory:
+        path = Path(record["path"])
         if not path.exists():
             failures.append(f"missing artifact {path.name}")
             continue
         actual = sha256_file(path)
-        if actual != artifact["sha256"]:
+        if actual != record["sha256"]:
             failures.append(f"hash mismatch {path.name}")
+        expected = expected_hashes.get(path.name)
+        if expected is not None and actual != expected:
+            failures.append(f"receipt hash mismatch {path.name}")
 
     passed = not failures
-    detail = "all receipt hashes matched" if passed else "; ".join(failures[:5])
+    detail = (
+        f"inventory={len(inventory)} all receipt hashes matched"
+        if passed
+        else "; ".join(failures[:5])
+    )
     return GateResult("G1", passed, detail)
+
+
+def verify_calendar_completeness_for_fill(run_dir: Path, fill_label: str) -> GateResult:
+    status = _load_parquet_columns(
+        run_dir / f"date_status_sprint006_baseline_v1_{fill_label}.parquet",
+        DATE_STATUS_COLUMNS,
+    )
+    counts = count_date_classes(status)
+    passed = (
+        counts["n_expected_dates"] == 403
+        and counts["n_failed_dates"] == 0
+        and counts["n_valid_no_trade_dates"] == 0
+    )
+    detail = (
+        f"{fill_label}: n_expected={counts['n_expected_dates']} "
+        f"n_failed={counts['n_failed_dates']} "
+        f"n_valid_no_trade={counts['n_valid_no_trade_dates']}"
+    )
+    return GateResult(f"G1b_{fill_label}", passed, detail)
 
 
 def verify_schema_sufficiency(run_dir: Path) -> GateResult:
@@ -416,7 +550,7 @@ def verify_leg_quote_settlement_pairing(run_dir: Path) -> GateResult:
         for _, row in cross_trades.iterrows()
     }
     for key in trade_keys:
-        if mid_trade_index[key]["exit_spot"] != cross_trade_index[key]["exit_spot"]:
+        if not _float_equal(mid_trade_index[key]["exit_spot"], cross_trade_index[key]["exit_spot"]):
             trade_exit_mismatches += 1
 
     passed = (
@@ -424,48 +558,37 @@ def verify_leg_quote_settlement_pairing(run_dir: Path) -> GateResult:
         and pairing["missing_leg_keys_in_mid"] == 0
         and pairing["quote_mismatches"] == 0
         and pairing["settlement_mismatches"] == 0
+        and pairing["unit_quantity_mismatches"] == 0
+        and pairing["mid_fill_convention_violations"] == 0
+        and pairing["cross_fill_convention_violations"] == 0
         and trade_exit_mismatches == 0
-        and pairing["fill_price_same_count"] < pairing["n_mid_legs"]
     )
     detail = (
+        f"unit_quantity_mismatches={pairing['unit_quantity_mismatches']} "
+        f"mid_fill_violations={pairing['mid_fill_convention_violations']} "
+        f"cross_fill_violations={pairing['cross_fill_convention_violations']} "
         f"leg_quote_mismatches={pairing['quote_mismatches']} "
         f"leg_settlement_mismatches={pairing['settlement_mismatches']} "
-        f"trade_exit_mismatches={trade_exit_mismatches} "
-        f"fill_price_same={pairing['fill_price_same_count']}/{pairing['n_mid_legs']}"
+        f"trade_exit_mismatches={trade_exit_mismatches}"
     )
     return GateResult("G5", passed, detail)
-
-
-def verify_calendar_completeness(run_dir: Path) -> GateResult:
-    status = _load_parquet_columns(
-        run_dir / "date_status_sprint006_baseline_v1_cross.parquet",
-        DATE_STATUS_COLUMNS,
-    )
-    counts = count_date_classes(status)
-    passed = (
-        counts["n_expected_dates"] == 403
-        and counts["n_failed_dates"] == 0
-        and counts["n_valid_no_trade_dates"] == 0
-    )
-    detail = (
-        f"n_expected={counts['n_expected_dates']} n_failed={counts['n_failed_dates']} "
-        f"n_valid_no_trade={counts['n_valid_no_trade_dates']}"
-    )
-    return GateResult("G1b", passed, detail)
 
 
 def run_d0_validation(
     *,
     run_dir: Path | None = None,
     receipt_path: Path | None = None,
+    d0_code_commit_sha: str | None = None,
 ) -> D0ValidationResult:
     run_dir = run_dir or OFFICIAL_RUN_DIR
     receipt_path = receipt_path or (run_dir / "run_receipt.json")
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    d0_code_commit_sha = d0_code_commit_sha or get_current_repo_sha()
 
     gates = [
         verify_receipt_integrity(receipt, run_dir),
-        verify_calendar_completeness(run_dir),
+        verify_calendar_completeness_for_fill(run_dir, "mid"),
+        verify_calendar_completeness_for_fill(run_dir, "cross"),
         verify_schema_sufficiency(run_dir),
         verify_unique_trade_keys(run_dir),
         verify_included_key_parity(run_dir),
@@ -473,21 +596,27 @@ def run_d0_validation(
         GateResult("G7", True, "scope limited to readiness checks"),
     ]
 
+    inventory = collect_artifact_inventory(receipt, run_dir)
+    verdict = (
+        "READY_WITH_NARROW_ENABLING_CHANGE"
+        if all(g.passed for g in gates)
+        else "BLOCKED_BY_SPECIFIC_EVIDENCE_GAP"
+    )
+
     manifest: dict[str, Any] = {
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "official_run_dir": str(run_dir),
         "receipt_path": str(receipt_path),
+        "sprint006_execution_repo_sha": OFFICIAL_EXECUTION_REPO_SHA,
+        "d0_code_commit_sha": d0_code_commit_sha,
+        "verdict": verdict,
         "gates": [{"gate_id": g.gate_id, "passed": g.passed, "detail": g.detail} for g in gates],
-        "artifact_columns": {
+        "artifact_inventory": inventory,
+        "required_columns": {
             "trade_log": list(TRADE_LOG_COLUMNS),
             "leg_log": list(LEG_LOG_COLUMNS),
         },
     }
-
-    if all(g.passed for g in gates):
-        verdict = "READY_WITH_NARROW_ENABLING_CHANGE"
-    else:
-        verdict = "BLOCKED_BY_SPECIFIC_EVIDENCE_GAP"
 
     return D0ValidationResult(verdict=verdict, gates=gates, manifest=manifest)
 
@@ -503,11 +632,13 @@ def write_execution_receipt(
     evidence_dir: Path,
     executed_notebook: Path,
     html_export: Path,
-    repo_sha: str | None = None,
+    d0_code_commit_sha: str | None = None,
+    sprint006_execution_repo_sha: str = OFFICIAL_EXECUTION_REPO_SHA,
 ) -> Path:
     receipt = {
         "generated_utc": datetime.now(timezone.utc).isoformat(),
-        "repo_sha": repo_sha,
+        "d0_code_commit_sha": d0_code_commit_sha or get_current_repo_sha(),
+        "sprint006_execution_repo_sha": sprint006_execution_repo_sha,
         "executed_notebook": str(executed_notebook),
         "executed_notebook_sha256": sha256_file(executed_notebook),
         "html_export": str(html_export),
@@ -523,7 +654,7 @@ def export_d0_evidence(
     result: D0ValidationResult,
     clean_notebook: Path,
     evidence_dir: Path | None = None,
-    repo_sha: str | None = OFFICIAL_EXECUTION_REPO_SHA,
+    d0_code_commit_sha: str | None = None,
 ) -> Path:
     """Execute notebook fresh, export HTML, and write manifest + execution receipt."""
     evidence_dir = evidence_dir or Path(
@@ -532,9 +663,9 @@ def export_d0_evidence(
     evidence_dir.mkdir(parents=True, exist_ok=True)
     executed = evidence_dir / "d0_readiness.executed.ipynb"
     html_path = evidence_dir / "d0_readiness.html"
+    d0_code_commit_sha = d0_code_commit_sha or get_current_repo_sha()
 
     import os
-    import subprocess
 
     repo_root = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
@@ -583,7 +714,6 @@ def export_d0_evidence(
         evidence_dir=evidence_dir,
         executed_notebook=executed,
         html_export=html_path,
-        repo_sha=repo_sha,
+        d0_code_commit_sha=d0_code_commit_sha,
     )
     return evidence_dir
-
