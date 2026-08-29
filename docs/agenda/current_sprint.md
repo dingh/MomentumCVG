@@ -10,7 +10,7 @@
 
 **D0 design:** [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md) — `PROPOSED — AWAITING ACCEPTANCE`
 
-**D0 evidence:** `C:/MomentumCVG_env/runs/sprint007_d0_20260829T233453Z/` (outside repo)
+**D0 evidence:** `C:/MomentumCVG_env/runs/sprint007_d0_20260829T235325Z/` (outside repo; commit `aaf59b8`)
 **Previous:** Sprint 006 — [`CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence, not a Sprint 007 starting configuration to edit.
 
