@@ -1,10 +1,16 @@
 # Current sprint — 007
 
-**Updated:** 2026-08-26  
-**Status:** `ACTIVE — PLAN ACCEPTED; D0 DESIGN PROPOSED — AWAITING REVIEW`  
-**Mode:** **Audit** — D0 design under review. No D0 implementation, new economic run, or granular diagnostic output is authorized yet.  
-**Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](sprint7_shortfall_plan.md) — canonical path; do not duplicate under `docs/tmp/`.  
-**D0 design:** [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md) — `PROPOSED — AWAITING ACCEPTANCE`  
+**Updated:** 2026-08-29
+
+**Status:** `ACTIVE — D0 IMPLEMENTED — AWAITING REVIEW`
+
+**Mode:** **Audit** — D0 readiness evidence produced; D1–D4 not authorized.
+
+**Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](sprint7_shortfall_plan.md) — canonical path; do not duplicate under `docs/tmp/`.
+
+**D0 design:** [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md) — `PROPOSED — AWAITING ACCEPTANCE`
+
+**D0 evidence:** `C:/MomentumCVG_env/runs/sprint007_d0_20260829T233453Z/` (outside repo)
 **Previous:** Sprint 006 — [`CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence, not a Sprint 007 starting configuration to edit.
 
@@ -225,7 +231,7 @@ Pause and request rescoping if proposed work:
 
 ## 12. Initial next action
 
-D0 design is proposed at [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md). **Await D0 design review.** Do not implement D0, open new granular economic diagnostics, or begin D1 until the design is accepted.
+D0 implementation complete — **await D0 review**. Evidence: `C:/MomentumCVG_env/runs/sprint007_d0_20260829T233453Z/`. Do not begin D1 design until D0 is accepted.
 
 ---
 
@@ -233,5 +239,6 @@ D0 design is proposed at [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0
 
 | Date | Event |
 |------|-------|
+| 2026-08-29 | D0 implemented: artifact validation helper, unit tests, readiness notebook; all gates passed (`READY_WITH_NARROW_ENABLING_CHANGE`). |
 | 2026-08-26 | Sprint 007 agenda and working plan **accepted**. D0 design proposed — `PROPOSED — AWAITING REVIEW`. |
 | 2026-08-26 | Sprint 007 agenda and working plan written (`PROPOSED — AWAITING ACCEPTANCE`). |
