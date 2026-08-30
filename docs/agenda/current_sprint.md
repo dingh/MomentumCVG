@@ -1,6 +1,6 @@
 # Current sprint — 007
 
-**Updated:** 2026-08-29
+**Updated:** 2026-08-30
 
 **Status:** `ACTIVE — D0 IMPLEMENTED — AWAITING REVIEW`
 
@@ -10,7 +10,8 @@
 
 **D0 design:** [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md) — `PROPOSED — AWAITING ACCEPTANCE`
 
-**D0 evidence:** `C:/MomentumCVG_env/runs/sprint007_d0_20260829T235325Z/` (outside repo; commit `aaf59b8`)
+**D0 evidence:** `C:/MomentumCVG_env/runs/sprint007_d0_20260830T001015Z/` (outside repo; commit `8a59474`)
+
 **Previous:** Sprint 006 — [`CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence, not a Sprint 007 starting configuration to edit.
 
@@ -231,7 +232,7 @@ Pause and request rescoping if proposed work:
 
 ## 12. Initial next action
 
-D0 implementation complete — **await D0 review**. Evidence: `C:/MomentumCVG_env/runs/sprint007_d0_20260829T233453Z/`. Do not begin D1 design until D0 is accepted.
+D0 implementation complete — **await D0 review**. Evidence: `C:/MomentumCVG_env/runs/sprint007_d0_20260830T001015Z/`. Do not begin D1 design until D0 is accepted.
 
 ---
 
