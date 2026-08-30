@@ -99,6 +99,7 @@ CANDIDATE_VIEW_COLUMNS = (
 FUNNEL_SUMMARY_COLUMNS = ("trade_date", "n_included", "n_jointly_eligible")
 
 DECISION_REPORT_KEYS = ("by_fill", "windows", "fill_assumption_sensitivity", "limitations")
+DECISION_REPORT_ROLES = ("decision_report_json", "decision_report_md")
 RUN_OUTPUT_NAMES = (
     "candidate_view",
     "date_status",
@@ -162,6 +163,13 @@ def _float_equal(left: Any, right: Any, *, tol: float = FILL_TOLERANCE) -> bool:
         return left == right
 
 
+def expected_mid_fill_price(bid: Any, ask: Any, unit_quantity: Any) -> float:
+    """Authoritative mid fill from ``FillAssumption.mid()`` (alpha=0.5 both sides)."""
+    _ = unit_quantity  # buy and sell both interpolate to the same midpoint at alpha=0.5
+    spread = float(ask) - float(bid)
+    return float(bid) + 0.5 * spread
+
+
 def expected_cross_fill_price(bid: Any, ask: Any, unit_quantity: Any) -> float:
     qty = float(unit_quantity)
     if qty > 0:
@@ -172,13 +180,30 @@ def expected_cross_fill_price(bid: Any, ask: Any, unit_quantity: Any) -> float:
 
 
 def leg_fill_convention_ok(row: pd.Series, *, fill_label: str) -> bool:
+    if str(row.get("fill_label")) != fill_label:
+        return False
     fill_price = row["fill_price"]
     if fill_label == "mid":
-        return _float_equal(fill_price, row["mid"])
+        expected = expected_mid_fill_price(row["bid"], row["ask"], row["unit_quantity"])
+        return _float_equal(fill_price, expected)
     if fill_label == "cross":
         expected = expected_cross_fill_price(row["bid"], row["ask"], row["unit_quantity"])
         return _float_equal(fill_price, expected)
     return False
+
+
+def expected_run_output_path(run_dir: Path, role: str, fill_label: str) -> Path:
+    if role == "run_summary":
+        return run_dir / f"run_summary_sprint006_baseline_v1_{fill_label}.json"
+    return run_dir / f"{role}_sprint006_baseline_v1_{fill_label}.parquet"
+
+
+def expected_decision_report_path(run_dir: Path, role: str) -> Path:
+    if role == "decision_report_json":
+        return run_dir / "decision_report.json"
+    if role == "decision_report_md":
+        return run_dir / "decision_report.md"
+    raise ValueError(f"unknown decision report role: {role}")
 
 
 def _load_parquet_columns(path: Path, columns: tuple[str, ...]) -> pd.DataFrame:
@@ -245,6 +270,8 @@ def _compare_paired_legs(
     unit_quantity_mismatches = 0
     mid_fill_convention_violations = 0
     cross_fill_convention_violations = 0
+    mid_fill_label_mismatches = 0
+    cross_fill_label_mismatches = 0
 
     mid_index = {
         tuple(row[col] for col in LEG_KEY): row for _, row in mid_frame.iterrows()
@@ -254,10 +281,14 @@ def _compare_paired_legs(
     }
 
     for _, row in mid_frame.iterrows():
+        if str(row.get("fill_label")) != "mid":
+            mid_fill_label_mismatches += 1
         if not leg_fill_convention_ok(row, fill_label="mid"):
             mid_fill_convention_violations += 1
 
     for _, row in cross_frame.iterrows():
+        if str(row.get("fill_label")) != "cross":
+            cross_fill_label_mismatches += 1
         if not leg_fill_convention_ok(row, fill_label="cross"):
             cross_fill_convention_violations += 1
 
@@ -286,6 +317,8 @@ def _compare_paired_legs(
         "unit_quantity_mismatches": unit_quantity_mismatches,
         "mid_fill_convention_violations": mid_fill_convention_violations,
         "cross_fill_convention_violations": cross_fill_convention_violations,
+        "mid_fill_label_mismatches": mid_fill_label_mismatches,
+        "cross_fill_label_mismatches": cross_fill_label_mismatches,
     }
 
 
@@ -309,20 +342,18 @@ def _artifact_record(path: Path, *, role: str, fill_label: str | None = None) ->
 def collect_artifact_inventory(receipt: dict[str, Any], run_dir: Path) -> list[dict[str, Any]]:
     inventory: list[dict[str, Any]] = []
     receipt_path = run_dir / "run_receipt.json"
-    inventory.append(
-        _artifact_record(receipt_path, role="run_receipt")
-    )
+    inventory.append(_artifact_record(receipt_path, role="run_receipt"))
     for run in receipt.get("runs", []):
         fill_label = run.get("fill_label")
+        outputs = run.get("outputs", {})
         for output_name in RUN_OUTPUT_NAMES:
-            artifact = run.get("outputs", {}).get(output_name)
-            if artifact is None:
-                continue
+            artifact = outputs[output_name]
             path = Path(artifact["path"])
             inventory.append(
                 _artifact_record(path, role=output_name, fill_label=fill_label)
             )
-    for report_name, artifact in receipt.get("decision_report", {}).items():
+    for report_name in DECISION_REPORT_ROLES:
+        artifact = receipt["decision_report"][report_name]
         path = Path(artifact["path"])
         inventory.append(
             _artifact_record(path, role=report_name, fill_label=None)
@@ -342,33 +373,81 @@ def verify_receipt_integrity(receipt: dict[str, Any], run_dir: Path) -> GateResu
     if contract_sha != OFFICIAL_CONTRACT_SHA256:
         failures.append("contract sha256 mismatch")
 
-    inventory = collect_artifact_inventory(receipt, run_dir)
-    expected_count = 1 + (len(RUN_OUTPUT_NAMES) * 2) + 2
-    if len(inventory) != expected_count:
-        failures.append(f"inventory count {len(inventory)} != {expected_count}")
+    runs = receipt.get("runs", [])
+    fill_labels = [run.get("fill_label") for run in runs]
+    if fill_labels.count("mid") != 1:
+        failures.append(f"expected one mid run, found {fill_labels.count('mid')}")
+    if fill_labels.count("cross") != 1:
+        failures.append(f"expected one cross run, found {fill_labels.count('cross')}")
 
-    expected_hashes: dict[str, str] = {}
-    for run in receipt.get("runs", []):
-        for artifact in run.get("outputs", {}).values():
-            expected_hashes[Path(artifact["path"]).name] = artifact["sha256"]
-    for artifact in receipt.get("decision_report", {}).values():
-        expected_hashes[Path(artifact["path"]).name] = artifact["sha256"]
+    decision_report = receipt.get("decision_report", {})
+    if set(decision_report.keys()) != set(DECISION_REPORT_ROLES):
+        failures.append("decision_report roles mismatch")
 
-    for record in inventory:
-        path = Path(record["path"])
+    seen_paths: set[str] = set()
+    run_dir_resolved = run_dir.resolve()
+
+    for run in runs:
+        fill_label = run.get("fill_label")
+        outputs = run.get("outputs", {})
+        if set(outputs.keys()) != set(RUN_OUTPUT_NAMES):
+            failures.append(f"{fill_label} run output roles mismatch")
+            continue
+        for role in RUN_OUTPUT_NAMES:
+            artifact = outputs[role]
+            path = Path(artifact["path"]).resolve()
+            expected_path = expected_run_output_path(run_dir, role, str(fill_label)).resolve()
+            if path != expected_path:
+                failures.append(f"{fill_label}/{role} path mismatch")
+            if path.parent != run_dir_resolved:
+                failures.append(f"{fill_label}/{role} outside run dir")
+            path_key = str(path)
+            if path_key in seen_paths:
+                failures.append(f"duplicate path {path.name}")
+            seen_paths.add(path_key)
+            if not path.exists():
+                failures.append(f"missing artifact {path.name}")
+                continue
+            actual = sha256_file(path)
+            if actual != artifact["sha256"]:
+                failures.append(f"receipt hash mismatch {path.name}")
+
+    for role in DECISION_REPORT_ROLES:
+        if role not in decision_report:
+            continue
+        artifact = decision_report[role]
+        path = Path(artifact["path"]).resolve()
+        expected_path = expected_decision_report_path(run_dir, role).resolve()
+        if path != expected_path:
+            failures.append(f"{role} path mismatch")
+        if path.parent != run_dir_resolved:
+            failures.append(f"{role} outside run dir")
+        path_key = str(path)
+        if path_key in seen_paths:
+            failures.append(f"duplicate path {path.name}")
+        seen_paths.add(path_key)
         if not path.exists():
             failures.append(f"missing artifact {path.name}")
             continue
         actual = sha256_file(path)
-        if actual != record["sha256"]:
-            failures.append(f"hash mismatch {path.name}")
-        expected = expected_hashes.get(path.name)
-        if expected is not None and actual != expected:
+        if actual != artifact["sha256"]:
             failures.append(f"receipt hash mismatch {path.name}")
 
+    receipt_path = (run_dir / "run_receipt.json").resolve()
+    if str(receipt_path) in seen_paths:
+        failures.append("duplicate run_receipt path")
+    seen_paths.add(str(receipt_path))
+    if not receipt_path.exists():
+        failures.append("missing run_receipt.json")
+
+    expected_count = 1 + (len(RUN_OUTPUT_NAMES) * 2) + len(DECISION_REPORT_ROLES)
+    if len(seen_paths) != expected_count:
+        failures.append(f"unique path count {len(seen_paths)} != {expected_count}")
+
+    inventory = collect_artifact_inventory(receipt, run_dir) if not failures else []
     passed = not failures
     detail = (
-        f"inventory={len(inventory)} all receipt hashes matched"
+        f"inventory={len(inventory) or expected_count} all receipt hashes matched"
         if passed
         else "; ".join(failures[:5])
     )
@@ -561,12 +640,16 @@ def verify_leg_quote_settlement_pairing(run_dir: Path) -> GateResult:
         and pairing["unit_quantity_mismatches"] == 0
         and pairing["mid_fill_convention_violations"] == 0
         and pairing["cross_fill_convention_violations"] == 0
+        and pairing["mid_fill_label_mismatches"] == 0
+        and pairing["cross_fill_label_mismatches"] == 0
         and trade_exit_mismatches == 0
     )
     detail = (
         f"unit_quantity_mismatches={pairing['unit_quantity_mismatches']} "
         f"mid_fill_violations={pairing['mid_fill_convention_violations']} "
         f"cross_fill_violations={pairing['cross_fill_convention_violations']} "
+        f"mid_fill_label_mismatches={pairing['mid_fill_label_mismatches']} "
+        f"cross_fill_label_mismatches={pairing['cross_fill_label_mismatches']} "
         f"leg_quote_mismatches={pairing['quote_mismatches']} "
         f"leg_settlement_mismatches={pairing['settlement_mismatches']} "
         f"trade_exit_mismatches={trade_exit_mismatches}"
