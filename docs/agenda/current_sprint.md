@@ -2,17 +2,19 @@
 
 **Updated:** 2026-09-02
 
-**Status:** `ACTIVE — D0 ACCEPTED; D1 DESIGN PROPOSED — AWAITING ACCEPTANCE`
+**Status:** `ACTIVE — D0 ACCEPTED; D1 IMPLEMENTED — AWAITING REVIEW`
 
-**Mode:** **Audit** — D0 accepted; D1 design proposed; D1 implementation not authorized; D2–D4 not authorized.
+**Mode:** **Audit** — D0 accepted; D1 design accepted and executed; D2–D4 not authorized.
 
 **Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](sprint7_shortfall_plan.md) — canonical path; do not duplicate under `docs/tmp/`.
 
 **D0 design:** [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md) — `ACCEPTED`
 
-**D1 design:** [`docs/tmp/sprint007_d1_design.md`](../tmp/sprint007_d1_design.md) — `PROPOSED — AWAITING ACCEPTANCE`
+**D1 design:** [`docs/tmp/sprint007_d1_design.md`](../tmp/sprint007_d1_design.md) — `ACCEPTED`
 
 **D0 evidence:** `C:/MomentumCVG_env/runs/sprint007_d0_20260830T001015Z/` (outside repo; commit `8a59474`; verdict `READY_WITH_NARROW_ENABLING_CHANGE`)
+
+**D1 evidence:** `C:/MomentumCVG_env/runs/sprint007_d1_20260902T072449Z/` (outside repo; commit `47213b1`; verdict `D1_CONTINUE_TO_D2`)
 
 **Previous:** Sprint 006 — [`CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence, not a Sprint 007 starting configuration to edit.
@@ -194,7 +196,7 @@ Sprint 007 is complete when:
 
 - [ ] The official Sprint 006 artifacts remain unchanged and are identity-checked.
 - [x] D0 confirms a trusted artifact-first path or records a specific blocker.
-- [ ] D1 states whether the current selected expression has gross margin worth investigating and where that margin resides.
+- [x] D1 states whether the current selected expression has gross margin worth investigating and where that margin resides.
 - [ ] D2 reconciles the observed implementation shortfall with no material unexplained residual.
 - [ ] D3 states the execution quality required and what cannot be inferred about attainability.
 - [ ] D4 records one evidence classification and exactly one next action.
@@ -212,7 +214,7 @@ Sprint 007 agenda and working plan were **accepted 2026-08-26**. That acceptance
 
 D0 design is **accepted** at [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md). D0 implementation is **complete** (verdict `READY_WITH_NARROW_ENABLING_CHANGE`; evidence above).
 
-D1 design is **proposed** at [`docs/tmp/sprint007_d1_design.md`](../tmp/sprint007_d1_design.md) (`PROPOSED — AWAITING ACCEPTANCE`). D1 implementation is **not** authorized until the design is reviewed and accepted.
+D1 design is **accepted** at [`docs/tmp/sprint007_d1_design.md`](../tmp/sprint007_d1_design.md). D1 implementation is **complete** (verdict `D1_CONTINUE_TO_D2`; evidence above).
 
 For each deliverable:
 
@@ -222,7 +224,7 @@ For each deliverable:
 4. Implement or execute only the accepted deliverable.
 5. Present evidence and request acceptance before designing the next deliverable.
 
-D2–D4 are not authorized. D1 implementation is not authorized until D1 design acceptance.
+D2–D4 are not authorized. D2 design is not authorized until D1 evidence is reviewed and accepted.
 
 Pause and request rescoping if proposed work:
 
@@ -236,7 +238,7 @@ Pause and request rescoping if proposed work:
 
 ## 12. Initial next action
 
-D1 design proposed — **await D1 design review**. Evidence: [`docs/tmp/sprint007_d1_design.md`](../tmp/sprint007_d1_design.md). Do not implement D1 until the design is accepted.
+D1 implementation complete — **await D1 review**. Evidence: `C:/MomentumCVG_env/runs/sprint007_d1_20260902T072449Z/` (verdict `D1_CONTINUE_TO_D2`). Do not begin D2 design until D1 is accepted.
 
 ---
 
@@ -244,6 +246,7 @@ D1 design proposed — **await D1 design review**. Evidence: [`docs/tmp/sprint00
 
 | Date | Event |
 |------|-------|
+| 2026-09-02 | D1 design **accepted** and implemented: gross-margin helper, unit tests, notebook; reconciled to accepted mid-primary; all four gate parts passed (`D1_CONTINUE_TO_D2`). |
 | 2026-09-02 | D0 **accepted** (`READY_WITH_NARROW_ENABLING_CHANGE`). D1 design proposed — `PROPOSED — AWAITING ACCEPTANCE`. |
 | 2026-08-29 | D0 implemented: artifact validation helper, unit tests, readiness notebook; all gates passed (`READY_WITH_NARROW_ENABLING_CHANGE`). |
 | 2026-08-26 | Sprint 007 agenda and working plan **accepted**. D0 design proposed — `PROPOSED — AWAITING REVIEW`. |
