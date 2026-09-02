@@ -71,7 +71,7 @@ Before any gate is evaluated, D1 must reconcile recomputed mid-primary metrics t
 
 | Metric | Recompute via | Report path | Tolerance |
 |---|---|---|---|
-| `total_pnl` | `Σ pnl_total` on included trades after `filter_to_window` | `by_fill.mid.primary.long_short` long+short `pnl_total` (or equivalent sum) | `abs(Δ) ≤ max($1.00, 1e-9 × abs(reference))` |
+| `total_pnl` | `Σ pnl_total` on included trades after `filter_to_window` | `by_fill.mid.primary.long_short` long+short `pnl_total` (or equivalent sum) | `abs(Δ) ≤ max($0.01, 1e-9 × abs(reference))` |
 | `view_a_mean_cycle_car` | `compute_view_a(date_status, date_summary)["mean_cycle_car"]` | `by_fill.mid.primary.view_a_conditional.mean_cycle_car` | `abs(Δ) ≤ 1e-9` |
 | `n_included_trades` | count included rows on traded dates | `by_fill.mid.primary.long_short` row counts sum | exact |
 | `n_traded_dates` | `count_date_classes` → `n_traded_dates` | `by_fill.mid.primary.date_class_counts.n_traded_dates` | exact |
@@ -150,7 +150,7 @@ Directory: `C:/MomentumCVG_env/runs/sprint007_d1_<timestamp>/`
 | `d1_side_attribution.csv` | long/short pnl, n_trades, share |
 | `d1_breadth_exclusions.csv` | baseline pnl, excl-top5-dates, excl-top5-tickers |
 | `d1_yearly_pnl.csv` | year, year_pnl, n_trades |
-| `d1_readiness.executed.ipynb` | Fresh-kernel execution |
+| `d1_gross_margin.executed.ipynb` | Fresh-kernel execution |
 | `d1_gross_margin.html` | HTML export |
 | `execution_receipt.json` | SHAs of executed notebook/HTML, repo SHAs, timestamps |
 
