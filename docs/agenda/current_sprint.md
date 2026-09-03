@@ -14,7 +14,7 @@
 
 **D0 evidence:** `C:/MomentumCVG_env/runs/sprint007_d0_20260830T001015Z/` (outside repo; commit `8a59474`; verdict `READY_WITH_NARROW_ENABLING_CHANGE`)
 
-**D1 evidence:** `C:/MomentumCVG_env/runs/sprint007_d1_20260902T072449Z/` (outside repo; commit `47213b1`; verdict `D1_CONTINUE_TO_D2`)
+**D1 evidence:** `C:/MomentumCVG_env/runs/sprint007_d1_20260903T013933Z/` (outside repo; commit `516235f`; verdict `D1_CONTINUE_TO_D2`)
 
 **Previous:** Sprint 006 — [`CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence, not a Sprint 007 starting configuration to edit.
@@ -238,7 +238,7 @@ Pause and request rescoping if proposed work:
 
 ## 12. Initial next action
 
-D1 implementation complete — **await D1 review**. Evidence: `C:/MomentumCVG_env/runs/sprint007_d1_20260902T072449Z/` (verdict `D1_CONTINUE_TO_D2`). Do not begin D2 design until D1 is accepted.
+D1 implementation complete — **await D1 review**. Evidence: `C:/MomentumCVG_env/runs/sprint007_d1_20260903T013933Z/` (commit `516235f`; verdict `D1_CONTINUE_TO_D2`). Do not begin D2 design until D1 is accepted.
 
 ---
 
@@ -246,6 +246,7 @@ D1 implementation complete — **await D1 review**. Evidence: `C:/MomentumCVG_en
 
 | Date | Event |
 |------|-------|
+| 2026-09-02 | D1 D0-prerequisite enforced in `run_d1_analysis()`; evidence regenerated at `sprint007_d1_20260903T013933Z` (commit `516235f`). |
 | 2026-09-02 | D1 design **accepted** and implemented: gross-margin helper, unit tests, notebook; reconciled to accepted mid-primary; all four gate parts passed (`D1_CONTINUE_TO_D2`). |
 | 2026-09-02 | D0 **accepted** (`READY_WITH_NARROW_ENABLING_CHANGE`). D1 design proposed — `PROPOSED — AWAITING ACCEPTANCE`. |
 | 2026-08-29 | D0 implemented: artifact validation helper, unit tests, readiness notebook; all gates passed (`READY_WITH_NARROW_ENABLING_CHANGE`). |

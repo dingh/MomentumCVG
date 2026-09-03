@@ -1,6 +1,6 @@
 # Sprint 007 D1 — Gross economics of the frozen trade expression
 
-**Status:** `ACCEPTED — IMPLEMENTED` (evidence `C:/MomentumCVG_env/runs/sprint007_d1_20260902T072449Z/`, commit `47213b1`, verdict `D1_CONTINUE_TO_D2`)  
+**Status:** `ACCEPTED — IMPLEMENTED` (evidence `C:/MomentumCVG_env/runs/sprint007_d1_20260903T013933Z/`, commit `516235f`, verdict `D1_CONTINUE_TO_D2`)  
 **Updated:** 2026-09-02  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](../agenda/sprint7_shortfall_plan.md)  
