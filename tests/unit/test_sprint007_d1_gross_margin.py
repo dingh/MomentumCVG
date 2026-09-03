@@ -6,15 +6,18 @@ from datetime import date
 import pandas as pd
 import pytest
 
+from src.backtest.sprint007_artifact_validation import D0ValidationResult, GateResult
 from src.backtest.sprint007_d1_gross_margin import (
     BREADTH_TOP_N,
     EXPECTED_INCLUDED_TRADES,
+    VERDICT_BLOCKED,
     VERDICT_CONTINUE,
     VERDICT_STOP,
     MidPrimaryBundle,
     compute_d1_gate_scorecard,
     pnl_excluding_top_groups,
     reconcile_mid_primary,
+    run_d1_analysis,
     select_included_traded_rows,
     yearly_pnl_table,
 )
@@ -297,3 +300,34 @@ def test_reconciliation_requires_expected_included_trade_count() -> None:
     assert rows["n_included_trades"].passed
     assert not rows["expected_included_trades"].passed
     assert rows["expected_included_trades"].reference == EXPECTED_INCLUDED_TRADES
+
+
+def test_failed_d0_cannot_produce_d1_continue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed D0 result must block D1 before any gate scorecard is computed."""
+    failed = D0ValidationResult(
+        verdict="BLOCKED_BY_SPECIFIC_EVIDENCE_GAP",
+        gates=[GateResult("G1", False, "receipt hash mismatch")],
+    )
+
+    def _must_not_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("D1 economics must not run after a failed D0 gate")
+
+    monkeypatch.setattr(
+        "src.backtest.sprint007_d1_gross_margin.run_d0_validation", _must_not_run
+    )
+    monkeypatch.setattr(
+        "src.backtest.sprint007_d1_gross_margin.load_mid_primary_tables", _must_not_run
+    )
+    monkeypatch.setattr(
+        "src.backtest.sprint007_d1_gross_margin.compute_d1_gate_scorecard", _must_not_run
+    )
+    monkeypatch.setattr(
+        "src.backtest.sprint007_d1_gross_margin.reconcile_mid_primary", _must_not_run
+    )
+
+    result = run_d1_analysis(d0_result=failed)
+    assert result.verdict == VERDICT_BLOCKED
+    assert result.verdict != VERDICT_CONTINUE
+    assert result.scorecard.parts == []
+    assert result.reconciliation.rows == []
+    assert "D0 prerequisite failed" in str(result.manifest.get("blocker"))

@@ -1,7 +1,7 @@
 # Sprint 007 D0 — Investigation readiness and evidence contract
 
-**Status:** `PROPOSED — AWAITING ACCEPTANCE`  
-**Updated:** 2026-08-26  
+**Status:** `ACCEPTED — COMPLETE` (evidence `C:/MomentumCVG_env/runs/sprint007_d0_20260830T001015Z/`, commit `8a59474`, verdict `READY_WITH_NARROW_ENABLING_CHANGE`)  
+**Updated:** 2026-09-02  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](../agenda/sprint7_shortfall_plan.md)  
 **Prior evidence:** [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)

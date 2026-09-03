@@ -1,9 +1,10 @@
 # Sprint 007 — Implementation-shortfall diagnostic plan
 
-**Status:** `ACTIVE — PLAN ACCEPTED; D0 DESIGN PROPOSED — AWAITING REVIEW`  
-**Updated:** 2026-08-26  
+**Status:** `ACTIVE — D0 ACCEPTED AND COMPLETE; D1 IMPLEMENTED — AWAITING EVIDENCE REVIEW`  
+**Updated:** 2026-09-02  
 **Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md)  
-**D0 design:** [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md) — `PROPOSED — AWAITING ACCEPTANCE`  
+**D0 design:** [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md) — `ACCEPTED`  
+**D1 design:** [`docs/tmp/sprint007_d1_design.md`](../tmp/sprint007_d1_design.md) — `ACCEPTED` (implementation complete; evidence awaiting review)  
 **Prior evidence:** [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Canonical path:** `docs/agenda/sprint7_shortfall_plan.md` — do not duplicate under `docs/tmp/`.  
 **Purpose:** Cursor-executable sprint-level plan for D0–D4. This plan defines questions, evidence boundaries, gates, and required answers. It intentionally defers each deliverable's exact metrics, charts, calculation conventions, file footprint, and tests until that deliverable is designed and accepted.
@@ -596,12 +597,13 @@ Sprint 007 is complete only when all accepted deliverables jointly establish:
 
 Sprint 007 agenda and this plan were **accepted 2026-08-26**.
 
-D0 design is **proposed** at [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md). D0 implementation is **not** authorized until that design is reviewed and accepted.
+D0 design is **accepted** at [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md). D0 implementation is **complete** (verdict `READY_WITH_NARROW_ENABLING_CHANGE`).
+
+D1 design is **accepted** at [`docs/tmp/sprint007_d1_design.md`](../tmp/sprint007_d1_design.md). D1 implementation is **complete** and **awaiting evidence review**. D2 design is **not** authorized until D1 evidence is reviewed and accepted.
 
 It does not authorize:
 
-- D0 implementation or execution;
-- D1–D4 design or work;
+- D2–D4 design or work;
 - a full-history rerun;
 - a new economic configuration;
 - or any strategy, filter, structure, fill, or sizing change.

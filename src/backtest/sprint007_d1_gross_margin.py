@@ -23,8 +23,10 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from src.backtest.sprint007_artifact_validation import (
+    D0ValidationResult,
     OFFICIAL_RUN_DIR,
     get_current_repo_sha,
+    run_d0_validation,
     sha256_file,
 )
 from src.backtest.surface_decision_report import (
@@ -458,30 +460,72 @@ def compute_d1_gate_scorecard(bundle: MidPrimaryBundle) -> D1Scorecard:
     )
 
 
+def _d0_gate_records(d0_result: D0ValidationResult) -> list[dict[str, Any]]:
+    return [
+        {"gate_id": gate.gate_id, "passed": gate.passed, "detail": gate.detail}
+        for gate in d0_result.gates
+    ]
+
+
+def _blocked_result(
+    *,
+    run_dir: Path,
+    d1_code_commit_sha: str | None,
+    blocker: str,
+    d0_result: D0ValidationResult | None = None,
+) -> D1Result:
+    """Return D1_BLOCKED without evaluating sign/breadth/location/stability."""
+    scorecard = D1Scorecard(verdict=VERDICT_BLOCKED)
+    reconciliation = ReconciliationResult()
+    manifest = _build_manifest(
+        run_dir=run_dir,
+        d1_code_commit_sha=d1_code_commit_sha,
+        verdict=VERDICT_BLOCKED,
+        scorecard=scorecard,
+        reconciliation=reconciliation,
+        blocker=blocker,
+        d0_result=d0_result,
+    )
+    return D1Result(VERDICT_BLOCKED, scorecard, reconciliation, manifest)
+
+
 def run_d1_analysis(
     *,
     run_dir: Path | None = None,
     d1_code_commit_sha: str | None = None,
+    d0_result: D0ValidationResult | None = None,
 ) -> D1Result:
-    """Load mid-primary artifacts, reconcile, and evaluate the frozen D1 gate."""
+    """Load mid-primary artifacts, reconcile, and evaluate the frozen D1 gate.
+
+    D0 readiness is a hard prerequisite: if any D0 gate fails, this returns
+    ``D1_BLOCKED`` before loading economics or interpreting D1 gates.
+    Pass a validated ``d0_result`` from the notebook (or another caller) to
+    reuse that check; otherwise D0 is run here.
+    """
     run_dir = run_dir or OFFICIAL_RUN_DIR
     d1_code_commit_sha = d1_code_commit_sha or get_current_repo_sha()
+
+    if d0_result is None:
+        d0_result = run_d0_validation(run_dir=run_dir)
+    if not d0_result.all_passed:
+        failed = [g.gate_id for g in d0_result.gates if not g.passed]
+        return _blocked_result(
+            run_dir=run_dir,
+            d1_code_commit_sha=d1_code_commit_sha,
+            blocker=f"D0 prerequisite failed: {failed or ['no D0 gates recorded']}",
+            d0_result=d0_result,
+        )
 
     try:
         bundle = load_mid_primary_tables(run_dir)
         report = load_accepted_mid_primary_report(run_dir)
     except Exception as exc:  # precondition failure is a blocker, not a stop
-        scorecard = D1Scorecard(verdict=VERDICT_BLOCKED)
-        reconciliation = ReconciliationResult()
-        manifest = _build_manifest(
+        return _blocked_result(
             run_dir=run_dir,
             d1_code_commit_sha=d1_code_commit_sha,
-            verdict=VERDICT_BLOCKED,
-            scorecard=scorecard,
-            reconciliation=reconciliation,
             blocker=f"{type(exc).__name__}: {exc}",
+            d0_result=d0_result,
         )
-        return D1Result(VERDICT_BLOCKED, scorecard, reconciliation, manifest)
 
     reconciliation = reconcile_mid_primary(bundle, report)
     scorecard = compute_d1_gate_scorecard(bundle)
@@ -494,7 +538,8 @@ def run_d1_analysis(
         verdict=scorecard.verdict,
         scorecard=scorecard,
         reconciliation=reconciliation,
-        blocker=None,
+        blocker=None if reconciliation.passed else "reconciliation failed",
+        d0_result=d0_result,
     )
     return D1Result(scorecard.verdict, scorecard, reconciliation, manifest)
 
@@ -507,6 +552,7 @@ def _build_manifest(
     scorecard: D1Scorecard,
     reconciliation: ReconciliationResult,
     blocker: str | None,
+    d0_result: D0ValidationResult | None = None,
 ) -> dict[str, Any]:
     report_path = run_dir / "decision_report.json"
     return {
@@ -520,6 +566,15 @@ def _build_manifest(
         "d1_code_commit_sha": d1_code_commit_sha,
         "verdict": verdict,
         "blocker": blocker,
+        "d0_prerequisite": (
+            {
+                "verdict": d0_result.verdict,
+                "all_passed": d0_result.all_passed,
+                "gates": _d0_gate_records(d0_result),
+            }
+            if d0_result is not None
+            else None
+        ),
         "reconciliation": reconciliation.as_records(),
         "metrics": scorecard.metrics,
         "gates": [
