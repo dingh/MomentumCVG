@@ -1,12 +1,12 @@
 # Sprint 007 D2 — Implementation-shortfall mechanism
 
-**Status:** `PROPOSED — AWAITING ACCEPTANCE`  
+**Status:** `ACCEPTED — D2A AUTHORIZED` (implemented; stop at the human checkpoint)  
 **Updated:** 2026-09-03  
-**Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md) — sprint acceptance status **unchanged** by this document  
+**Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md) — sprint-level D1/D2B/D3 acceptance is **unchanged**  
 **Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](../agenda/sprint7_shortfall_plan.md) §6.4–§6.6, §9  
 **D0:** `READY_WITH_NARROW_ENABLING_CHANGE` — `C:/MomentumCVG_env/runs/sprint007_d0_20260830T001015Z/` (commit `8a59474`)  
 **D1 design / evidence:** [`sprint007_d1_design.md`](sprint007_d1_design.md); [`sprint007_d1_evidence_review.md`](sprint007_d1_evidence_review.md) (rule verdict `D1_CONTINUE_TO_D2`; D1 not marked accepted here)  
-**Authorization:** **D2 design only.** No D2 implementation, no new economics, no D3.
+**Authorization:** **D2A only.** D2B, D3, and official-result interpretation wait on the checkpoint.
 
 ---
 
