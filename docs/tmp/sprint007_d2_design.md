@@ -182,7 +182,7 @@ Let `G = P_cross − P_mid`. Shares use `|Δ|/|G|` when `G ≠ 0`. **Material** 
 |---|---|---|---|
 | 0 | Residual/`Δ_set`/prereq fail | **none** | Mechanism unknown |
 | 1 | `Δ_size` material | **Sizing chain** | Long Q is financed by short credit; D3 cannot treat fill as a per-share tax only |
-| 2 | Else `Δ_price` dominant **and** one side ≥ 70% of `Δ_price` **and** that side is short iron-fly | **Body/wing** | Wings vs body changes whether D3 is book-wide or structure-conditioned |
+| 2 | Else `Δ_price` dominant **and** one side ≥ 70% of `Δ_price` **and** that side is short iron-fly | **Body/wing** | Refines D3 from side-conditioned to role-specific only if body or wings concentrate; a diffuse split does not erase the side finding |
 | 3 | Else `Δ_price` dominant | **Ex-ante package tradability** | After D2A side split; may support selective friction vs diffuse quoted cost |
 
 Long straddles: body/wing N/A; if longs dominate `Δ_price` with `Δ_size` not material, branch 3.
@@ -232,7 +232,7 @@ D2A outputs a **D2B branch** and a **provisional** class. The **final** class is
 | `blocked` | D2A fail, or D2B fail (including body+wing identity) |
 | `mixed` | (`Δ_price` material **and** `Δ_size` material) **or** `order_sensitive` |
 | `sizing` | `Δ_size` material |
-| `structure` | **Provisional (D2A):** one side ≥ 70% of `Δ_price`. **Final (after D2B):** that side split still holds, **and** if branch 2 ran, body or wing ≥ 70% of `Δ_price_short`. Branch 3 does not by itself set `structure`. |
+| `structure` | One side ≥ 70% of `Δ_price` (provisional and final). Higher-priority `mixed` / `sizing` still win. Branch 2 **refines** the diagnosis only: body or wings ≥ 70% of `Δ_price_short` → role-specific D3; otherwise D3 stays **side-conditioned**. A diffuse body/wing split must **not** set `structure = false` or drop to `D3_EXECUTION_FOCUSED`. Branch 3 does not by itself set `structure`. |
 
 `S_order` magnitude is not a MIXED trigger.
 
@@ -241,7 +241,7 @@ D2A outputs a **D2B branch** and a **provisional** class. The **final** class is
 | `D2_BLOCKED` | `blocked` | **No D3.** Fix evidence/calculation. |
 | `D3_MIXED_MECHANISM` | else `mixed` | Joint requirement; a single fill number is not identified. |
 | `D3_SIZING_AWARE` | else `sizing` | Requirement **cannot** be a single per-share concession; Q and long budget move with fill. No live shadow. |
-| `D3_STRUCTURE_CONDITIONED` | else `structure` | Break-even / headroom **by role**. Not a wingless counterfactual. |
+| `D3_STRUCTURE_CONDITIONED` | else `structure` | Break-even / headroom **by side**. If branch 2 found body or wings ≥ 70% of `Δ_price_short`, also by that **role**. Diffuse body/wing → side-conditioned only. Not a wingless counterfactual. |
 | `D3_EXECUTION_FOCUSED` | else | One book-level **requirement**. Attainability unknown. |
 
 Sprint attainability forbid-list still applies (§6.7). Selective-friction evidence from branch 3 informs D4 later; it does not add a sixth class.
