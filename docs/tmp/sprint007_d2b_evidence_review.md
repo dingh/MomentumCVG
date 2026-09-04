@@ -6,7 +6,7 @@
 **Official artifacts:** `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z`  
 **Window:** `2020-01-01` → `2026-07-10`  
 **Notebook:** `notebooks/sprint007/d2b_package_tradability.ipynb` — committed copy remains unexecuted; a fresh `momentumcvg` kernel ran a JSON-valid copy through the D2B sections. Executed `.ipynb` and `.html` are in the evidence dir.  
-**Status:** Awaiting human review. No threshold search. No filtered book. D3 not started.
+**Status:** **Accepted.** Final class `D3_EXECUTION_FOCUSED`. No threshold search. No filtered book. D3 not started.
 
 ---
 
@@ -96,9 +96,9 @@ Tercile 3 itself also has positive midpoint P&L (+54,248).
 
 ## Concentrated or diffuse?
 
-Friction is **tilted toward expensive packages, not selectively concentrated**.
+The expensive tercile is **33.3% of trades** (3,070 of 9,212) and contains **57.7%** of \(\lvert\Delta_{\mathrm{price}}\rvert\). That is **meaningful but not overwhelming** concentration. T1+T2 retain **+$105,035** of midpoint P&L.
 
-The expensive tercile holds 57.7% of \(\lvert\Delta_{\mathrm{price}}\rvert\) — more than T1 or T2, but below the 70% side-concentration bar used elsewhere in D2, and well short of “almost all concession lives in the wide slice.” T1+T2 still hold 42.3% of the price concession and **+\$105,035** of midpoint P&L. That does **not** meet the design’s selective-friction signature (concentration in the expensive tercile **and** remaining mid margin used as a filter case). Branch 3 does not set `structure`.
+This **supports a selective-friction hypothesis for D4**. It does **not** validate a filter, a cutoff, or a profitable implementation. Branch 3 does not set `structure`. The 70% side-concentration rule is a D2A/D3 `structure` predicate only; it is **not** a tercile gate.
 
 ---
 
@@ -122,14 +122,14 @@ This is calculated, not hardcoded. It matches the D2A provisional class. D3 is n
 
 ## Conclusion
 
-**Supports:** Direct entry-price concession remains the D2A-dominant mechanism. Quoted package width is associated with more concession in the expensive tercile (57.7% of \(\Delta_{\mathrm{price}}\)), while midpoint economics stay positive both inside and outside that tercile.
+**Supports:** Direct entry-price concession remains the D2A-dominant mechanism. 33.3% of trades contain 57.7% of price concession, and T1+T2 retain +$105,035 of midpoint P&L. That is enough to carry a **selective-friction hypothesis into D4**.
 
-**Does not prove:** That wide packages can be filtered out to recover implementable P&L; that 57.7% is a cutoff; that midpoint fills are attainable; or that Momentum/CVG as signals are validated. No trade was removed and no alternative book was priced.
+**Does not prove:** A filter, a threshold, or a profitable implementation. No trade was removed, no cutoff was searched, and no alternative book was priced. Midpoint fills are not shown to be attainable.
 
-**Unknown:** Package fill probability; whether the book-level execution requirement implied by `D3_EXECUTION_FOCUSED` is attainable; commissions and other unmodeled friction; counterfactual structures. Selective-friction evidence here is descriptive only and is reserved for D4, not a sixth class.
+**Unknown:** Package fill probability; whether the book-level execution requirement implied by `D3_EXECUTION_FOCUSED` is attainable; commissions and other unmodeled friction; counterfactual structures.
 
 ---
 
 ## Stop
 
-Human review of this D2B evidence is required before D3 design.
+D2 is **accepted**. D3 **design** is authorized. Do not implement or execute D3 until that design is accepted.

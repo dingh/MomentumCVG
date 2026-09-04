@@ -1,14 +1,14 @@
 # Sprint 007 D2 — Implementation-shortfall mechanism
 
-**Status:** `D2A ACCEPTED; D2B EXECUTED — AWAITING REVIEW`  
+**Status:** `ACCEPTED` — D2A, D2B, and D2 overall  
 **Updated:** 2026-09-03  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](../agenda/sprint7_shortfall_plan.md) §6.4–§6.6, §9  
 **D0:** `READY_WITH_NARROW_ENABLING_CHANGE` — `C:/MomentumCVG_env/runs/sprint007_d0_20260830T001015Z/` (commit `8a59474`)  
-**D1 design / evidence:** [`sprint007_d1_design.md`](sprint007_d1_design.md); [`sprint007_d1_evidence_review.md`](sprint007_d1_evidence_review.md) (rule verdict `D1_CONTINUE_TO_D2`)  
-**D2A evidence:** [`sprint007_d2a_evidence_review.md`](sprint007_d2a_evidence_review.md) — `C:/MomentumCVG_env/runs/sprint007_d2a_20260904T043124Z/`  
-**D2B evidence:** [`sprint007_d2b_evidence_review.md`](sprint007_d2b_evidence_review.md) — `C:/MomentumCVG_env/runs/sprint007_d2b_20260904T045019Z/` (HEAD `ab53e26`; final class `D3_EXECUTION_FOCUSED`)  
-**Authorization:** D2A **accepted**. D2B **executed** on `package_tradability`. D3 is not authorized until this evidence is reviewed.
+**D1:** **accepted** — [`sprint007_d1_design.md`](sprint007_d1_design.md); [`sprint007_d1_evidence_review.md`](sprint007_d1_evidence_review.md) (`D1_CONTINUE_TO_D2`)  
+**D2A evidence:** [`sprint007_d2a_evidence_review.md`](sprint007_d2a_evidence_review.md) — **accepted**  
+**D2B evidence:** [`sprint007_d2b_evidence_review.md`](sprint007_d2b_evidence_review.md) — **accepted**; final class `D3_EXECUTION_FOCUSED`  
+**Authorization:** D2 is **closed**. D3 **design only** is authorized. Do not implement or execute D3 until that design is accepted.
 
 ---
 
@@ -252,17 +252,17 @@ Sprint attainability forbid-list still applies (§6.7). Selective-friction evide
 
 ## Acceptance evidence
 
-**D2A (this design’s implementation scope until checkpoint):**
+**D2A (accepted):**
 
-- [ ] D0 passed; D1 continue; official `P_mid`/`P_cross` reconciled
-- [ ] Identity `G = Δ_price + Δ_size + Δ_set + R` within residual tolerance
-- [ ] `Δ_set` = 0 (or explicit unmatched keys → blocked)
-- [ ] Side and yearly **dollar** bridges
-- [ ] One `S_order` companion; dual-order check recorded; not a second official gap
-- [ ] One D2B recommendation + one **provisional** D3 class (not final)
-- [ ] Focused tests: synthetic Q/p frames (price-only, size-only, interaction identity `|I| = |Δ_price − Δ_price_Paasche|`, unmatched keys, residual fail); no official-run economics in unit tests
+- [x] D0 passed; D1 continue; official `P_mid`/`P_cross` reconciled
+- [x] Identity `G = Δ_price + Δ_size + Δ_set + R` within residual tolerance
+- [x] `Δ_set` = 0 (or explicit unmatched keys → blocked)
+- [x] Side and yearly **dollar** bridges
+- [x] One `S_order` companion; dual-order check recorded; not a second official gap
+- [x] One D2B recommendation + one **provisional** D3 class (not final)
+- [x] Focused tests: synthetic Q/p frames (price-only, size-only, interaction identity `|I| = |Δ_price − Δ_price_Paasche|`, unmatched keys, residual fail); no official-run economics in unit tests
 
-**D2B (separate acceptance after checkpoint):** one diagnostic only; no threshold winner; body+wing identity if branch 2; **exactly one final** class from the precedence list.
+**D2B (accepted):** one diagnostic only; no threshold winner; body+wing identity if branch 2; **exactly one final** class from the precedence list (`D3_EXECUTION_FOCUSED`).
 
 ---
 
