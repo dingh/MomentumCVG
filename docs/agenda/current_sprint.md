@@ -2,9 +2,9 @@
 
 **Updated:** 2026-09-03
 
-**Status:** `ACTIVE — D0 ACCEPTED; D1 IMPLEMENTED — AWAITING REVIEW; D2A ACCEPTED; D2B IMPLEMENTED — AWAITING EXECUTION`
+**Status:** `ACTIVE — D0 ACCEPTED; D1 IMPLEMENTED — AWAITING REVIEW; D2A ACCEPTED; D2B EXECUTED — AWAITING REVIEW`
 
-**Mode:** **Audit** — D2A accepted; D2B implemented on `package_tradability`; official D2B evidence and D3 are not authorized.
+**Mode:** **Audit** — D2B executed on `package_tradability`; D3 is not authorized.
 
 **Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](sprint7_shortfall_plan.md) — canonical path; do not duplicate under `docs/tmp/`.
 
@@ -19,6 +19,8 @@
 **D2 design:** [`docs/tmp/sprint007_d2_design.md`](../tmp/sprint007_d2_design.md) — D2A accepted; D2B implemented
 
 **D2A evidence:** `C:/MomentumCVG_env/runs/sprint007_d2a_20260904T043124Z/` (outside repo; review [`docs/tmp/sprint007_d2a_evidence_review.md`](../tmp/sprint007_d2a_evidence_review.md))
+
+**D2B evidence:** `C:/MomentumCVG_env/runs/sprint007_d2b_20260904T045019Z/` (outside repo; review [`docs/tmp/sprint007_d2b_evidence_review.md`](../tmp/sprint007_d2b_evidence_review.md); final class `D3_EXECUTION_FOCUSED`)
 
 **Previous:** Sprint 006 — [`CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence, not a Sprint 007 starting configuration to edit.
@@ -228,7 +230,7 @@ For each deliverable:
 4. Implement or execute only the accepted deliverable.
 5. Present evidence and request acceptance before designing the next deliverable.
 
-D2A is **accepted**. D2B is **implemented** (not yet executed on official artifacts). D3–D4 are not authorized.
+D2A is **accepted**. D2B is **executed** and awaiting review. D3–D4 are not authorized.
 
 Pause and request rescoping if proposed work:
 
@@ -242,7 +244,7 @@ Pause and request rescoping if proposed work:
 
 ## 12. Initial next action
 
-D2B implemented — **await review**, then official execution/evidence. Do not start D3.
+D2B executed — **await review**. Do not start D3.
 
 ---
 
@@ -250,6 +252,7 @@ D2B implemented — **await review**, then official execution/evidence. Do not s
 
 | Date | Event |
 |------|-------|
+| 2026-09-03 | D2B **executed** on official artifacts (`sprint007_d2b_20260904T045019Z`); final class `D3_EXECUTION_FOCUSED`. D3 not started. |
 | 2026-09-03 | D2A **accepted**. D2B **implemented** on `package_tradability` (helper, tests, unexecuted notebook). Official D2B evidence not produced. |
 | 2026-09-02 | D1 D0-prerequisite enforced in `run_d1_analysis()`; evidence regenerated at `sprint007_d1_20260903T013933Z` (commit `516235f`). |
 | 2026-09-02 | D1 design **accepted** and implemented: gross-margin helper, unit tests, notebook; reconciled to accepted mid-primary; all four gate parts passed (`D1_CONTINUE_TO_D2`). |
