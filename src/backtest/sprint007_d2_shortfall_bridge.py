@@ -398,6 +398,26 @@ def classify_d2a(
     )
 
 
+def assign_final_d3_class(
+    classification: D2AClassification | None,
+    *,
+    blocked: bool,
+) -> str:
+    """Frozen D3 precedence after D2B. Branch 3 does not set ``structure``."""
+    if blocked or classification is None:
+        return VERDICT_BLOCKED
+    mixed = (
+        classification.price_material and classification.size_material
+    ) or classification.order_sensitive
+    if mixed:
+        return CLASS_MIXED
+    if classification.size_material:
+        return CLASS_SIZING
+    if classification.structure:
+        return CLASS_STRUCTURE
+    return CLASS_EXECUTION
+
+
 def _slice_bridge(mid: pd.DataFrame, cross: pd.DataFrame, label: str) -> dict[str, Any]:
     terms = compute_bridge_terms(mid, cross)
     return {
@@ -837,6 +857,7 @@ __all__ = [
     "CLASS_STRUCTURE",
     "D2AResult",
     "VERDICT_BLOCKED",
+    "assign_final_d3_class",
     "check_leg_to_trade",
     "classify_d2a",
     "compute_bridge_terms",
