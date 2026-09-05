@@ -6,7 +6,10 @@ fixed-quantity diagnostic and must not bind Path R. No h_req. No SurfaceRunner.
 """
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -19,16 +22,20 @@ from src.backtest.sprint007_artifact_validation import (
     TRADE_KEY,
     get_current_repo_sha,
     run_d0_validation,
+    sha256_file,
 )
 from src.backtest.sprint007_d1_gross_margin import VERDICT_CONTINUE, run_d1_analysis
 from src.backtest.sprint007_d2_shortfall_bridge import (
     CLASS_EXECUTION,
     compute_bridge_terms,
+    load_accepted_primary_block,
     load_fill_primary_tables,
 )
 from src.backtest.sprint007_d2b_package_tradability import run_d2b_analysis
-from src.backtest.surface_decision_report import compute_view_a
+from src.backtest.surface_decision_report import PRIMARY_END, PRIMARY_START, compute_view_a
 from src.backtest.surface_metrics import build_date_summary
+
+EVIDENCE_DIR_ENV = "SPRINT007_D3_EVIDENCE_DIR"
 
 H_TOL = 1e-4
 H_DET_STEP = 0.01
@@ -262,6 +269,8 @@ class D3Book:
     legs: pd.DataFrame
     date_status: pd.DataFrame
     legs_by_key: dict[tuple, pd.DataFrame] = field(default_factory=dict)
+    car_mid_ref: float | None = None
+    car_cross_ref: float | None = None
 
     def __post_init__(self) -> None:
         if not self.legs_by_key:
@@ -317,6 +326,7 @@ class D3Result:
     monotonicity: dict[str, bool] = field(default_factory=dict)
     crossings: list[Crossing] = field(default_factory=list)
     curves: pd.DataFrame = field(default_factory=pd.DataFrame)
+    side_snapshot: pd.DataFrame = field(default_factory=pd.DataFrame)
     reconciliation: list[dict[str, Any]] = field(default_factory=list)
     manifest: dict[str, Any] = field(default_factory=dict)
 
@@ -343,6 +353,7 @@ class D3Result:
             "distance_CAR0_to_cross": self.distance_CAR0_to_cross,
             "resize_gaps": self.resize_gaps,
             "monotonicity": self.monotonicity,
+            "root_finder": {"H_TOL": H_TOL, "H_DET_STEP": H_DET_STEP, "H_vis_step": 0.05},
             "crossings": [row.as_record() for row in self.crossings],
             "reconciliation": self.reconciliation,
             "manifest": self.manifest,
@@ -379,6 +390,7 @@ def assemble_envelope(
     reconciliation: list[dict[str, Any]],
     monotonicity: dict[str, bool],
     manifest: dict[str, Any],
+    side_snapshot: pd.DataFrame | None = None,
 ) -> D3Result:
     """Path R fields only come from Path R crossings. Path F cannot bind."""
     result = D3Result(
@@ -408,6 +420,7 @@ def assemble_envelope(
         monotonicity=monotonicity,
         crossings=crossings,
         curves=curves,
+        side_snapshot=side_snapshot if side_snapshot is not None else pd.DataFrame(),
         reconciliation=reconciliation,
         manifest=manifest,
     )
@@ -456,6 +469,13 @@ def reconcile_d3_endpoints(book: D3Book, *, official: bool) -> list[dict[str, An
     rows.append(_recon_row("F_h1_pnl", hybrid["pnl"], p_hybrid, dollar_tolerance(p_hybrid)))
     rows.append(_recon_row("R_h0_pnl", r0["pnl"], p_mid, dollar_tolerance(p_mid)))
     rows.append(_recon_row("R_h1_pnl", r1["pnl"], p_cross, dollar_tolerance(p_cross)))
+    if official and (book.car_mid_ref is None or book.car_cross_ref is None):
+        raise D3AnalysisError("official CAR references missing")
+    if book.car_mid_ref is not None:
+        rows.append(_recon_row("F_h0_car", mid["car"], book.car_mid_ref, CAR_TOLERANCE))
+        rows.append(_recon_row("R_h0_car", r0["car"], book.car_mid_ref, CAR_TOLERANCE))
+    if book.car_cross_ref is not None:
+        rows.append(_recon_row("R_h1_car", r1["car"], book.car_cross_ref, CAR_TOLERANCE))
     for label, got, col in (("R_h0_Q", r0["quantities"], "quantity_mid"), ("R_h1_Q", r1["quantities"], "quantity_cross")):
         ref = book.trades.set_index(list(TRADE_KEY))[col]
         aligned = got.reindex(ref.index)
@@ -546,6 +566,16 @@ def run_d3_from_book(
         Crossing("F", "diagnostic", "car_0", 0.0, h_f_car0, "bracket_bisection"),
     ]
     curves = evaluate_paths(book, H_VIS)
+    snapshot = side_snapshots_at_roots(
+        book,
+        {
+            "h=0": 0.0,
+            "h_R_50": h_r_50,
+            "h_R_25": h_r_25,
+            "h_R_P0": h_r_p0,
+            "h=1": 1.0,
+        },
+    )
     return assemble_envelope(
         h_R_50=h_r_50,
         h_R_25=h_r_25,
@@ -563,6 +593,7 @@ def run_d3_from_book(
             "CAR_R": monotonic_nonincreasing(car_r, CAR_TOLERANCE),
         },
         manifest={"d3_code_commit_sha": get_current_repo_sha(), "official": official},
+        side_snapshot=snapshot,
     )
 
 
@@ -572,13 +603,14 @@ def _wing_width(direction: str, max_loss: float, net_credit: float) -> float | N
     return float(max_loss) + float(net_credit)
 
 
-def load_official_book(run_dir: Path) -> D3Book:
-    mid_trades, mid_legs = load_fill_primary_tables(run_dir, "mid")
-    cross_trades, _cross_legs = load_fill_primary_tables(run_dir, "cross")
+def join_paired_trades(mid_trades: pd.DataFrame, cross_trades: pd.DataFrame) -> pd.DataFrame:
+    """Join mid/cross trades. ``direction`` lives on ``TRADE_KEY``, so recover it from the index."""
     mid = mid_trades.set_index(list(TRADE_KEY))
     cross = cross_trades.set_index(list(TRADE_KEY))
     if set(mid.index) != set(cross.index):
         raise D3AnalysisError("mid/cross included keys do not match")
+    if "direction" in mid.columns:
+        raise D3AnalysisError("direction must come from TRADE_KEY, not a leftover column")
     joined = pd.DataFrame(
         {
             "quantity_mid": mid["quantity"],
@@ -593,10 +625,11 @@ def load_official_book(run_dir: Path) -> D3Book:
             "net_credit_cross": cross["net_credit_per_share"],
             "max_loss_mid": mid["max_loss_per_share"],
             "max_loss_cross": cross["max_loss_per_share"],
-            "direction": mid["direction"],
             "instrument_type": mid["instrument_type"],
         }
     ).reset_index()
+    if "direction" not in joined.columns:
+        raise D3AnalysisError("direction missing after TRADE_KEY index reset")
     widths = []
     for row in joined.itertuples(index=False):
         mid_w = _wing_width(row.direction, row.max_loss_mid, row.net_credit_mid)
@@ -605,12 +638,155 @@ def load_official_book(run_dir: Path) -> D3Book:
             raise D3AnalysisError("wing_width mid vs cross mismatch")
         widths.append(mid_w)
     joined["wing_width"] = widths
+    return joined
+
+
+def filter_primary_date_status(
+    date_status: pd.DataFrame,
+    *,
+    require_traded_dates: int | None = None,
+) -> pd.DataFrame:
+    status = date_status.copy()
+    status["trade_date"] = pd.to_datetime(status["trade_date"]).dt.date
+    status = status[
+        (status["trade_date"] >= PRIMARY_START) & (status["trade_date"] <= PRIMARY_END)
+    ].copy()
+    n_traded = int(status.loc[status["status"] == "traded", "trade_date"].nunique())
+    if require_traded_dates is not None and n_traded != int(require_traded_dates):
+        raise D3AnalysisError(
+            f"primary traded dates={n_traded}, expected {require_traded_dates}"
+        )
+    return status.reset_index(drop=True)
+
+
+def side_snapshots_at_roots(
+    book: D3Book,
+    marks: dict[str, float | None],
+) -> pd.DataFrame:
+    """Evaluate Path R long/short P&L at exact root values, not on H_vis."""
+    rows = []
+    for label, h in marks.items():
+        if h is None:
+            continue
+        metrics = evaluate_path_at_h(book, float(h), path="R")
+        rows.append(
+            {
+                "mark": label,
+                "h": float(h),
+                "pnl_long": metrics["pnl_long"],
+                "pnl_short": metrics["pnl_short"],
+                "pnl": metrics["pnl"],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def load_official_book(run_dir: Path) -> D3Book:
+    mid_trades, mid_legs = load_fill_primary_tables(run_dir, "mid")
+    cross_trades, _cross_legs = load_fill_primary_tables(run_dir, "cross")
+    joined = join_paired_trades(mid_trades, cross_trades)
     date_status = pd.read_parquet(
         run_dir / "date_status_sprint006_baseline_v1_mid.parquet",
         columns=["trade_date", "status", "reason"],
     )
-    date_status["trade_date"] = pd.to_datetime(date_status["trade_date"]).dt.date
-    return D3Book(trades=joined, legs=mid_legs, date_status=date_status)
+    date_status = filter_primary_date_status(
+        date_status, require_traded_dates=EXPECTED_TRADED_DATES
+    )
+    try:
+        car_mid = float(
+            load_accepted_primary_block(run_dir, "mid")["view_a_conditional"]["mean_cycle_car"]
+        )
+        car_cross = float(
+            load_accepted_primary_block(run_dir, "cross")["view_a_conditional"]["mean_cycle_car"]
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise D3AnalysisError(f"official CAR references missing: {exc}") from exc
+    return D3Book(
+        trades=joined,
+        legs=mid_legs,
+        date_status=date_status,
+        car_mid_ref=car_mid,
+        car_cross_ref=car_cross,
+    )
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, float):
+        return value
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except (ValueError, AttributeError):
+            return value
+    return value
+
+
+def resolve_evidence_dir() -> Path:
+    override = os.environ.get(EVIDENCE_DIR_ENV)
+    if override:
+        path = Path(override)
+    else:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        path = Path(f"C:/MomentumCVG_env/runs/sprint007_d3_{stamp}")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def write_d3_envelope(result: D3Result, output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = result.to_dict()
+    if "h_req" in payload:
+        raise D3AnalysisError("h_req is forbidden")
+    output_path.write_text(json.dumps(_jsonable(payload), indent=2), encoding="utf-8")
+    return output_path
+
+
+def write_d3_tables(result: D3Result, evidence_dir: Path) -> dict[str, Path]:
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "envelope": evidence_dir / "d3_envelope.json",
+        "curves": evidence_dir / "d3_curves.csv",
+        "crossings": evidence_dir / "d3_crossings.csv",
+        "side_snapshot": evidence_dir / "d3_side_snapshot.csv",
+    }
+    write_d3_envelope(result, paths["envelope"])
+    result.curves.to_csv(paths["curves"], index=False)
+    pd.DataFrame([row.as_record() for row in result.crossings]).to_csv(
+        paths["crossings"], index=False
+    )
+    result.side_snapshot.to_csv(paths["side_snapshot"], index=False)
+    return paths
+
+
+def write_execution_receipt(
+    *,
+    evidence_dir: Path,
+    executed_notebook: Path,
+    html_export: Path,
+    d3_code_commit_sha: str | None = None,
+) -> Path:
+    receipt = {
+        "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "d3_code_commit_sha": d3_code_commit_sha or get_current_repo_sha(),
+        "sprint006_execution_repo_sha": "e205b9acc5d0400aa38169de721acb7fb8268f29",
+        "executed_notebook": str(executed_notebook),
+        "executed_notebook_sha256": sha256_file(executed_notebook),
+        "html_export": str(html_export),
+        "html_export_sha256": sha256_file(html_export),
+    }
+    path = evidence_dir / "execution_receipt.json"
+    path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+    return path
+
+
+def export_d3_evidence(result: D3Result, evidence_dir: Path | None = None) -> dict[str, Path]:
+    """Write design artifacts. Does not execute the notebook or load official runs."""
+    evidence_dir = evidence_dir or resolve_evidence_dir()
+    return write_d3_tables(result, evidence_dir)
 
 
 def run_d3_analysis(

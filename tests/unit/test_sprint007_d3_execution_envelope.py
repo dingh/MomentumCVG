@@ -6,6 +6,8 @@ from datetime import date
 import pandas as pd
 import pytest
 
+from src.backtest.surface_decision_report import PRIMARY_END, PRIMARY_START
+
 from src.backtest.pipeline import _apply_tier_a_sizing
 from src.backtest.sprint007_d1_gross_margin import VERDICT_CONTINUE, VERDICT_STOP
 from src.backtest.sprint007_d2_shortfall_bridge import CLASS_EXECUTION, CLASS_MIXED
@@ -19,12 +21,19 @@ from src.backtest.sprint007_d3_execution_envelope import (
     D3Book,
     assemble_envelope,
     check_prerequisites,
+    CAR_TOLERANCE,
+    H_VIS,
     evaluate_path_at_h,
+    export_d3_evidence,
     fill_price_at_h,
+    filter_primary_date_status,
     first_adverse_crossing,
+    join_paired_trades,
     package_entry_cost_at_h,
     path_f_pnl_crossing,
+    reconcile_d3_endpoints,
     run_d3_from_book,
+    side_snapshots_at_roots,
     size_book_at_h,
 )
 
@@ -236,6 +245,102 @@ def test_prerequisite_d1_stop_blocks() -> None:
     assert result.verdict == VERDICT_BLOCKED
 
 
+def test_join_recovers_direction_from_trade_key() -> None:
+    mid, cross = _paired_trade_frames()
+    indexed = mid.set_index(["trade_date", "ticker", "direction"])
+    assert "direction" not in indexed.columns
+    joined = join_paired_trades(mid, cross)
+    assert "direction" in joined.columns
+    assert set(joined["direction"]) == {"long", "short"}
+    assert len(joined) == 2
+    assert float(joined.loc[joined["direction"] == "long", "quantity_mid"].iloc[0]) == 2.0
+
+
+def test_primary_calendar_filters_and_requires_traded_dates() -> None:
+    status = pd.DataFrame(
+        [
+            {"trade_date": date(2019, 12, 30), "status": "traded", "reason": "pre"},
+            {"trade_date": date(2020, 1, 6), "status": "traded", "reason": "ok"},
+            {"trade_date": date(2021, 2, 1), "status": "traded", "reason": "ok"},
+            {"trade_date": date(2021, 2, 8), "status": "valid_no_trade", "reason": "skip"},
+            {"trade_date": date(2026, 7, 17), "status": "traded", "reason": "post"},
+        ]
+    )
+    filtered = filter_primary_date_status(status)
+    dates = set(filtered["trade_date"])
+    assert date(2019, 12, 30) not in dates
+    assert date(2026, 7, 17) not in dates
+    assert dates <= {d for d in dates if PRIMARY_START <= d <= PRIMARY_END}
+    ok = filter_primary_date_status(status, require_traded_dates=2)
+    assert int(ok.loc[ok["status"] == "traded", "trade_date"].nunique()) == 2
+    with pytest.raises(D3AnalysisError, match="primary traded dates"):
+        filter_primary_date_status(status, require_traded_dates=341)
+
+
+def test_car_endpoint_reconciliation() -> None:
+    book = _tier_a_matched_long_book()
+    f0 = evaluate_path_at_h(book, 0.0, path="F")
+    r0 = evaluate_path_at_h(book, 0.0, path="R")
+    r1 = evaluate_path_at_h(book, 1.0, path="R")
+    assert f0["car"] == pytest.approx(r0["car"], abs=CAR_TOLERANCE)
+    book.car_mid_ref = f0["car"]
+    book.car_cross_ref = r1["car"]
+    rows = {row["metric"]: row for row in reconcile_d3_endpoints(book, official=False)}
+    assert rows["F_h0_car"]["passed"]
+    assert rows["R_h0_car"]["passed"]
+    assert rows["R_h1_car"]["passed"]
+    assert "F_h1_car" not in rows
+    assert abs(rows["F_h0_car"]["delta"]) <= CAR_TOLERANCE
+    missing = _tier_a_matched_long_book()
+    with pytest.raises(D3AnalysisError, match="CAR references missing"):
+        reconcile_d3_endpoints(missing, official=True)
+    book.car_mid_ref = float(f0["car"]) + 0.01
+    failed = {row["metric"]: row for row in reconcile_d3_endpoints(book, official=False)}
+    assert failed["F_h0_car"]["passed"] is False
+    assert failed["R_h0_car"]["passed"] is False
+
+
+def test_side_snapshot_uses_exact_off_grid_root() -> None:
+    h_star = 0.033
+    assert h_star not in H_VIS
+    book = _long_book(p_mid=20.0, p_cross=-10.0, qty=2.0)
+    expected = evaluate_path_at_h(book, h_star, path="R")
+    snap = side_snapshots_at_roots(book, {"h=0": 0.0, "h_R_50": h_star, "h=1": 1.0})
+    row = snap.loc[snap["mark"] == "h_R_50"].iloc[0]
+    assert row["h"] == pytest.approx(h_star)
+    assert row["pnl"] == pytest.approx(expected["pnl"])
+    assert row["pnl_long"] == pytest.approx(expected["pnl_long"])
+    assert row["pnl_short"] == pytest.approx(expected["pnl_short"])
+    vis_hit = snap.loc[snap["h"].isin(H_VIS) & (snap["mark"] == "h_R_50")]
+    assert vis_hit.empty
+
+
+def test_evidence_exporter_writes_design_files(tmp_path) -> None:
+    result = assemble_envelope(
+        h_R_50=0.4,
+        h_R_25=0.5,
+        h_R_P0=0.6,
+        h_R_CAR0=0.55,
+        h_F_50=0.2,
+        h_F_25=0.3,
+        h_F_P0=0.35,
+        h_F_CAR0=0.33,
+        crossings=[Crossing("R", "primary", "pnl_50", 50.0, 0.4, "bracket_bisection")],
+        curves=pd.DataFrame([{"h": 0.0, "path": "R", "pnl": 1.0}]),
+        reconciliation=[],
+        monotonicity={},
+        manifest={"official": False},
+        side_snapshot=pd.DataFrame([{"mark": "h_R_50", "h": 0.4, "pnl_long": 1.0, "pnl_short": 0.0}]),
+    )
+    paths = export_d3_evidence(result, tmp_path)
+    payload = (tmp_path / "d3_envelope.json").read_text(encoding="utf-8")
+    assert "h_req" not in payload
+    assert paths["envelope"].exists()
+    assert paths["curves"].exists()
+    assert paths["crossings"].exists()
+    assert paths["side_snapshot"].exists()
+
+
 def test_headroom_no_crossing_token() -> None:
     result = assemble_envelope(
         h_R_50=0.2,
@@ -298,6 +403,91 @@ def _long_book(*, p_mid: float, p_cross: float, qty: float) -> D3Book:
     status = pd.DataFrame(
         [{"trade_date": trade_date, "status": "traded", "reason": "ok"}]
     )
+    return D3Book(trades=trades, legs=legs, date_status=status)
+
+
+def _paired_trade_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
+    mid = pd.DataFrame(
+        [
+            {
+                "trade_date": date(2021, 1, 4),
+                "ticker": "AAA",
+                "direction": "long",
+                "quantity": 2.0,
+                "pnl_per_share": 10.0,
+                "pnl_total": 20.0,
+                "entry_cost_per_share": 4.0,
+                "net_credit_per_share": -4.0,
+                "max_loss_per_share": 4.0,
+                "instrument_type": "long_straddle",
+            },
+            {
+                "trade_date": date(2021, 1, 4),
+                "ticker": "BBB",
+                "direction": "short",
+                "quantity": -3.0,
+                "pnl_per_share": 5.0,
+                "pnl_total": 15.0,
+                "entry_cost_per_share": -2.0,
+                "net_credit_per_share": 2.0,
+                "max_loss_per_share": 8.0,
+                "instrument_type": "iron_fly",
+            },
+        ]
+    )
+    cross = mid.copy()
+    cross["quantity"] = [-1.0, -6.0]
+    cross["pnl_per_share"] = [-4.0, -1.0]
+    cross["pnl_total"] = [4.0, 6.0]
+    cross["entry_cost_per_share"] = [6.0, -1.0]
+    cross["net_credit_per_share"] = [-6.0, 1.0]
+    cross["max_loss_per_share"] = [6.0, 9.0]
+    return mid, cross
+
+
+def _tier_a_matched_long_book() -> D3Book:
+    """Long-only book whose Path R size at h=0/1 matches quantity_mid/cross."""
+    trade_date = date(2021, 1, 4)
+    qty_mid = 10000.0 / 4.0
+    qty_cross = 10000.0 / 6.0
+    trades = pd.DataFrame(
+        [
+            {
+                "trade_date": trade_date,
+                "ticker": "AAA",
+                "direction": "long",
+                "quantity_mid": qty_mid,
+                "quantity_cross": qty_cross,
+                "pnl_per_share_mid": 2.0,
+                "pnl_per_share_cross": -1.0,
+                "pnl_total_mid": qty_mid * 2.0,
+                "pnl_total_cross": qty_cross * -1.0,
+                "wing_width": None,
+                "instrument_type": "long_straddle",
+            }
+        ]
+    )
+    legs = pd.DataFrame(
+        [
+            {
+                "trade_date": trade_date,
+                "ticker": "AAA",
+                "direction": "long",
+                "unit_quantity": 1,
+                "bid": 1.0,
+                "ask": 3.0,
+            },
+            {
+                "trade_date": trade_date,
+                "ticker": "AAA",
+                "direction": "long",
+                "unit_quantity": 1,
+                "bid": 1.0,
+                "ask": 3.0,
+            },
+        ]
+    )
+    status = pd.DataFrame([{"trade_date": trade_date, "status": "traded", "reason": "ok"}])
     return D3Book(trades=trades, legs=legs, date_status=status)
 
 
