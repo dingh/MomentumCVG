@@ -26,7 +26,7 @@
 | **Primary unit** | Dollar `pnl_total`. View A mean cycle CAR is the companion profitability check. |
 | **Runtime** | Minutes on official artifacts. |
 
-D3 states a Path R **envelope** (50% / 25% / dollar break-even, plus companion CAR) and **unmodeled-friction headroom**. It does not collapse those marks into a single executable fill, and it does not state that the required package execution is attainable from historical end-of-day quotes.
+D3 states a Path R **envelope** (50% / 25% / dollar break-even, plus companion CAR) and **unmodeled-friction headroom** between those Path R marks. Distances from break-even to full cross are reported separately and are not headroom. It does not collapse those marks into a single executable fill, and it does not state that the required package execution is attainable from historical end-of-day quotes.
 
 ---
 
@@ -258,18 +258,27 @@ State the primary result as:
 
 Report Path F as a comparison table and as \(h_{R,\cdot} - h_{F,\cdot}\) (positive means resizing **relaxes** that threshold relative to frozen \(Q_{\mathrm{mid}}\)). Path F remaining positive is not executable return.
 
-### Headroom (Path R only)
+### Headroom and distances (Path R only)
+
+**Headroom** is only the gap between consecutive Path R dollar-margin marks:
 
 ```
-headroom_50_to_25     = h_{R,25} − h_{R,50}      if both exist, else no_crossing
-headroom_25_to_P0     = h_{R,P0} − h_{R,25}      if both exist, else no_crossing
-headroom_P0_to_cross  = 1 − h_{R,P0}             if h_{R,P0} exists, else no_crossing
-headroom_CAR0_to_cross = 1 − h_{R,CAR0}          if h_{R,CAR0} exists, else no_crossing
+headroom_50_to_25 = h_{R,25} − h_{R,50}      if both exist, else no_crossing
+headroom_25_to_P0 = h_{R,P0} − h_{R,25}      if both exist, else no_crossing
 ```
+
+A **positive** value means additional execution-cost capacity remains between those marks. **Zero or negative** means no additional room. Zero or negative headroom, or a later mark occurring **at or before** the prior mark, means **no** remaining room for commissions, missed fills, timing, or adverse selection under that frozen buffer. That is a disclosed fact, not a viability slogan.
 
 A missing later mark (`no_crossing`) means that buffer or break-even is never hit on \([0,1]\); headroom to it is not a finite \(h\) gap.
 
-Headroom \(\le 0\) between consecutive Path R dollar marks, or \(h_{R,P0}\) / \(h_{R,\mathrm{CAR}0}\) already at or beyond the prior mark, means **no** remaining room for commissions, missed fills, timing, or adverse selection under that frozen buffer. That is a disclosed fact, not a viability slogan.
+**Distances to full cross** measure how far \(h=1\) lies beyond break-even. They are **not** remaining headroom for commissions or other unmodeled costs:
+
+```
+distance_P0_to_cross   = 1 − h_{R,P0}      if h_{R,P0} exists, else no_crossing
+distance_CAR0_to_cross = 1 − h_{R,CAR0}    if h_{R,CAR0} exists, else no_crossing
+```
+
+Do not name these `headroom_*`. A large distance to cross can coexist with zero headroom between 50% and 25%, or between 25% and dollar break-even.
 
 Commissions, fill probability, and other unmodeled frictions are **not** subtracted. They are why the 50% / 25% buffers exist.
 
@@ -326,7 +335,7 @@ Do not add a second economic engine, a fill-ladder search, or a new `src/analysi
 - `path_f_pnl_crossing(alpha, P_mid, delta_price) -> float` — closed form for \(\alpha \in \{0.50, 0.25, 0.00\}\)
 - `first_adverse_crossing(eval_fn, target) -> float | None` — `H_det` + midpoint miss-check + bisection to `H_TOL`; not `H_vis` interpolation
 - `reconcile_d3_endpoints(...) -> ReconciliationResult`
-- `run_d3_analysis() -> D3Result` — prereqs, curves, Path R envelope \(\{h_{R,50}, h_{R,25}, h_{R,P0}, h_{R,\mathrm{CAR}0}\}\), Path F diagnostics, Path R headroom, monotonicity flags, verdict. **No `h_req`.**
+- `run_d3_analysis() -> D3Result` — prereqs, curves, Path R envelope \(\{h_{R,50}, h_{R,25}, h_{R,P0}, h_{R,\mathrm{CAR}0}\}\), Path F diagnostics, Path R headroom (`headroom_50_to_25`, `headroom_25_to_P0`), distances to cross (`distance_P0_to_cross`, `distance_CAR0_to_cross`), monotonicity flags, verdict. **No `h_req`.**
 
 Target footprint: ~200–280 LOC helper; ~120–180 LOC tests.
 
@@ -344,7 +353,7 @@ Committed notebook: `notebooks/sprint007/d3_execution_envelope.ipynb` (clean; no
 | 3 | Path R and Path F curves on \(H_{\mathrm{vis}}\) | accepted calculation |
 | 4 | Path R envelope \(\{h_{R,50}, h_{R,25}, h_{R,P0}\}\) and companion \(h_{R,\mathrm{CAR}0}\) | D3 gate statistic |
 | 5 | Path F diagnostics and \(h_R - h_F\) resize gaps (F does not bind) | exploratory description |
-| 6 | Path R headroom between 50%, 25%, dollar break-even, and \(h=1\) | D3 gate statistic |
+| 6 | Path R headroom (`50→25`, `25→P0`) and distances to cross (`P0→1`, `CAR0→1`) | D3 gate statistic |
 | 7 | Long vs short \(P(h)\) at \(\{0, h_{R,50}, h_{R,25}, h_{R,P0}, 1\}\) | exploratory description |
 | 8 | Visualizations | exploratory description |
 | 9 | Limits: envelope ≠ one fill; requirement ≠ attainability; no D4 label | — |
@@ -366,7 +375,7 @@ Directory: `C:/MomentumCVG_env/runs/sprint007_d3_<timestamp>/`
 
 | File | Content |
 |---|---|
-| `d3_envelope.json` | prereqs, endpoint Δ, Path R \(\{h_{R,50}, h_{R,25}, h_{R,P0}, h_{R,\mathrm{CAR}0}\}\), Path F diagnostics, \(h_R-h_F\) gaps, Path R headroom, monotonicity flags, root-finder tolerances, verdict. **No `h_req`.** |
+| `d3_envelope.json` | prereqs, endpoint Δ, Path R \(\{h_{R,50}, h_{R,25}, h_{R,P0}, h_{R,\mathrm{CAR}0}\}\), Path F diagnostics, \(h_R-h_F\) gaps, `headroom_50_to_25`, `headroom_25_to_P0`, `distance_P0_to_cross`, `distance_CAR0_to_cross`, monotonicity flags, root-finder tolerances, verdict. **No `h_req`.** |
 | `d3_curves.csv` | one row per \(h \in H_{\mathrm{vis}}\): \(P\), CAR, \(\sum|Q|\), capital, side \(P\) for R and F |
 | `d3_crossings.csv` | path (`R` primary / `F` diagnostic), metric, target, \(h^*\), `no_crossing`, method (`closed_form` \| `bracket_bisection`) |
 | `d3_side_snapshot.csv` | long/short \(P\) at \(h \in \{0, h_{R,50}, h_{R,25}, h_{R,P0}, 1\}\) |
@@ -386,7 +395,8 @@ Directory: `C:/MomentumCVG_env/runs/sprint007_d3_<timestamp>/`
 - [ ] Nonlinear roots use `H_det` + midpoint miss-check + bisection to `H_TOL`; `H_vis` interpolation is not the root
 - [ ] Non-monotonic series use the first crossing from \(h=0\); monotonicity is disclosed
 - [ ] Path F P&L roots match the closed form for \(\alpha \in \{0.50, 0.25, 0.00\}\)
-- [ ] Path R headroom between 50%, 25%, dollar break-even, and \(h=1\) is reported, or shown `no_crossing`
+- [ ] Path R `headroom_50_to_25` and `headroom_25_to_P0` are reported (positive = remaining execution-cost capacity; zero/negative = none), or shown `no_crossing`
+- [ ] `distance_P0_to_cross` and `distance_CAR0_to_cross` are reported as distance beyond break-even, not as headroom
 - [ ] Requirement and attainability are separate sentences; forbid-list language is absent
 - [ ] `tests/unit/test_sprint007_d3_execution_envelope.py` passes
 - [ ] Clean committed notebook + executed evidence outside repo
@@ -450,7 +460,7 @@ Directory: `C:/MomentumCVG_env/runs/sprint007_d3_<timestamp>/`
 D3 must end with four sentences, filled from **Path R** numbers:
 
 1. **Envelope:** on the resized book, \(h < h_{R,50}\) retains at least 50% of midpoint dollar P&L; \(h < h_{R,25}\) retains at least 25%; \(h < h_{R,P0}\) remains dollar-profitable. Path R CAR first reaches zero at \(h_{R,\mathrm{CAR}0}\) (companion).
-2. **Headroom:** Path R gaps \(h_{R,25}-h_{R,50}\), \(h_{R,P0}-h_{R,25}\), and \(1-h_{R,P0}\) (and companion \(1-h_{R,\mathrm{CAR}0}\)), or `no_crossing` where a later mark is never hit.
+2. **Headroom:** Path R `headroom_50_to_25` and `headroom_25_to_P0` (positive = additional execution-cost capacity; zero/negative = none), or `no_crossing` where a later mark is never hit. Separately, `distance_P0_to_cross` and `distance_CAR0_to_cross` state how far full cross lies beyond break-even; those distances are not headroom.
 3. **Unknown:** whether any package order would fill inside that envelope; commissions, missed fills, timing, and adverse selection; counterfactual structures. Historical quotes do not validate complex-order execution.
 4. **Not claimed:** that midpoint is attainable; that any one of \(h_{R,50}\), \(h_{R,25}\), or \(h_{R,P0}\) is a live limit price; that Path F is the executable book; or that a filter / side / structure change would preserve the midpoint book.
 
