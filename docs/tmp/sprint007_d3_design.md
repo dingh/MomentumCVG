@@ -16,15 +16,17 @@
 | Item | D3 design decision |
 |---|---|
 | **Question** | What fraction of the quoted half-spread can the frozen Sprint 006 selected option book afford to pay while remaining profitable and retaining meaningful economic margin? |
-| **Class** | `D3_EXECUTION_FOCUSED` — one **book-level** requirement. Side splits are descriptive only. |
+| **Class** | `D3_EXECUTION_FOCUSED` — one **book-level Path R envelope**. Side splits are descriptive only. |
+| **Answer shape** | A **range**, not one chosen fill: below \(h_{R,50}\) retains 50% of midpoint P&L; below \(h_{R,25}\) retains 25%; below \(h_{R,P0}\) remains dollar-profitable. CAR break-even is companion only. |
+| **Primary path** | **R** (Tier-A quantities recomputed by trade date at each \(h\)). |
+| **Diagnostic path** | **F** (midpoint quantities held fixed). Shows the effect of resizing. Must not bind the Path R envelope. |
 | **Method** | Notebook-first. One read-only helper. One unit-test file. No `SurfaceRunner`. |
 | **Fill coordinate** | \(h \in [0,1]\): \(h=0\) midpoint, \(h=1\) full cross. \(h\) is the fraction of the quoted half-spread paid (bought legs) or given up (sold legs). |
 | **Population** | Frozen 9,212 included keys; frozen contracts, structures, quotes, and expiry payoffs. |
-| **Two paths** | **F** = midpoint quantities held fixed. **R** = Tier-A quantities recomputed by trade date at each \(h\). |
 | **Primary unit** | Dollar `pnl_total`. View A mean cycle CAR is the companion profitability check. |
 | **Runtime** | Minutes on official artifacts. |
 
-D3 states a **requirement** and **unmodeled-friction headroom**. It does not state that the required package execution is attainable from historical end-of-day quotes.
+D3 states a Path R **envelope** (50% / 25% / dollar break-even, plus companion CAR) and **unmodeled-friction headroom**. It does not collapse those marks into a single executable fill, and it does not state that the required package execution is attainable from historical end-of-day quotes.
 
 ---
 
@@ -88,10 +90,10 @@ p_i(h) = (1 − h) p_i,mid + h p_i,cross
 
 ### Two evaluation paths
 
-| Path | Quantity | What it isolates |
+| Path | Quantity | Role |
 |---|---|---|
-| **F — fixed \(Q_{\mathrm{mid}}\)** | Official midpoint `abs(quantity)` | Direct price concession (D2 \(\Delta_{\mathrm{price}}\) / Laspeyres) |
-| **R — resized** | Recompute Tier A **separately by `trade_date`** at that \(h\) | Official engine path, including fill-dependent short size and long financing |
+| **R — resized** | Recompute Tier A **separately by `trade_date`** at that \(h\) | **Primary.** Official engine path, including fill-dependent short size and long financing. The D3 envelope is Path R only. |
+| **F — fixed \(Q_{\mathrm{mid}}\)** | Official midpoint `abs(quantity)` | **Diagnostic.** Isolates direct price concession (D2 \(\Delta_{\mathrm{price}}\) / Laspeyres) so resizing can be compared. Must not bind Path R. |
 
 **Path F P&L (closed form):**
 
@@ -145,78 +147,129 @@ capital_i(h) = |Q_i| · at_risk_per_share_i(h)
 
 Rebuild `date_summary` with `build_date_summary` from the \(h\)-path trade rows. View A mean cycle CAR = `compute_view_a(official_date_status, date_summary(h))["mean_cycle_car"]` — same D1 definition (mean of `cycle_return_on_capital_at_risk` on traded dates; no `valid_no_trade` zero-fill). Use official `date_status` so the calendar is frozen.
 
-### Evaluation grid (bounded; not a fill ladder)
+### Visualization grid (not the Path R root)
 
 Path F dollar P&L uses the closed form. CAR (both paths) and Path R P&L / quantities / capital are nonlinear.
 
-Freeze one visualization-and-scan grid:
+Freeze one **visualization** grid for the four charts and `d3_curves.csv`:
 
 ```
-H = {0.00, 0.05, 0.10, …, 1.00}     # 21 points
+H_vis = {0.00, 0.05, 0.10, …, 1.00}     # 21 points
 ```
 
-This is bounded sensitivity, not a strategy search. Intermediate \(h\) values are not candidate execution policies.
+`H_vis` is bounded sensitivity for plots, not a strategy search, and **not** the authoritative Path R root. Do not take a linear interpolate across a 5% `H_vis` interval as \(h_{R,\cdot}\). Intermediate \(h\) values are not candidate execution policies.
 
-### First-adverse crossing
+### First-adverse crossing (authoritative root)
 
-For a scalar series \(m(h)\) and target \(T\), with \(m(0) > T\):
+For a scalar \(m(h)\) and target \(T\), with \(m(0) > T\):
 
 ```
 h*(m, T) = min { h ∈ [0, 1] : m(h) ≤ T }
 ```
 
-Scan \(H\) from \(h=0\). On the **first** interval \([h_i, h_{i+1}]\) where \(m(h_{i+1}) \le T\), linearly interpolate inside that interval only. If \(m\) later recovers above \(T\), ignore the recovery.
+If \(m\) later recovers above \(T\), ignore the recovery. Do not take the most favorable root. Do not fit a global polynomial.
 
 If \(m(0) \le T\) → `D3_BLOCKED` (conflicts with accepted D1 margin).  
-If \(m(h) > T\) for all \(h \in H\) → that target does **not** constrain (`no_crossing`).  
-Do not take the most favorable root. Do not fit a global polynomial.
+If \(m(h) > T\) for all evaluated detection points and the refined search never brackets → that target does **not** constrain (`no_crossing`).
 
-Closed-form check (Path F P&L only, \(\Delta_{\mathrm{price}} < 0\)):
+**Path F P&L** uses the closed form (no grid root). With \(\Delta_{\mathrm{price}} < 0\) and \(M = P_{\mathrm{mid}}\):
 
 ```
-h_F(P ≤ α P_mid) = (1 − α) P_mid / (−Δ_price)     for α ∈ {1.00, 0.50, 0.25}
+h_F(P ≤ α M) = (1 − α) M / (−Δ_price)     for α ∈ {0.50, 0.25, 0.00}
 ```
 
-Interpolated Path F P&L crossings must match this within \(10^{-6}\) in \(h\).
+That is \(h_{F,50}\), \(h_{F,25}\), and \(h_{F,P0}\). Closed-form Path F P&L crossings must match this within \(10^{-6}\) in \(h\).
+
+**Path R P&L, Path R CAR, and Path F CAR** are nonlinear. Authoritative \(h^*\) is **bracket then refine**, not 5% interpolation.
+
+**1. Detection (cannot miss a first crossing that exists on the detection set)**
+
+```
+H_det = {0.00, 0.01, 0.02, …, 1.00}     # 101 points, step 0.01
+```
+
+Evaluate \(m\) on `H_det` from \(h=0\). For every adjacent pair with **both** endpoints \(> T\), also evaluate the midpoint (the missed-dip check). Scan `H_det` ∪ those midpoints in increasing \(h\).
+
+The **first bracket** is the leftmost pair \((h_L, h_R)\) in that ordered set such that \(m(h_L) > T\) and \(m(h_R) \le T\).
+
+Also record a **monotonicity diagnostic** on `H_det`: `monotonic_nonincreasing` is true iff \(m(h_{i+1}) \le m(h_i) + \tau_m\) for every adjacent pair, where \(\tau_m\) is the metric tolerance below. Non-monotonicity does **not** change the first-adverse rule; it is disclosed so a later recovery cannot be mistaken for the requirement.
+
+The 0.01 detection step plus the midpoint check is the frozen guard against a crossing that `H_vis` (step 0.05) would skip. A dip that stays entirely between a detection point and its midpoint (width 0.005) and still hits \(T\) is accepted residual risk; it is not repaired by denser ad-hoc grids after output.
+
+**2. Refinement (declared tolerance)**
+
+Bisection on the first bracket \([h_L, h_R]\):
+
+```
+while h_R − h_L > H_TOL:
+    h_mid = 0.5 (h_L + h_R)
+    if m(h_mid) ≤ T:
+        h_R = h_mid
+    else:
+        h_L = h_mid
+return h_R
+```
+
+\(h_R\) is the first evaluated point known to satisfy \(m \le T\), within `H_TOL`.
+
+| Tolerance | Value |
+|---|---|
+| `H_TOL` | \(10^{-4}\) in \(h\) |
+| \(\tau_P\) (P&L) | `max($0.01, 1e-9 · |M|)` |
+| \(\tau_{\mathrm{CAR}}\) | \(10^{-9}\) |
+
+Bisection stops on `H_TOL` only. \(\tau_P\) / \(\tau_{\mathrm{CAR}}\) are endpoint-reconciliation and monotonicity-slack tolerances, not a second root rule.
+
+**3. Path F must not enter the Path R envelope**
+
+Path F thresholds are computed with the same first-adverse definition (closed form for P&L; bracket-and-refine for CAR). They are diagnostics only. They must not replace, minimize with, or bind \(h_{R,50}\), \(h_{R,25}\), \(h_{R,P0}\), or \(h_{R,\mathrm{CAR}0}\).
 
 ### Thresholds (frozen before output)
 
 Let \(M = P_{\mathrm{mid}}\) (accepted D1 dollar margin). **Economic margin** is dollar P&L. CAR is not used for the 50% / 25% buffers.
 
+**Primary (Path R) — the D3 envelope:**
+
 | ID | Condition | Meaning |
 |---|---|---|
-| `h_margin_50` | first \(P(h) \le 0.50\,M\) | half of midpoint dollar margin remains |
-| `h_margin_25` | first \(P(h) \le 0.25\,M\) | one-quarter remains (declared meaningful-margin floor) |
-| `h_pnl_0` | first \(P(h) \le 0\) | dollar break-even |
-| `h_car_0` | first View A mean cycle CAR \(\le 0\) | companion profitability break-even |
+| \(h_{R,50}\) | first \(P_R(h) \le 0.50\,M\) | half of midpoint dollar margin remains |
+| \(h_{R,25}\) | first \(P_R(h) \le 0.25\,M\) | one-quarter remains (declared meaningful-margin floor) |
+| \(h_{R,P0}\) | first \(P_R(h) \le 0\) | dollar break-even |
+| \(h_{R,\mathrm{CAR}0}\) | first Path R View A mean cycle CAR \(\le 0\) | companion profitability break-even |
 
-Compute all four on Path F and Path R (eight book-level numbers). Side-level analogues are **not** requirement candidates.
+**Diagnostic (Path F) — resize comparison only:**
+
+| ID | Condition |
+|---|---|
+| \(h_{F,50}\), \(h_{F,25}\), \(h_{F,P0}\) | same dollar targets on \(P_F\) (closed form) |
+| \(h_{F,\mathrm{CAR}0}\) | first Path F View A mean cycle CAR \(\le 0\) (bracket-and-refine) |
+
+Side-level analogues are **not** envelope candidates.
 
 The 50% and 25% levels are the unmodeled-friction buffers required by the working plan §6.7 / §10. They are frozen here; they must not be changed after output.
 
-### Portfolio requirement
+There is **no** single `h_req` and **no** `min` across the eight crossings. A 50%-margin mark and a fixed-quantity Path F mark must not be selected as “the” executable fill.
 
-**Relevant** = book-level first-adverse crossings above. Side crossings are descriptive.
+### Path R answer (a range, not one fill)
 
-```
-h_req = min { finite relevant h* }
-```
+State the primary result as:
 
-That is the most restrictive (smallest) affordable half-spread fraction among the eight book-level crossings. Disclose which (path, metric) binds.
+> On the resized book, \(h < h_{R,50}\) retains at least 50% of midpoint dollar P&L; \(h < h_{R,25}\) retains at least 25%; \(h < h_{R,P0}\) remains dollar-profitable. Path R CAR first reaches zero at \(h_{R,\mathrm{CAR}0}\) (companion; not a dollar-margin step).
 
-If Path F and Path R disagree, that is the disclosed sizing-feedback effect (D2 found \(\Delta_{\mathrm{size}}\) not material; D3 still evaluates both because official Sprint 006 economics are Path R). The stated requirement is still the single most restrictive book-level number.
+Report Path F as a comparison table and as \(h_{R,\cdot} - h_{F,\cdot}\) (positive means resizing **relaxes** that threshold relative to frozen \(Q_{\mathrm{mid}}\)). Path F remaining positive is not executable return.
 
-### Headroom
-
-On the **binding path**:
+### Headroom (Path R only)
 
 ```
-headroom_to_pnl_0 = h_pnl_0 − h_req     if h_pnl_0 exists, else no_crossing
-headroom_to_car_0 = h_car_0 − h_req     if h_car_0 exists, else no_crossing
-headroom_to_cross = 1 − h_req
+headroom_50_to_25     = h_{R,25} − h_{R,50}      if both exist, else no_crossing
+headroom_25_to_P0     = h_{R,P0} − h_{R,25}      if both exist, else no_crossing
+headroom_P0_to_cross  = 1 − h_{R,P0}             if h_{R,P0} exists, else no_crossing
+headroom_CAR0_to_cross = 1 − h_{R,CAR0}          if h_{R,CAR0} exists, else no_crossing
 ```
 
-Headroom \(\le 0\) means the requirement already uses the break-even (or worse): **no** remaining room for commissions, missed fills, timing, or adverse selection under the frozen buffers. That is a disclosed fact, not a viability slogan.
+A missing later mark (`no_crossing`) means that buffer or break-even is never hit on \([0,1]\); headroom to it is not a finite \(h\) gap.
+
+Headroom \(\le 0\) between consecutive Path R dollar marks, or \(h_{R,P0}\) / \(h_{R,\mathrm{CAR}0}\) already at or beyond the prior mark, means **no** remaining room for commissions, missed fills, timing, or adverse selection under that frozen buffer. That is a disclosed fact, not a viability slogan.
 
 Commissions, fill probability, and other unmodeled frictions are **not** subtracted. They are why the 50% / 25% buffers exist.
 
@@ -230,9 +283,10 @@ Commissions, fill probability, and other unmodeled frictions are **not** subtrac
 | Path F \(h=1\) \(P\) | D2 hybrid \(P(Q_{\mathrm{mid}}, p_{\mathrm{cross}})\) | D2 dollar rule |
 | Path R \(h=0\) \(P\), CAR, and \(Q\) | official mid \(P\), CAR, and `quantity` | \(P\)/CAR as above; per-trade \|ΔQ\| \(\le \max(10^{-6}, 10^{-9}·|Q_{\mathrm{ref}}|)\) |
 | Path R \(h=1\) \(P\), CAR, and \(Q\) | official cross-primary \(P\), CAR, and `quantity` | same |
-| Path F closed-form vs grid \(P_F(h)\) | \(P_{\mathrm{mid}} + h\,\Delta_{\mathrm{price}}\) | \(P\) dollar rule at every \(h \in H\) |
+| Path F closed-form vs grid \(P_F(h)\) | \(P_{\mathrm{mid}} + h\,\Delta_{\mathrm{price}}\) | \(P\) dollar rule at every \(h \in H_{\mathrm{vis}}\) |
+| Path F P&L roots vs closed form | \(\alpha \in \{0.50, 0.25, 0.00\}\) | \(10^{-6}\) in \(h\) |
 | `wing_width` mid vs cross reconstruction | equal | \(P\) dollar rule |
-| Key set | 9,212 at every \(h\); `n_traded_dates` = 341 | exact |
+| Key set | 9,212 at every evaluated \(h\); `n_traded_dates` = 341 | exact |
 
 Any fail → `D3_BLOCKED`. Do not interpret crossings.
 
@@ -268,12 +322,13 @@ Do not add a second economic engine, a fill-ladder search, or a new `src/analysi
 - `package_entry_cost_at_h(leg_rows, h) -> float`
 - `per_share_economics_at_h(...)` — `entry_cost`, `net_credit`, `max_loss`, `p(h)`
 - `size_book_at_h(trades, h, config) -> DataFrame` — Path R; one `_apply_tier_a_sizing` call per date
-- `evaluate_paths(bundle, H) -> PathCurves` — \(P\), CAR, \(\sum|Q|\), \(\sum\) capital, side \(P\) on F and R
-- `first_adverse_crossing(h_grid, values, target) -> float | None`
+- `evaluate_paths(bundle, H) -> PathCurves` — \(P\), CAR, \(\sum|Q|\), \(\sum\) capital, side \(P\) on F and R (`H_vis` for curves; `H_det` inside the root finder)
+- `path_f_pnl_crossing(alpha, P_mid, delta_price) -> float` — closed form for \(\alpha \in \{0.50, 0.25, 0.00\}\)
+- `first_adverse_crossing(eval_fn, target) -> float | None` — `H_det` + midpoint miss-check + bisection to `H_TOL`; not `H_vis` interpolation
 - `reconcile_d3_endpoints(...) -> ReconciliationResult`
-- `run_d3_analysis() -> D3Result` — prereqs, curves, eight crossings, `h_req`, headroom, verdict
+- `run_d3_analysis() -> D3Result` — prereqs, curves, Path R envelope \(\{h_{R,50}, h_{R,25}, h_{R,P0}, h_{R,\mathrm{CAR}0}\}\), Path F diagnostics, Path R headroom, monotonicity flags, verdict. **No `h_req`.**
 
-Target footprint: ~180–260 LOC helper; ~100–160 LOC tests.
+Target footprint: ~200–280 LOC helper; ~120–180 LOC tests.
 
 ---
 
@@ -283,24 +338,25 @@ Committed notebook: `notebooks/sprint007/d3_execution_envelope.ipynb` (clean; no
 
 | § | Title | Label |
 |---|---|---|
-| 0 | Question, \(h\) definition, two paths, attainability boundary | — |
+| 0 | Question, \(h\) definition, Path R primary / Path F diagnostic, attainability boundary | — |
 | 1 | D0 + D1 continue + D2 class `D3_EXECUTION_FOCUSED` | accepted / blocker |
 | 2 | Endpoint reconciliation (three identities) | accepted calculation |
-| 3 | Path F and Path R curves on \(H\) | accepted calculation |
-| 4 | First-adverse crossing table (four metrics × two paths) | D3 gate statistic |
-| 5 | Portfolio `h_req`, binding constraint, headroom | D3 gate statistic |
-| 6 | Long vs short \(P(h)\) at \(\{0, h_{\mathrm{req}}, 1\}\) | exploratory description |
-| 7 | Visualizations | exploratory description |
-| 8 | Limits: requirement ≠ attainability; no D4 label | — |
+| 3 | Path R and Path F curves on \(H_{\mathrm{vis}}\) | accepted calculation |
+| 4 | Path R envelope \(\{h_{R,50}, h_{R,25}, h_{R,P0}\}\) and companion \(h_{R,\mathrm{CAR}0}\) | D3 gate statistic |
+| 5 | Path F diagnostics and \(h_R - h_F\) resize gaps (F does not bind) | exploratory description |
+| 6 | Path R headroom between 50%, 25%, dollar break-even, and \(h=1\) | D3 gate statistic |
+| 7 | Long vs short \(P(h)\) at \(\{0, h_{R,50}, h_{R,25}, h_{R,P0}, 1\}\) | exploratory description |
+| 8 | Visualizations | exploratory description |
+| 9 | Limits: envelope ≠ one fill; requirement ≠ attainability; no D4 label | — |
 
 **Visualizations (exactly 4):**
 
-1. **Portfolio P&L vs \(h\)** — Path F and Path R; horizontal lines at \(M\), \(0.50M\), \(0.25M\), \(0\).
-2. **View A mean cycle CAR vs \(h\)** — both paths; horizontal line at \(0\).
+1. **Portfolio P&L vs \(h\)** — Path R solid, Path F dashed; horizontal lines at \(M\), \(0.50M\), \(0.25M\), \(0\).
+2. **View A mean cycle CAR vs \(h\)** — Path R solid, Path F dashed; horizontal line at \(0\).
 3. **\(\sum |Q|\) vs \(h\)** — both paths.
 4. **\(\sum\) capital-at-risk vs \(h\)** — both paths.
 
-Mark `h_req` on each chart. No spread-cutoff scatter, no filter sweep, no per-side requirement chart. Side dollars appear only as the §6 table.
+Mark \(h_{R,50}\), \(h_{R,25}\), and \(h_{R,P0}\) on the P&L chart; mark \(h_{R,\mathrm{CAR}0}\) on the CAR chart. Do not draw a single `h_req`. No spread-cutoff scatter, no filter sweep, no per-side requirement chart. Side dollars appear only as the §7 table.
 
 ---
 
@@ -310,10 +366,10 @@ Directory: `C:/MomentumCVG_env/runs/sprint007_d3_<timestamp>/`
 
 | File | Content |
 |---|---|
-| `d3_envelope.json` | prereqs, endpoint Δ, eight crossings, `h_req`, binding (path, metric), headroom, verdict |
-| `d3_curves.csv` | one row per \(h \in H\): \(P\), CAR, \(\sum|Q|\), capital, side \(P\) for F and R |
-| `d3_crossings.csv` | metric, path, target, \(h^*\), `no_crossing` flag |
-| `d3_side_snapshot.csv` | long/short \(P\) at \(h \in \{0, h_{\mathrm{req}}, 1\}\) |
+| `d3_envelope.json` | prereqs, endpoint Δ, Path R \(\{h_{R,50}, h_{R,25}, h_{R,P0}, h_{R,\mathrm{CAR}0}\}\), Path F diagnostics, \(h_R-h_F\) gaps, Path R headroom, monotonicity flags, root-finder tolerances, verdict. **No `h_req`.** |
+| `d3_curves.csv` | one row per \(h \in H_{\mathrm{vis}}\): \(P\), CAR, \(\sum|Q|\), capital, side \(P\) for R and F |
+| `d3_crossings.csv` | path (`R` primary / `F` diagnostic), metric, target, \(h^*\), `no_crossing`, method (`closed_form` \| `bracket_bisection`) |
+| `d3_side_snapshot.csv` | long/short \(P\) at \(h \in \{0, h_{R,50}, h_{R,25}, h_{R,P0}, 1\}\) |
 | `d3_execution_envelope.executed.ipynb` | fresh-kernel execution |
 | `d3_execution_envelope.html` | HTML export |
 | `execution_receipt.json` | SHAs, repo HEAD, timestamps |
@@ -325,9 +381,12 @@ Directory: `C:/MomentumCVG_env/runs/sprint007_d3_<timestamp>/`
 - [ ] D0 passed; D1 continue; D2 class is `D3_EXECUTION_FOCUSED`
 - [ ] Three endpoint identities pass (Path F \(h=0\) mid; Path F \(h=1\) D2 hybrid; Path R \(h=1\) official cross), plus Path R \(h=0\) mid
 - [ ] 9,212 keys and 341 traded dates at every evaluated \(h\)
-- [ ] Four book-level first-adverse crossings computed on both paths; non-monotonic series use the first crossing from \(h=0\)
-- [ ] `h_req` is the minimum finite relevant crossing; binding (path, metric) is named
-- [ ] Headroom under the frozen 50% / 25% buffers is reported, or shown to be \(\le 0\)
+- [ ] Path R envelope reports \(h_{R,50}\), \(h_{R,25}\), \(h_{R,P0}\), and companion \(h_{R,\mathrm{CAR}0}\) as a range, not one `h_req`
+- [ ] Path F thresholds are present only as diagnostics; they do not bind Path R
+- [ ] Nonlinear roots use `H_det` + midpoint miss-check + bisection to `H_TOL`; `H_vis` interpolation is not the root
+- [ ] Non-monotonic series use the first crossing from \(h=0\); monotonicity is disclosed
+- [ ] Path F P&L roots match the closed form for \(\alpha \in \{0.50, 0.25, 0.00\}\)
+- [ ] Path R headroom between 50%, 25%, dollar break-even, and \(h=1\) is reported, or shown `no_crossing`
 - [ ] Requirement and attainability are separate sentences; forbid-list language is absent
 - [ ] `tests/unit/test_sprint007_d3_execution_envelope.py` passes
 - [ ] Clean committed notebook + executed evidence outside repo
@@ -342,13 +401,18 @@ Directory: `C:/MomentumCVG_env/runs/sprint007_d3_<timestamp>/`
 | `fill_price_at_h` | \(h=0\) mid; \(h=1\) buy=ask / sell=bid; \(h=0.5\) halfway |
 | Package entry | `entry_cost(h)` linear; \(p(h)\) linear; expiry frozen |
 | Path F identity | \(P_F(h) = P_{\mathrm{mid}} + h\,\Delta_{\mathrm{price}}\) |
-| Closed-form vs interpolate | Path F P&L crossings match \((1-\alpha)P_{\mathrm{mid}}/(-\Delta_{\mathrm{price}})\) |
-| First adverse, monotonic | decreasing series hits 0.50, 0.25, 0 in order |
+| Path F closed form | roots match \((1-\alpha)P_{\mathrm{mid}}/(-\Delta_{\mathrm{price}})\) for \(\alpha \in \{0.50, 0.25, 0.00\}\) only |
+| First adverse, monotonic | decreasing series hits 0.50, 0.25, 0 in that order |
 | First adverse, non-monotonic | dips below 0 then recovers → first crossing, not the later root |
+| Missed-dip guard | series that crosses \(T\) only near the midpoint of a 0.01 interval is still bracketed |
+| Bisection tolerance | returned \(h^*\) is within `H_TOL` of the first \(m \le T\) point on the refined bracket |
+| `H_vis` is not the root | a crossing between 0.05 grid nodes is **not** reported as the 5% interpolant |
 | No crossing | series stays above target → `None` |
 | Path R sizing | one synthetic date; \(Q(h)\) matches `_apply_tier_a_sizing` on the same rows |
 | Endpoint Q | synthetic mid/cross books; Path R \(h=0\)/\(h=1\) recover those quantities |
 | Exclusion guard | sizing that would drop a name → blocked, not a smaller book |
+| Envelope schema | result has Path R range fields and **no** `h_req`; Path F fields are labeled diagnostic |
+| Path F does not bind | a synthetic case with \(h_{F,50} < h_{R,50}\) still reports the Path R envelope from Path R only |
 | Prerequisite | D2 class ≠ `D3_EXECUTION_FOCUSED` → `D3_BLOCKED` |
 
 ---
@@ -361,7 +425,8 @@ Directory: `C:/MomentumCVG_env/runs/sprint007_d3_<timestamp>/`
 | Endpoint, wing-width, key-count, or inclusion fail | `D3_BLOCKED` |
 | Path R would drop a frozen key or a traded date | `D3_BLOCKED` |
 | Proposal adds filters, alt structures, commissions, fill odds, or `SurfaceRunner` | Rescope |
-| Crossing rule changed after viewing output | Invalidate |
+| Proposal restores `h_req = min(…)` or lets Path F bind Path R | Reject |
+| Crossing or root-finder rule changed after viewing output | Invalidate |
 | Language of recoverability / ORATS attainability | Forbidden |
 
 ---
@@ -374,6 +439,7 @@ Directory: `C:/MomentumCVG_env/runs/sprint007_d3_<timestamp>/`
 - Alternative structures, wingless books, iron condor, or side-only strategies
 - Signal-window search or `42:8` retuning
 - Assigning a D4 label
+- Selecting one \(h\) as *the* executable fill
 - Mutating Sprint 006 artifacts or the frozen contract
 - `SurfaceRunner` / `scripts/run_surface_search.py`
 
@@ -381,14 +447,14 @@ Directory: `C:/MomentumCVG_env/runs/sprint007_d3_<timestamp>/`
 
 ## Inference boundary (required conclusion shape)
 
-D3 must end with four sentences, filled from numbers:
+D3 must end with four sentences, filled from **Path R** numbers:
 
-1. **Requirement:** the frozen book can afford to pay \(h_{\mathrm{req}}\) of the quoted half-spread before the most restrictive relevant threshold is hit, and which (path, metric) binds.
-2. **Headroom:** remaining distance to dollar and CAR break-even under the frozen 50% / 25% buffers, or that none remains.
-3. **Unknown:** whether any package order would fill at that \(h\); commissions, missed fills, timing, and adverse selection; counterfactual structures. Historical quotes do not validate complex-order execution.
-4. **Not claimed:** that midpoint is attainable, that \(h_{\mathrm{req}}\) is a live limit price, or that a filter / side / structure change would preserve the midpoint book.
+1. **Envelope:** on the resized book, \(h < h_{R,50}\) retains at least 50% of midpoint dollar P&L; \(h < h_{R,25}\) retains at least 25%; \(h < h_{R,P0}\) remains dollar-profitable. Path R CAR first reaches zero at \(h_{R,\mathrm{CAR}0}\) (companion).
+2. **Headroom:** Path R gaps \(h_{R,25}-h_{R,50}\), \(h_{R,P0}-h_{R,25}\), and \(1-h_{R,P0}\) (and companion \(1-h_{R,\mathrm{CAR}0}\)), or `no_crossing` where a later mark is never hit.
+3. **Unknown:** whether any package order would fill inside that envelope; commissions, missed fills, timing, and adverse selection; counterfactual structures. Historical quotes do not validate complex-order execution.
+4. **Not claimed:** that midpoint is attainable; that any one of \(h_{R,50}\), \(h_{R,25}\), or \(h_{R,P0}\) is a live limit price; that Path F is the executable book; or that a filter / side / structure change would preserve the midpoint book.
 
-If \(0 < h_{\mathrm{req}} < 1\), the **shape** required by working-plan §6.7 is “requirement strictly between mid and full cross.” D3 records that shape. D4, not D3, chooses among `EXECUTION_CALIBRATION_REQUIRED`, `SELECTIVE_FRICTION_HYPOTHESIS`, and the other sprint outcomes.
+If \(0 < h_{R,P0} < 1\) (or the 50% / 25% marks lie strictly inside \((0,1)\)), the **shape** required by working-plan §6.7 is “requirement strictly between mid and full cross.” D3 records that shape as a range. D4, not D3, chooses among `EXECUTION_CALIBRATION_REQUIRED`, `SELECTIVE_FRICTION_HYPOTHESIS`, and the other sprint outcomes.
 
 Path F remaining positive is not executable return. Path R is not a new official Sprint 006 result. Side dollars are not a long-only or short-only test.
 
@@ -398,6 +464,6 @@ Path F remaining positive is not executable return. Path R is not a new official
 
 | Path | Purpose |
 |---|---|
-| `src/backtest/sprint007_d3_execution_envelope.py` | ~180–260 LOC |
-| `tests/unit/test_sprint007_d3_execution_envelope.py` | ~100–160 LOC |
+| `src/backtest/sprint007_d3_execution_envelope.py` | ~200–280 LOC |
+| `tests/unit/test_sprint007_d3_execution_envelope.py` | ~120–180 LOC |
 | `notebooks/sprint007/d3_execution_envelope.ipynb` | Envelope narrative (committed clean) |
