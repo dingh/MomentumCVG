@@ -1,13 +1,13 @@
 # Sprint 007 D3 — Required execution envelope
 
-**Status:** `PROPOSED — AWAITING REVIEW`  
+**Status:** `ACCEPTED`  
 **Updated:** 2026-09-05  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](../agenda/sprint7_shortfall_plan.md) §6.7, §10  
 **D0:** `READY_WITH_NARROW_ENABLING_CHANGE` — `C:/MomentumCVG_env/runs/sprint007_d0_20260830T001015Z/` (commit `8a59474`)  
 **D1:** **accepted** — `D1_CONTINUE_TO_D2` — [`sprint007_d1_design.md`](sprint007_d1_design.md); [`sprint007_d1_evidence_review.md`](sprint007_d1_evidence_review.md)  
 **D2:** **accepted** — final class `D3_EXECUTION_FOCUSED` — [`sprint007_d2_design.md`](sprint007_d2_design.md); D2A [`sprint007_d2a_evidence_review.md`](sprint007_d2a_evidence_review.md); D2B [`sprint007_d2b_evidence_review.md`](sprint007_d2b_evidence_review.md)  
-**Authorization:** This design only. Do not implement, execute, or interpret D3 economics until the design is accepted. D4 is not authorized.
+**Authorization:** D3 **implementation** is authorized. Do not execute against official Sprint 006 artifacts, generate D3 evidence, or start D4 until that execution is separately authorized.
 
 ---
 

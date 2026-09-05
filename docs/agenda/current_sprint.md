@@ -1,10 +1,10 @@
 # Current sprint — 007
 
-**Updated:** 2026-09-03
+**Updated:** 2026-09-05
 
-**Status:** `ACTIVE — D0 ACCEPTED; D1 ACCEPTED; D2 ACCEPTED; D3 DESIGN AUTHORIZED`
+**Status:** `ACTIVE — D0 ACCEPTED; D1 ACCEPTED; D2 ACCEPTED; D3 IMPLEMENTATION AUTHORIZED`
 
-**Mode:** **Audit** — D3 **design only**. Do not implement or execute D3.
+**Mode:** **Build** — D3 **implementation only**. Do not execute D3 against official artifacts, generate evidence, or start D4.
 
 **Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](sprint7_shortfall_plan.md) — canonical path; do not duplicate under `docs/tmp/`.
 
@@ -21,6 +21,8 @@
 **D2A evidence:** `C:/MomentumCVG_env/runs/sprint007_d2a_20260904T043124Z/` (outside repo; review [`docs/tmp/sprint007_d2a_evidence_review.md`](../tmp/sprint007_d2a_evidence_review.md)) — **accepted**
 
 **D2B evidence:** `C:/MomentumCVG_env/runs/sprint007_d2b_20260904T045019Z/` (outside repo; review [`docs/tmp/sprint007_d2b_evidence_review.md`](../tmp/sprint007_d2b_evidence_review.md); final class `D3_EXECUTION_FOCUSED`) — **accepted**
+
+**D3 design:** [`docs/tmp/sprint007_d3_design.md`](../tmp/sprint007_d3_design.md) — **accepted**. Implementation authorized; execution and D4 are not.
 
 **Previous:** Sprint 006 — [`CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence, not a Sprint 007 starting configuration to edit.
@@ -230,7 +232,7 @@ For each deliverable:
 4. Implement or execute only the accepted deliverable.
 5. Present evidence and request acceptance before designing the next deliverable.
 
-D2 (D2A + D2B) is **accepted**. D3 **design only** is authorized. D3 implementation/execution and D4 are not authorized.
+D2 (D2A + D2B) is **accepted**. D3 design is **accepted**. D3 **implementation only** is authorized. D3 execution against official artifacts and D4 are not authorized.
 
 Pause and request rescoping if proposed work:
 
@@ -244,7 +246,7 @@ Pause and request rescoping if proposed work:
 
 ## 12. Initial next action
 
-D2 **accepted**. Next: **D3 design only**. Do not implement or execute D3 until that design is accepted.
+D3 design **accepted**. Next: **D3 implementation only**. Do not execute against official artifacts or start D4.
 
 ---
 
@@ -252,6 +254,7 @@ D2 **accepted**. Next: **D3 design only**. Do not implement or execute D3 until 
 
 | Date | Event |
 |------|-------|
+| 2026-09-05 | D3 design **accepted**. D3 **implementation only** authorized. Official execution and D4 not authorized. |
 | 2026-09-03 | D1, D2A, D2B, and D2 overall **accepted**. Final class `D3_EXECUTION_FOCUSED`. D3 **design only** authorized. |
 | 2026-09-03 | D2B **executed** on official artifacts (`sprint007_d2b_20260904T045019Z`); final class `D3_EXECUTION_FOCUSED`. D3 not started. |
 | 2026-09-03 | D2A **accepted**. D2B **implemented** on `package_tradability` (helper, tests, unexecuted notebook). Official D2B evidence not produced. |
