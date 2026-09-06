@@ -19,7 +19,7 @@
 | **Motivation** | Separately motivated research experiment. Sprint 007 diagnosed book-level execution requirements and disclosed expensive-package concentration as a **secondary** finding only. This sprint does **not** reopen or revise Sprint 006/007 conclusions. |
 | **Side** | Long ATM straddles only |
 | **Frozen selection** | `42:8` signal, CVG-within-side filter, liquidity/structure rules, `max_names_per_side=25`, weekly timing, hold-to-expiry |
-| **New baseline** | Independent equal-dollar long research book with fixed long budget; unused cash stays cash |
+| **New baseline** | Independent equal-dollar long research book: fixed budget \(B\), stake \(B/N\) per eligible name sized on scenario all-in entry cost; unused cash stays cash |
 | **Method** | Define measurements → validate measurement–profitability relationship (required gate) → only then test simple thresholds |
 | **Not the goal** | Force profitability; rescue Sprint 006; retune signal windows; redesign short structures; claim fill attainability |
 | **Outcomes allowed** | Supported / unsupported / inconclusive measurement; effective / ineffective threshold — all valid completions |
@@ -124,21 +124,30 @@ Historical Sprint 006 long quantities are fill- and short-premium-dependent. Tha
 
 ### 5.2 Allocation rule
 
-For each entry date:
+For each entry date and each execution scenario \(h\):
 
 1. Identify the eligible constructable long set of size \(N\) **before** any experimental measurement filter.
 2. If \(N = 0\): invest nothing; entire budget remains cash; date contributes zero trading P&L and full unused cash.
-3. If \(N \ge 1\): each candidate initially receives allocation \(B / N\).
-4. Convert allocation to quantity using the pinned entry-cost convention (default recommendation in §12).
-5. Within each execution scenario \(h\), retained trades **keep** those quantities across threshold comparisons.
-6. Rejected allocations remain cash. Do **not** redistribute to survivors.
+3. If \(N \ge 1\): each candidate is assigned stake \(B / N\).
+4. Convert stake to quantity from the scenario’s **all-in** entry cost in consistent per-share research units (including fees):
 
-Example: \(B = \$10{,}000\), \(N = 20\) → \$500 each. Retaining 12 → \$6,000 invested and \$4,000 cash.
+\[
+q_i(h) = \frac{B / N}{M_i + h\,H_i + \mathrm{fees}_i}
+\]
+
+   so each candidate consumes **exactly** \(B / N\) of the fixed budget under that \(h\).
+5. Within a given \(h\) scenario, freeze these quantities across the unfiltered baseline and every threshold comparison.
+6. Rejected allocations remain cash. Do **not** redistribute them to survivors.
+
+Quantities **may differ across** \(h\) scenarios because the all-in entry cost depends on \(h\). Threshold contrasts must be within the same \(h\); identical quantities across \(h\) are **not** required.
+
+Example: \(B = \$10{,}000\), \(N = 20\) → \$500 stake each. Under a given \(h\), retaining 12 leaves \$6,000 invested at that scenario’s all-in costs and \$4,000 cash against the original \$10,000 budget. The same date under a different \(h\) may use different quantities, but each retained name still consumes \$500 under that scenario.
 
 ### 5.3 Performance accounting
 
 - Report portfolio performance against the **original budget** \(B\), including unused cash in the denominator where returns are portfolio-level.
-- Primary trade-level outcome for measurement validation: **net return per dollar invested** in that trade under the scenario (consistent units with the equal-dollar stake).
+- Primary trade-level outcome for measurement validation: **net return per dollar invested**, with invested dollars = the equal stake \(B / N\) (= \(q_i(h) \times (M_i + h H_i + \mathrm{fees}_i)\)).
+- For filtered books under the same \(h\): invested capital = \(k \times (B / N)\) for \(k\) retained names; cash = \(B - k \times (B / N)\); portfolio return uses original \(B\) as the denominator.
 - Portfolio-level threshold metrics: net return on original budget; drawdown on the budget path; coverage; cash retained; losses avoided; winning profits sacrificed.
 
 ### 5.4 Pins to freeze in D0 (recommended defaults in §12)
@@ -146,12 +155,12 @@ Example: \(B = \$10{,}000\), \(N = 20\) → \$500 each. Retaining 12 → \$6,000
 | Pin | Why it matters |
 |---|---|
 | Budget \(B\) | Level of reported dollars; not a search dimension |
-| Entry-cost convention for quantities | Mid debit vs scenario debit; must not silently mix |
-| Fees | Explicit modeled fees vs none |
+| Entry-cost convention for quantities | All-in scenario cost \(M + hH + \mathrm{fees}\); must not silently mix mid-only sizing with cross P&L |
+| Fees | Explicit modeled per-share research fees in the all-in denominator (may be zero) |
 | Fractional quantities | Allowed for research simplicity |
 | Zero-candidate dates | Cash-only; not dropped from calendar views unless declared |
 | Missing outcomes | Exclude from trade-level association with documented reason; do not impute winners |
-| Return denominators | Trade-level invested dollars vs portfolio original budget |
+| Return denominators | Trade-level stake \(B/N\); portfolio original budget \(B\) including cash |
 
 ---
 
@@ -169,7 +178,7 @@ All quote-based quantities use the **same call and put entry quotes** for the co
 | \(K\) | Common ATM body strike |
 | \(X\) | \(\lvert S_T - K \rvert\) — expiration intrinsic payoff per share (straddle payoff) |
 | \(h\) | Execution fraction in \([0,1]\): \(h=0\) midpoint; \(h=1\) full cross |
-| Entry friction at \(h\) | \(hH\) **plus** explicitly modeled fees (if any) |
+| Entry friction at \(h\) | \(hH\) **plus** explicitly modeled fees; all-in per-share research entry cost is \(M + hH + \mathrm{fees}\) (used for sizing and net P&L) |
 
 **Benchmark measurement (required):** \(H/M\) — package width relative to midpoint debit. Already computed in Sprint 007 D2B as `package_width_to_cashflow` for included packages.
 
@@ -244,11 +253,13 @@ Examine, for each candidate measurement, trade-level **net return per dollar inv
 
 Do **not** treat every trade as an independent observation. Uncertainty must account for:
 
-- common entry-date shocks;
-- repeated tickers across weeks;
+- common entry-date shocks (full cross-section on a date moves together);
+- serial dependence involving recurring tickers across nearby weeks;
 - multiple candidate measurements tested.
 
-Keep inference proportionate (e.g. date-clustered bootstrap or date-block resampling; simple multiplicity adjustment or stricter per-measurement bars). Exact procedure freezes in D1 before output.
+**Default dependence method:** consecutive-date **block** resampling. Each sampled block preserves (a) every trade in that date’s complete cross-section and (b) consecutive dated observations within the block, so shared date shocks and short-horizon serial dependence are retained together. Do **not** default to resampling individual dates in isolation while merely disclosing repeated tickers.
+
+D1 must specify and justify—**before** examining association results—block length, resampling procedure, assumptions, and multiplicity treatment. Do not choose these settings from measurement–profitability performance.
 
 ### 7.4 Cost-based measurements: mechanical induction check
 
@@ -265,7 +276,7 @@ Before opening new association results, D1 freezes criteria covering:
 | Dimension | Intent |
 |---|---|
 | Economic magnitude | Group mean gaps large enough to matter vs noise |
-| Uncertainty | Interval / resampling evidence not driven by one date cluster |
+| Uncertainty | Interval / consecutive-date block-resampling evidence not driven by one short block |
 | Stability | Same qualitative pattern across development subperiods |
 | Coverage | Enough trades/dates in extreme groups; not a tiny tail |
 | Cutoff support | Evidence that a **simple** threshold could remove a consistently poor region without requiring a complex model |
@@ -322,7 +333,7 @@ Run only if D1 classifies at least one measurement as `supported`.
    - \(H/M\)-only filter (if another measurement won, still report \(H/M\) as benchmark comparator);
    - nearby thresholds;
    - the fixed execution-scenario set.
-5. Keep original allocations and unused-cash treatment unchanged.
+5. Within each \(h\), keep the scenario’s frozen equal-stake quantities and unused-cash treatment unchanged across baseline and threshold comparisons.
 
 ### 9.3 Required reports
 
@@ -332,7 +343,7 @@ Run only if D1 classifies at least one measurement as `supported`.
 - Winning-trade profits sacrificed.
 - Share of baseline winning-trade profits retained, including largest contributors.
 - Stability across periods and nearby cutoffs.
-- Reconciliation: fixed-allocation P&L improvement ≈ losses avoided − winning profits sacrificed.
+- Reconciliation: within-\(h\) fixed-stake P&L improvement ≈ losses avoided − winning profits sacrificed.
 
 ### 9.4 Interpretation discipline
 
@@ -363,7 +374,7 @@ Detailed methods freeze in one-page designs immediately before each deliverable.
 
 **Question:** Which entry-time measurements, if any, reliably distinguish equal-dollar net profitability in a way that supports a simple cutoff?
 
-**Required answer:** Per measurement: `supported` / `unsupported` / `inconclusive`, plus one sprint-level gate decision for whether D2 threshold work is authorized.
+**Required answer:** Per measurement: `supported` / `unsupported` / `inconclusive`, plus one sprint-level gate decision for whether D2 threshold work is authorized. Dependence protocol (consecutive-date block length, resampling procedure, assumptions, multiplicity) must be frozen in the D1 design before association output.
 
 ### D2 — Conditional threshold study (if justified)
 
@@ -383,8 +394,8 @@ Detailed methods freeze in one-page designs immediately before each deliverable.
 
 1. **Preserve accepted history.** No silent revision of Sprint 006/007 verdicts.
 2. **Long only.** No short-side filter research in this sprint.
-3. **Equal-dollar independence.** No reuse of short-financed historical quantities for the research baseline.
-4. **No redistribution.** Filtered capital stays cash.
+3. **Equal-dollar independence.** No reuse of short-financed historical quantities for the research baseline; size from scenario all-in cost so each eligible name consumes exactly \(B/N\).
+4. **No redistribution.** Filtered capital stays cash; within each \(h\), freeze scenario quantities across baseline vs threshold comparisons.
 5. **Validate before thresholds.** Hard gate.
 6. **Freeze before new granular output.** One-deliverable authorization.
 7. **Scenario set fixed.** No \(h\)-shopping.
@@ -399,15 +410,15 @@ Detailed methods freeze in one-page designs immediately before each deliverable.
 | # | Open decision | Recommended default | Reason |
 |---|---|---|---|
 | 1 | Long research budget \(B\) | \$10,000 per entry date | Matches Sprint 006 side budget scale; keeps dollars comparable without implying identical economics |
-| 2 | Quantity entry-cost convention | Size from **midpoint debit** \(M\); apply scenario \(h\) only in P&L/friction | Keeps quantities fixed across \(h\) comparisons (required for clean threshold contrasts) |
-| 3 | Modeled fees | \$0 explicit fees in v1 of this experiment; report as limitation | Avoid confounding measurement study with an uncalibrated fee schedule; can be added later as sensitivity |
+| 2 | Quantity entry-cost convention | \(q_i(h)=(B/N)/(M_i + h H_i + \mathrm{fees}_i)\); freeze quantities within each \(h\) across threshold comparisons | Each name consumes exactly \(B/N\); within-\(h\) contrasts stay clean; quantities may differ across \(h\) |
+| 3 | Modeled fees | \(\mathrm{fees}_i = 0\) in v1 of this experiment; still appear formally in the all-in denominator; report as limitation | Avoid confounding measurement study with an uncalibrated fee schedule; can be added later as sensitivity |
 | 4 | Fractional quantities | Allowed | Research simplicity; not a live trading claim |
 | 5 | Extra measurements beyond \(H/M\) | Advance **M2** \(H/S_0\); advance **M3** only if D0 confirms a clean past-only hurdle scale without model search | Caps degrees of freedom; M2 is simple and non-redundant; M3 is optional |
 | 6 | M3 estimator (if used) | Rolling mean of completed historical \(X/S_0\) (or \(X\)) with fixed lookback; cold-start = missing measurement | Transparent and past-only |
 | 7 | Execution scenarios | Primary \(h=1\); diagnostic \(h=0\); sensitivity \(h \in \{0.25, 0.50\}\) | Matches “full cross primary / mid diagnostic / limited intermediates” |
 | 8 | Chronological split | Dev `2020–2023`; eval `2024–2026-07-10` | Simple calendar split; label eval as retrospective validation |
 | 9 | Score groups | 5 equal-count quintiles on development-eligible trades with deterministic tie-break | Predefined; no profitability optimization |
-| 10 | Dependence handling | Date-clustered resampling primary; disclose ticker repetition | Proportionate; respects common shocks |
+| 10 | Dependence handling | Consecutive-date block resampling (preserve full date cross-sections and consecutive observations); D1 freezes block length, procedure, assumptions, and multiplicity **before** association output | Captures shared date shocks and serial dependence from recurring tickers; avoids performance-tuned inference choices |
 | 11 | Threshold grid (only if gated) | Small set anchored to development quintile edges / 1–2 predeclared cost levels; pick by preregistered utility (loss avoided vs winner retention), not max return | Prevents cutoff shopping |
 | 12 | Engine work | None unless D0 finds a concrete missing field | Preserves Sprint 007 artifact-first discipline |
 
@@ -458,7 +469,7 @@ Pause and rescope if proposed work:
 Requested from reviewers:
 
 1. Accept or amend the scope and equal-dollar baseline rules.
-2. Confirm or replace the §12 defaults (especially budget, quantity convention, extra measurements, chronological split, and fee treatment).
+2. Confirm or replace the §12 defaults (especially budget, all-in quantity convention, consecutive-date block dependence, extra measurements, chronological split, and fee treatment).
 3. After acceptance: authorize D0 design only.
 
 Implementation and new performance analysis are **not** authorized by this draft.
