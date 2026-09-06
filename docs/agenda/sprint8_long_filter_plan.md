@@ -1,13 +1,14 @@
 # Sprint 008 — Long-straddle measurement filter plan
 
-**Status:** `DRAFT — AWAITING REVIEW`  
+**Status:** `ACCEPTED`  
+**Accepted:** 2026-09-06  
 **Updated:** 2026-09-06  
-**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 007 remains closed; Sprint 008 is **not authorized** until this plan is accepted  
+**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; plan accepted; **D0 not started**  
 **Prior closeouts:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 **D2B H/M precedent:** [`docs/tmp/sprint007_d2b_evidence_review.md`](../tmp/sprint007_d2b_evidence_review.md); `src/backtest/sprint007_d2b_package_tradability.py`  
 **Canonical path:** `docs/agenda/sprint8_long_filter_plan.md` — do not duplicate under `docs/tmp/`.  
-**Purpose:** Sprint-level research protocol for a long-side-only measurement and conditional-threshold study. This plan freezes questions, gates, inference boundaries, and deliverable sequence. It deliberately defers deliverable-specific formulas, notebooks, schemas, and code footprints until each deliverable is designed and accepted.
+**Purpose:** Accepted sprint-level research protocol for a long-side-only measurement and conditional-threshold study. This plan freezes questions, gates, inference boundaries, and deliverable sequence. It deliberately defers deliverable-specific formulas, notebooks, schemas, and code footprints until each deliverable is designed and accepted.
 
 ---
 
@@ -23,15 +24,15 @@
 | **Method** | Define measurements → validate measurement–profitability relationship (required gate) → only then test simple thresholds |
 | **Not the goal** | Force profitability; rescue Sprint 006; retune signal windows; redesign short structures; claim fill attainability |
 | **Outcomes allowed** | Supported / unsupported / inconclusive measurement; effective / ineffective threshold — all valid completions |
-| **Approval boundary** | Plan acceptance authorizes D0 design only. Each deliverable needs its own accepted short design before new granular output |
+| **Approval boundary** | Plan **accepted**. D0 has **not** started. Await explicit instruction before beginning D0 design. Each later deliverable needs its own accepted short design before new granular output |
 
 ---
 
 ## 2. Why this document exists
 
-`docs/agenda/current_sprint.md` will become the stable Sprint 008 contract after acceptance (intent, mode, DoD, authorization).
+`docs/agenda/current_sprint.md` is the stable Sprint 008 contract (intent, mode, DoD, authorization).
 
-This working plan explains how Cursor should reason about the long-filter experiment: candidate population, equal-dollar baseline, measurement catalog, validation gate, chronological firewall, conditional threshold study, and completion criteria. Deliverable-specific designs are written only when that deliverable begins.
+This working plan is the accepted detailed scope for the long-filter experiment: candidate population, equal-dollar baseline, measurement catalog, validation gate, chronological firewall, conditional threshold study, and completion criteria. Deliverable-specific designs are written only when that deliverable begins.
 
 ---
 
@@ -150,7 +151,7 @@ Example: \(B = \$10{,}000\), \(N = 20\) → \$500 stake each. Under a given \(h\
 - For filtered books under the same \(h\): invested capital = \(k \times (B / N)\) for \(k\) retained names; cash = \(B - k \times (B / N)\); portfolio return uses original \(B\) as the denominator.
 - Portfolio-level threshold metrics: net return on original budget; drawdown on the budget path; coverage; cash retained; losses avoided; winning profits sacrificed.
 
-### 5.4 Pins to freeze in D0 (recommended defaults in §12)
+### 5.4 Pins to freeze in D0 (accepted defaults in §12)
 
 | Pin | Why it matters |
 |---|---|
@@ -205,7 +206,7 @@ For every measurement advanced past D0, the deliverable design must document:
 
 ### 6.3 Expected-payoff estimator (only if M3 proceeds)
 
-If M3 needs an expected-payoff scale, use **one** transparent, bounded, past-only method — not a forecasting-model search. Recommended default (§12):
+If M3 needs an expected-payoff scale, use **one** transparent, bounded, past-only method — not a forecasting-model search. Accepted default (§12):
 
 - At entry \(t\), use completed historical long-straddle observations with expiry strictly before \(t\).
 - Estimate a simple central scale for payoff (e.g. mean or trimmed mean of \(X\) in a rolling calendar window, or a fixed lookback of completed trades), optionally normalized by \(S_0\) or \(M\) in a predeclared way.
@@ -220,7 +221,7 @@ Freeze scenarios **before** analysis. Do not pick the \(h\) that looks best.
 |---|---|
 | \(h = 1\) (full cross) | **Primary conservative comparison** |
 | \(h = 0\) (midpoint) | Diagnostic gross reference only |
-| Limited intermediates (recommend \(h \in \{0.25, 0.50\}\) plus optional D3-envelope marks) | Sensitivity only |
+| Limited intermediates (\(h \in \{0.25, 0.50\}\); optional D3-envelope marks only if later justified) | Sensitivity only |
 
 Hypothetical fills are **not** claimed attainable. Language from Sprint 007 attainability forbid-list remains in force.
 
@@ -288,7 +289,7 @@ Weak overall correlation may coexist with a consistently poor extreme group; the
 
 ## 8. Development and evaluation separation
 
-### 8.1 Chronological split (recommended default in §12)
+### 8.1 Chronological split (accepted default in §12)
 
 | Period | Dates | Uses |
 |---|---|---|
@@ -296,7 +297,7 @@ Weak overall correlation may coexist with a consistently poor extreme group; the
 | **Evaluation** | Later primary-window segment | Frozen-rule evaluation only |
 | **Full-history companion** | `2018-10-26` → `2026-07-10` | Descriptive robustness; not for free selection |
 
-**Recommended default:** development `2020-01-01` → `2023-12-31`; evaluation `2024-01-01` → `2026-07-10` (primary window). Exact freeze at D0 acceptance.
+**Accepted default:** development `2020-01-01` → `2023-12-31`; evaluation `2024-01-01` → `2026-07-10` (primary window). Confirm at D0 if any pin needs a versioned revision.
 
 ### 8.2 Honesty about prior inspection
 
@@ -405,9 +406,9 @@ Detailed methods freeze in one-page designs immediately before each deliverable.
 
 ---
 
-## 12. Decisions requiring review (recommended defaults)
+## 12. Accepted protocol defaults
 
-| # | Open decision | Recommended default | Reason |
+| # | Decision | Accepted default | Reason |
 |---|---|---|---|
 | 1 | Long research budget \(B\) | \$10,000 per entry date | Matches Sprint 006 side budget scale; keeps dollars comparable without implying identical economics |
 | 2 | Quantity entry-cost convention | \(q_i(h)=(B/N)/(M_i + h H_i + \mathrm{fees}_i)\); freeze quantities within each \(h\) across threshold comparisons | Each name consumes exactly \(B/N\); within-\(h\) contrasts stay clean; quantities may differ across \(h\) |
@@ -422,7 +423,7 @@ Detailed methods freeze in one-page designs immediately before each deliverable.
 | 11 | Threshold grid (only if gated) | Small set anchored to development quintile edges / 1–2 predeclared cost levels; pick by preregistered utility (loss avoided vs winner retention), not max return | Prevents cutoff shopping |
 | 12 | Engine work | None unless D0 finds a concrete missing field | Preserves Sprint 007 artifact-first discipline |
 
-These defaults are part of the draft for acceptance. Changing them after D1/D2 output is opened is not allowed without a versioned protocol revision.
+These defaults are **accepted** with the sprint plan. Changing them after D1/D2 output is opened is not allowed without a versioned protocol revision.
 
 ---
 
@@ -446,10 +447,10 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 ## 14. Authorization sequence
 
-1. Review and accept (or revise) this sprint-level plan.
-2. Update `docs/agenda/current_sprint.md` to Sprint 008 **Build/Audit** mode only after acceptance.
-3. Acceptance of this plan authorizes **D0 design only**.
-4. For each deliverable: inspect → one-page design → wait for acceptance → implement/execute → evidence review → next design.
+1. ~~Review and accept this sprint-level plan.~~ **Done** — plan accepted 2026-09-06.
+2. ~~Update `docs/agenda/current_sprint.md` to Sprint 008 **Build/Audit**.~~ **Done.**
+3. **D0 design has not started.** Begin D0 design only on explicit instruction.
+4. For each deliverable thereafter: inspect → one-page design → wait for acceptance → implement/execute → evidence review → next design.
 5. Do not start threshold work until D1 gate acceptance authorizes D2.
 
 Pause and rescope if proposed work:
@@ -464,12 +465,6 @@ Pause and rescope if proposed work:
 
 ## 15. Next action
 
-**Stop for review.**
+**Plan accepted. D0 not started.**
 
-Requested from reviewers:
-
-1. Accept or amend the scope and equal-dollar baseline rules.
-2. Confirm or replace the §12 defaults (especially budget, all-in quantity convention, consecutive-date block dependence, extra measurements, chronological split, and fee treatment).
-3. After acceptance: authorize D0 design only.
-
-Implementation and new performance analysis are **not** authorized by this draft.
+Awaiting explicit instruction to begin **D0 design**. Do not draft D0, implement analysis code, or run performance analysis until that instruction is given.
