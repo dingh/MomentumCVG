@@ -1,10 +1,14 @@
 # Current sprint — 007
 
-**Updated:** 2026-09-05
+**Updated:** 2026-09-06
 
-**Status:** `ACTIVE — D0 ACCEPTED; D1 ACCEPTED; D2 ACCEPTED; D3 IMPLEMENTATION AUTHORIZED`
+**Status:** `CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`
 
-**Mode:** **Build** — D3 **implementation only**. Do not execute D3 against official artifacts, generate evidence, or start D4.
+**Mode:** **Closed.** No further Sprint 007 work. The next sprint is **unauthorized**.
+
+**Closeout:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md)
+
+**D4 design:** [`docs/tmp/sprint007_d4_design.md`](../tmp/sprint007_d4_design.md) — `ACCEPTED`
 
 **Working plan:** [`docs/agenda/sprint7_shortfall_plan.md`](sprint7_shortfall_plan.md) — canonical path; do not duplicate under `docs/tmp/`.
 
@@ -22,7 +26,9 @@
 
 **D2B evidence:** `C:/MomentumCVG_env/runs/sprint007_d2b_20260904T045019Z/` (outside repo; review [`docs/tmp/sprint007_d2b_evidence_review.md`](../tmp/sprint007_d2b_evidence_review.md); final class `D3_EXECUTION_FOCUSED`) — **accepted**
 
-**D3 design:** [`docs/tmp/sprint007_d3_design.md`](../tmp/sprint007_d3_design.md) — **accepted**. Implementation authorized; execution and D4 are not.
+**D3 design:** [`docs/tmp/sprint007_d3_design.md`](../tmp/sprint007_d3_design.md) — **accepted**
+
+**D3 evidence:** `C:/MomentumCVG_env/runs/sprint007_d3_20260906T024837Z/` (outside repo; review [`docs/tmp/sprint007_d3_evidence_review.md`](../tmp/sprint007_d3_evidence_review.md); verdict `D3_ENVELOPE`) — **accepted**
 
 **Previous:** Sprint 006 — [`CLOSED — EVIDENCE ACCEPTED; FROZEN 42:8 ECONOMICS WEAK/NEGATIVE`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence, not a Sprint 007 starting configuration to edit.
@@ -174,13 +180,7 @@ D3 estimates the requirement and remaining headroom. It states requirement and u
 
 **Question:** Which explanation best fits D1–D3, and what single next action is justified?
 
-D4 synthesizes existing Sprint 007 evidence. It does not run a collection of cure backtests. It selects one of the following outcomes:
-
-- `SELECTIVE_FRICTION_HYPOTHESIS`
-- `STRUCTURE_OR_SIZING_HYPOTHESIS`
-- `EXECUTION_CALIBRATION_REQUIRED`
-- `CURRENT_IMPLEMENTATION_NOT_VIABLE`
-- `EVIDENCE_INCONCLUSIVE`
+D4 synthesizes existing Sprint 007 evidence. It does not run a collection of cure backtests. **Assigned outcome:** `EXECUTION_CALIBRATION_REQUIRED`. Secondary findings (expensive-package concentration; short-side fragility) do not validate a filter or a long-only strategy. See [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md).
 
 ---
 
@@ -202,17 +202,17 @@ D4 synthesizes existing Sprint 007 evidence. It does not run a collection of cur
 
 Sprint 007 is complete when:
 
-- [ ] The official Sprint 006 artifacts remain unchanged and are identity-checked.
+- [x] The official Sprint 006 artifacts remain unchanged and are identity-checked.
 - [x] D0 confirms a trusted artifact-first path or records a specific blocker.
 - [x] D1 states whether the current selected expression has gross margin worth investigating and where that margin resides.
 - [x] D2 reconciles the observed implementation shortfall with no material unexplained residual.
-- [ ] D3 states the execution quality required and what cannot be inferred about attainability.
-- [ ] D4 records one evidence classification and exactly one next action.
-- [ ] Every new diagnostic rule is frozen before its granular output is opened.
-- [ ] Exploratory findings are clearly separated from accepted evidence.
-- [ ] No signal window, spread threshold, structure, side, or execution policy is selected because it improved the same-sample backtest.
-- [ ] Relevant focused tests pass and evidence is reproducible.
-- [ ] Remaining limitations and stop conditions are documented.
+- [x] D3 states the execution quality required and what cannot be inferred about attainability.
+- [x] D4 records one evidence classification and exactly one next action.
+- [x] Every new diagnostic rule is frozen before its granular output is opened.
+- [x] Exploratory findings are clearly separated from accepted evidence.
+- [x] No signal window, spread threshold, structure, side, or execution policy is selected because it improved the same-sample backtest.
+- [x] Relevant focused tests pass and evidence is reproducible.
+- [x] Remaining limitations and stop conditions are documented.
 
 ---
 
@@ -232,7 +232,7 @@ For each deliverable:
 4. Implement or execute only the accepted deliverable.
 5. Present evidence and request acceptance before designing the next deliverable.
 
-D2 (D2A + D2B) is **accepted**. D3 design is **accepted**. D3 **implementation only** is authorized. D3 execution against official artifacts and D4 are not authorized.
+D2 (D2A + D2B) is **accepted**. D3 design and evidence are **accepted**. D4 is **accepted** with primary outcome `EXECUTION_CALIBRATION_REQUIRED`. Sprint 007 is **closed**. The next sprint is **not** authorized.
 
 Pause and request rescoping if proposed work:
 
@@ -244,9 +244,13 @@ Pause and request rescoping if proposed work:
 
 ---
 
-## 12. Initial next action
+## 12. Next action
 
-D3 design **accepted**. Next: **D3 implementation only**. Do not execute against official artifacts or start D4.
+Sprint 007 is **closed**. The next sprint is **unauthorized**.
+
+The only justified later work is a **future** manual-first execution-observation project (export weekly order tickets; record live package quotes and limit-touch opportunities; then paper-trade to validate plumbing). Paper fills do not prove live attainability. Live orders are not authorized. That project is not started here.
+
+Preserved D3 bounds: \(h<0.2236\) retains 50% of midpoint P&L; \(h<0.3407\) retains 25%; \(h<0.4616\) remains dollar-profitable before unmodeled costs. Required \(h\) is **not** claimed to be achievable.
 
 ---
 
@@ -254,6 +258,7 @@ D3 design **accepted**. Next: **D3 implementation only**. Do not execute against
 
 | Date | Event |
 |------|-------|
+| 2026-09-06 | D3 evidence **accepted**. D4 **accepted**: `EXECUTION_CALIBRATION_REQUIRED`. Sprint 007 **closed**. Next sprint unauthorized. |
 | 2026-09-05 | D3 design **accepted**. D3 **implementation only** authorized. Official execution and D4 not authorized. |
 | 2026-09-03 | D1, D2A, D2B, and D2 overall **accepted**. Final class `D3_EXECUTION_FOCUSED`. D3 **design only** authorized. |
 | 2026-09-03 | D2B **executed** on official artifacts (`sprint007_d2b_20260904T045019Z`); final class `D3_EXECUTION_FOCUSED`. D3 not started. |

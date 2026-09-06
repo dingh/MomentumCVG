@@ -7,7 +7,7 @@
 **D0:** `READY_WITH_NARROW_ENABLING_CHANGE` — `C:/MomentumCVG_env/runs/sprint007_d0_20260830T001015Z/` (commit `8a59474`)  
 **D1:** **accepted** — `D1_CONTINUE_TO_D2` — [`sprint007_d1_design.md`](sprint007_d1_design.md); [`sprint007_d1_evidence_review.md`](sprint007_d1_evidence_review.md)  
 **D2:** **accepted** — final class `D3_EXECUTION_FOCUSED` — [`sprint007_d2_design.md`](sprint007_d2_design.md); D2A [`sprint007_d2a_evidence_review.md`](sprint007_d2a_evidence_review.md); D2B [`sprint007_d2b_evidence_review.md`](sprint007_d2b_evidence_review.md)  
-**Authorization:** D3 **implementation** is authorized. Do not execute against official Sprint 006 artifacts, generate D3 evidence, or start D4 until that execution is separately authorized.
+**Authorization:** D3 design, implementation, and official evidence are **accepted** (`D3_ENVELOPE`; [`sprint007_d3_evidence_review.md`](sprint007_d3_evidence_review.md)). D4 closeout: `EXECUTION_CALIBRATION_REQUIRED` ([`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md)). Sprint 007 is closed. The next sprint is unauthorized.
 
 ---
 
@@ -464,7 +464,7 @@ D3 must end with four sentences, filled from **Path R** numbers:
 3. **Unknown:** whether any package order would fill inside that envelope; commissions, missed fills, timing, and adverse selection; counterfactual structures. Historical quotes do not validate complex-order execution.
 4. **Not claimed:** that midpoint is attainable; that any one of \(h_{R,50}\), \(h_{R,25}\), or \(h_{R,P0}\) is a live limit price; that Path F is the executable book; or that a filter / side / structure change would preserve the midpoint book.
 
-If \(0 < h_{R,P0} < 1\) (or the 50% / 25% marks lie strictly inside \((0,1)\)), the **shape** required by working-plan §6.7 is “requirement strictly between mid and full cross.” D3 records that shape as a range. D4, not D3, chooses among `EXECUTION_CALIBRATION_REQUIRED`, `SELECTIVE_FRICTION_HYPOTHESIS`, and the other sprint outcomes.
+If \(0 < h_{R,P0} < 1\) (or the 50% / 25% marks lie strictly inside \((0,1)\)), the **shape** required by working-plan §6.7 is “requirement strictly between mid and full cross.” D3 records that shape as a range. D4 assigned `EXECUTION_CALIBRATION_REQUIRED` ([`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md)).
 
 Path F remaining positive is not executable return. Path R is not a new official Sprint 006 result. Side dollars are not a long-only or short-only test.
 

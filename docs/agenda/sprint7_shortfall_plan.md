@@ -1,10 +1,11 @@
 # Sprint 007 — Implementation-shortfall diagnostic plan
 
-**Status:** `ACTIVE — D0 ACCEPTED AND COMPLETE; D1 IMPLEMENTED — AWAITING EVIDENCE REVIEW`  
-**Updated:** 2026-09-02  
+**Status:** `CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`  
+**Updated:** 2026-09-06  
 **Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md)  
+**Closeout:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md)  
 **D0 design:** [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md) — `ACCEPTED`  
-**D1 design:** [`docs/tmp/sprint007_d1_design.md`](../tmp/sprint007_d1_design.md) — `ACCEPTED` (implementation complete; evidence awaiting review)  
+**D1 design:** [`docs/tmp/sprint007_d1_design.md`](../tmp/sprint007_d1_design.md) — `ACCEPTED`  
 **Prior evidence:** [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Canonical path:** `docs/agenda/sprint7_shortfall_plan.md` — do not duplicate under `docs/tmp/`.  
 **Purpose:** Cursor-executable sprint-level plan for D0–D4. This plan defines questions, evidence boundaries, gates, and required answers. It intentionally defers each deliverable's exact metrics, charts, calculation conventions, file footprint, and tests until that deliverable is designed and accepted.

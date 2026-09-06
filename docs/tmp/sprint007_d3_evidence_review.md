@@ -6,7 +6,7 @@
 **Official artifacts:** `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z`  
 **Window:** `2020-01-01` → `2026-07-10`  
 **Notebook:** `notebooks/sprint007/d3_execution_envelope.ipynb` — committed copy remains unexecuted; one fresh `momentumcvg` kernel produced the executed `.ipynb` and `.html` in the evidence dir.  
-**Status:** Awaiting acceptance. No `h_req`. No preferred fill. D4 not started.
+**Status:** **Accepted.** No `h_req`. No preferred fill. D4 closeout: `EXECUTION_CALIBRATION_REQUIRED` ([`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md)).
 
 ---
 
@@ -148,7 +148,7 @@ Unknown: whether any package order would fill inside that envelope; commissions,
 
 Not claimed: that midpoint is attainable; that any one of \(h_{R,50}\), \(h_{R,25}\), or \(h_{R,P0}\) is a live limit price; that Path F is the executable book; or that a filter / side / structure change would preserve the midpoint book.
 
-The working-plan shape is a requirement strictly between midpoint and full cross, recorded here as a range. D4, not this review, chooses the sprint outcome.
+The working-plan shape is a requirement strictly between midpoint and full cross, recorded here as a range. D4 assigned `EXECUTION_CALIBRATION_REQUIRED`. This review does not claim the required \(h\) is achievable.
 
 ---
 
@@ -165,4 +165,4 @@ The working-plan shape is a requirement strictly between midpoint and full cross
 
 ## Stop
 
-D3 evidence is ready for review. Do not start D4 until this review is accepted.
+D3 evidence is **accepted**. Sprint 007 is closed at [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md). The next sprint is unauthorized.
