@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -783,10 +785,78 @@ def write_execution_receipt(
     return path
 
 
-def export_d3_evidence(result: D3Result, evidence_dir: Path | None = None) -> dict[str, Path]:
-    """Write design artifacts. Does not execute the notebook or load official runs."""
+def export_d3_evidence(
+    result: D3Result | None = None,
+    evidence_dir: Path | None = None,
+    *,
+    clean_notebook: Path | None = None,
+    d3_code_commit_sha: str | None = None,
+) -> dict[str, Path] | Path:
+    """Write design artifacts. Execute the clean notebook only when asked."""
     evidence_dir = evidence_dir or resolve_evidence_dir()
-    return write_d3_tables(result, evidence_dir)
+    if clean_notebook is None:
+        if result is None:
+            raise D3AnalysisError("result is required when not executing a notebook")
+        return write_d3_tables(result, evidence_dir)
+
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    executed = evidence_dir / "d3_execution_envelope.executed.ipynb"
+    html_path = evidence_dir / "d3_execution_envelope.html"
+    d3_code_commit_sha = d3_code_commit_sha or get_current_repo_sha()
+
+    repo_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(repo_root)
+    env[EVIDENCE_DIR_ENV] = str(evidence_dir)
+    python = Path("C:/MomentumCVG_env/venv/Scripts/python.exe")
+    if not python.exists():
+        python = Path(sys.executable)
+    jupyter = [str(python), "-m", "jupyter"]
+
+    subprocess.run(
+        [
+            *jupyter,
+            "nbconvert",
+            "--to",
+            "notebook",
+            "--execute",
+            str(clean_notebook),
+            "--output",
+            executed.name,
+            "--output-dir",
+            str(evidence_dir),
+            "--ExecutePreprocessor.kernel_name=momentumcvg",
+            "--ExecutePreprocessor.timeout=-1",
+        ],
+        check=True,
+        cwd=repo_root,
+        env=env,
+    )
+    subprocess.run(
+        [
+            *jupyter,
+            "nbconvert",
+            "--to",
+            "html",
+            str(executed),
+            "--output",
+            html_path.name,
+            "--output-dir",
+            str(evidence_dir),
+        ],
+        check=True,
+        cwd=repo_root,
+        env=env,
+    )
+    if result is not None:
+        write_d3_tables(result, evidence_dir)
+    write_execution_receipt(
+        evidence_dir=evidence_dir,
+        executed_notebook=executed,
+        html_export=html_path,
+        d3_code_commit_sha=d3_code_commit_sha,
+    )
+    return evidence_dir
 
 
 def run_d3_analysis(

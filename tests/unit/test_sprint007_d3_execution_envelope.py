@@ -339,6 +339,9 @@ def test_evidence_exporter_writes_design_files(tmp_path) -> None:
     assert paths["curves"].exists()
     assert paths["crossings"].exists()
     assert paths["side_snapshot"].exists()
+    assert not (tmp_path / "d3_execution_envelope.executed.ipynb").exists()
+    with pytest.raises(D3AnalysisError, match="result is required"):
+        export_d3_evidence(evidence_dir=tmp_path)
 
 
 def test_headroom_no_crossing_token() -> None:
