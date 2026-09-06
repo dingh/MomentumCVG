@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
+import json
 
 import pandas as pd
 import pytest
@@ -12,10 +13,13 @@ from src.backtest.pipeline import _apply_tier_a_sizing
 from src.backtest.sprint007_d1_gross_margin import VERDICT_CONTINUE, VERDICT_STOP
 from src.backtest.sprint007_d2_shortfall_bridge import CLASS_EXECUTION, CLASS_MIXED
 from src.backtest.sprint007_d3_execution_envelope import (
+    EVIDENCE_DIR_ENV,
     H_TOL,
     NO_CROSSING,
+    PROGRESS_NAME,
     TIER_A_CONFIG,
     VERDICT_BLOCKED,
+    WORKERS_ENV,
     Crossing,
     D3AnalysisError,
     D3Book,
@@ -24,18 +28,21 @@ from src.backtest.sprint007_d3_execution_envelope import (
     CAR_TOLERANCE,
     H_DET,
     H_VIS,
+    book_entry_costs_at_h,
     evaluate_path_at_h,
     export_d3_evidence,
     fill_price_at_h,
     filter_primary_date_status,
     first_adverse_crossing,
     join_paired_trades,
+    load_eval_checkpoint,
     package_entry_cost_at_h,
     path_f_pnl_crossing,
     reconcile_d3_endpoints,
     run_d3_from_book,
     side_snapshots_at_roots,
     size_book_at_h,
+    _precompute_path_grid,
 )
 
 
@@ -244,6 +251,95 @@ def test_prerequisite_d1_stop_blocks() -> None:
         d2_final_class=CLASS_EXECUTION,
     )
     assert result.verdict == VERDICT_BLOCKED
+
+
+def test_vectorized_entry_cost_matches_per_trade_loop() -> None:
+    mid, cross = _paired_trade_frames()
+    joined = join_paired_trades(mid, cross)
+    legs = pd.DataFrame(
+        [
+            {
+                "trade_date": date(2021, 1, 4),
+                "ticker": "AAA",
+                "direction": "long",
+                "unit_quantity": 1,
+                "bid": 1.0,
+                "ask": 3.0,
+            },
+            {
+                "trade_date": date(2021, 1, 4),
+                "ticker": "AAA",
+                "direction": "long",
+                "unit_quantity": 1,
+                "bid": 1.0,
+                "ask": 3.0,
+            },
+            {
+                "trade_date": date(2021, 1, 4),
+                "ticker": "BBB",
+                "direction": "short",
+                "unit_quantity": -1,
+                "bid": 2.0,
+                "ask": 4.0,
+            },
+            {
+                "trade_date": date(2021, 1, 4),
+                "ticker": "BBB",
+                "direction": "short",
+                "unit_quantity": 1,
+                "bid": 0.5,
+                "ask": 1.5,
+            },
+        ]
+    )
+    status = pd.DataFrame([{"trade_date": date(2021, 1, 4), "status": "traded", "reason": "ok"}])
+    book = D3Book(trades=joined, legs=legs, date_status=status)
+    for h in (0.0, 0.33, 1.0):
+        vector = book_entry_costs_at_h(book, h)
+        for trade in book.trades.itertuples(index=False):
+            key = (trade.trade_date, trade.ticker, trade.direction)
+            looped = package_entry_cost_at_h(book.legs_by_key[key], h)
+            assert float(vector.loc[key]) == pytest.approx(looped)
+
+
+def test_progress_file_records_elapsed_and_counts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv(EVIDENCE_DIR_ENV, str(tmp_path))
+    book = _long_book(p_mid=20.0, p_cross=-10.0, qty=2.0)
+    evaluate_path_at_h(book, 0.1, path="R")
+    lines = (tmp_path / PROGRESS_NAME).read_text(encoding="utf-8").strip().splitlines()
+    assert lines
+    rec = json.loads(lines[-1])
+    assert "elapsed_s" in rec
+    assert rec["eval_calls"] == 1
+    assert rec["cache_size"] == 1
+
+
+def test_checkpoint_resume_skips_recompute(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv(EVIDENCE_DIR_ENV, str(tmp_path))
+    book = _long_book(p_mid=20.0, p_cross=-10.0, qty=2.0)
+    first = evaluate_path_at_h(book, 0.4, path="R")
+    resumed = _long_book(p_mid=20.0, p_cross=-10.0, qty=2.0)
+    assert load_eval_checkpoint(resumed, tmp_path) == 1
+    calls = resumed.eval_calls
+    second = evaluate_path_at_h(resumed, 0.4, path="R")
+    assert resumed.eval_calls == calls
+    assert second["pnl"] == pytest.approx(first["pnl"])
+    assert second["car"] == pytest.approx(first["car"])
+
+
+def test_precompute_parallel_matches_sequential(monkeypatch) -> None:
+    grid = (0.0, 0.1, 0.2)
+    sequential = _long_book(p_mid=20.0, p_cross=-10.0, qty=2.0)
+    monkeypatch.setenv(WORKERS_ENV, "1")
+    _precompute_path_grid(sequential, "R", grid, label="seq")
+    parallel = _long_book(p_mid=20.0, p_cross=-10.0, qty=2.0)
+    monkeypatch.setenv(WORKERS_ENV, "2")
+    _precompute_path_grid(parallel, "R", grid, label="par")
+    for h in grid:
+        left = sequential.eval_cache[("R", float(f"{h:.12f}"))]
+        right = parallel.eval_cache[("R", float(f"{h:.12f}"))]
+        assert right["pnl"] == pytest.approx(left["pnl"])
+        assert right["car"] == pytest.approx(left["car"])
 
 
 def test_evaluate_path_at_h_memoizes_same_h() -> None:

@@ -10,6 +10,9 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +41,21 @@ from src.backtest.surface_decision_report import PRIMARY_END, PRIMARY_START, com
 from src.backtest.surface_metrics import build_date_summary
 
 EVIDENCE_DIR_ENV = "SPRINT007_D3_EVIDENCE_DIR"
+WORKERS_ENV = "SPRINT007_D3_WORKERS"
+PROGRESS_NAME = "d3_progress.jsonl"
+CHECKPOINT_NAME = "d3_eval_checkpoint.jsonl"
+CACHE_SCALAR_FIELDS = (
+    "h",
+    "path",
+    "pnl",
+    "car",
+    "sum_abs_qty",
+    "capital",
+    "n_trades",
+    "n_dates",
+    "pnl_long",
+    "pnl_short",
+)
 
 H_TOL = 1e-4
 H_DET_STEP = 0.01
@@ -61,8 +79,142 @@ VERDICT_ENVELOPE = "D3_ENVELOPE"
 NO_CROSSING = "no_crossing"
 
 
+_SESSION_START = time.monotonic()
+_WORKER_BOOK: D3Book | None = None
+
+
+def _evidence_dir() -> Path | None:
+    raw = os.environ.get(EVIDENCE_DIR_ENV)
+    if not raw:
+        return None
+    path = Path(raw)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def d3_worker_count() -> int:
+    raw = os.environ.get(WORKERS_ENV, "1")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 1
+
+
+def _progress_path(evidence_dir: Path | None = None) -> Path | None:
+    directory = evidence_dir or _evidence_dir()
+    if directory is None:
+        return None
+    return directory / PROGRESS_NAME
+
+
+def _checkpoint_path(evidence_dir: Path | None = None) -> Path | None:
+    directory = evidence_dir or _evidence_dir()
+    if directory is None:
+        return None
+    return directory / CHECKPOINT_NAME
+
+
+def _d3_progress(
+    stage: str,
+    *,
+    done: int | None = None,
+    total: int | None = None,
+    eval_calls: int | None = None,
+    cache_size: int | None = None,
+    **extra: Any,
+) -> None:
+    elapsed = time.monotonic() - _SESSION_START
+    record: dict[str, Any] = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "elapsed_s": round(elapsed, 3),
+        "stage": stage,
+        "done": done,
+        "total": total,
+        "eval_calls": eval_calls,
+        "cache_size": cache_size,
+    }
+    record.update(extra)
+    path = _progress_path()
+    if path is not None:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, default=str) + "\n")
+    parts = [f"[D3] {stage}", f"elapsed={elapsed:.1f}s"]
+    if done is not None and total is not None:
+        parts.append(f"{done}/{total}")
+    if eval_calls is not None:
+        parts.append(f"eval_calls={eval_calls}")
+    if cache_size is not None:
+        parts.append(f"cache={cache_size}")
+    print(" ".join(parts), flush=True)
+
+
 def _d3_log(message: str) -> None:
-    print(f"[D3] {message}", flush=True)
+    _d3_progress(message)
+
+
+def _cache_float(h: float) -> float:
+    return float(f"{float(h):.12f}")
+
+
+def _cache_key(path: str, h: float) -> tuple[str, float]:
+    return (path, _cache_float(h))
+
+
+def _result_to_checkpoint(result: dict[str, Any]) -> dict[str, Any]:
+    payload = {field: result[field] for field in CACHE_SCALAR_FIELDS}
+    h = float(result["h"])
+    if result["path"] == "R" and h in (0.0, 1.0) and "quantities" in result:
+        qty = result["quantities"].reset_index()
+        payload["quantities"] = qty.to_dict(orient="records")
+    return payload
+
+
+def _checkpoint_to_result(record: dict[str, Any]) -> dict[str, Any]:
+    result = {field: record[field] for field in CACHE_SCALAR_FIELDS}
+    if "quantities" in record:
+        frame = pd.DataFrame(record["quantities"])
+        result["quantities"] = frame.set_index(list(TRADE_KEY))["quantity"]
+    return result
+
+
+def load_eval_checkpoint(book: "D3Book", evidence_dir: Path | None = None) -> int:
+    path = _checkpoint_path(evidence_dir)
+    if path is None or not path.exists():
+        return 0
+    loaded = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        key = _cache_key(str(record["path"]), float(record["h"]))
+        if key in book.eval_cache:
+            continue
+        book.eval_cache[key] = _checkpoint_to_result(record)
+        loaded += 1
+    if loaded:
+        _d3_progress(
+            "loaded checkpoint",
+            done=loaded,
+            total=loaded,
+            cache_size=len(book.eval_cache),
+            eval_calls=book.eval_calls,
+        )
+    return loaded
+
+
+def append_eval_checkpoint(
+    book: "D3Book",
+    path: str,
+    h: float,
+    result: dict[str, Any],
+    evidence_dir: Path | None = None,
+) -> None:
+    dest = _checkpoint_path(evidence_dir)
+    if dest is None:
+        return
+    with dest.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(_result_to_checkpoint(result), default=str) + "\n")
+    _ = book, path, h
 
 
 class D3AnalysisError(Exception):
@@ -93,12 +245,49 @@ def fill_price_at_h(bid: float, ask: float, unit_quantity: float, h: float) -> f
 
 
 def package_entry_cost_at_h(leg_rows: pd.DataFrame, h: float) -> float:
-    total = 0.0
-    for row in leg_rows.itertuples(index=False):
-        fill = fill_price_at_h(row.bid, row.ask, row.unit_quantity, h)
-        cash = fill * abs(float(row.unit_quantity))
-        total += cash if float(row.unit_quantity) > 0.0 else -cash
-    return float(total)
+    if not 0.0 <= float(h) <= 1.0:
+        raise ValueError(f"h must be in [0, 1], got {h!r}")
+    qty = leg_rows["unit_quantity"].astype(float)
+    if (qty == 0.0).any():
+        raise ValueError("unit_quantity must be non-zero")
+    bid = leg_rows["bid"].astype(float)
+    ask = leg_rows["ask"].astype(float)
+    mid = bid + 0.5 * (ask - bid)
+    cross = ask.where(qty > 0.0, bid)
+    fill = mid + float(h) * (cross - mid)
+    cash = fill * qty.abs()
+    signed = cash.where(qty > 0.0, -cash)
+    return float(signed.sum())
+
+
+def book_entry_costs_at_h(book: "D3Book", h: float) -> pd.Series:
+    """Vectorized package entry cost for every frozen trade key at ``h``."""
+    if not 0.0 <= float(h) <= 1.0:
+        raise ValueError(f"h must be in [0, 1], got {h!r}")
+    legs = book.legs
+    qty = legs["unit_quantity"].astype(float)
+    if (qty == 0.0).any():
+        raise ValueError("unit_quantity must be non-zero")
+    bid = legs["bid"].astype(float)
+    ask = legs["ask"].astype(float)
+    mid = bid + 0.5 * (ask - bid)
+    cross = ask.where(qty > 0.0, bid)
+    fill = mid + float(h) * (cross - mid)
+    cash = fill * qty.abs()
+    signed = cash.where(qty > 0.0, -cash)
+    grouped = signed.groupby([legs[col] for col in TRADE_KEY], sort=False).sum()
+    grouped.index = grouped.index.set_names(list(TRADE_KEY))
+    return grouped
+
+
+def _at_risk_series(priced: pd.DataFrame) -> pd.Series:
+    premium = priced["entry_cost_per_share"].astype(float).abs()
+    max_loss = priced["max_loss_per_share"].astype(float)
+    long = priced["direction"].astype(str) == "long"
+    risk = max_loss.where(~(long & (premium > 0.0)), premium)
+    if risk.isna().any() or (risk <= 0.0).any():
+        raise D3AnalysisError("non-positive at-risk per share")
+    return risk
 
 
 def path_f_pnl_crossing(alpha: float, p_mid: float, delta_price: float) -> float:
@@ -209,24 +398,31 @@ def _at_risk_row(direction: str, entry_cost: float, net_credit: float, max_loss:
 
 
 def evaluate_path_at_h(book: "D3Book", h: float, *, path: str) -> dict[str, Any]:
-    cache_key = (path, float(h))
+    cache_key = _cache_key(path, h)
     cached = book.eval_cache.get(cache_key)
     if cached is not None:
         return cached
-    rows = []
-    for trade in book.trades.itertuples(index=False):
-        trade_key = (trade.trade_date, trade.ticker, trade.direction)
-        legs = book.legs_by_key[trade_key]
-        econ = per_share_economics_at_h(
-            direction=trade.direction,
-            legs=legs,
-            h=h,
-            p_mid=trade.pnl_per_share_mid,
-            p_cross=trade.pnl_per_share_cross,
-            wing_width=getattr(trade, "wing_width", None),
-        )
-        rows.append({**trade._asdict(), **econ, "included_in_portfolio": True})
-    priced = pd.DataFrame(rows)
+    started = time.monotonic()
+    costs = book_entry_costs_at_h(book, h)
+    priced = book.trades.copy()
+    priced_index = priced.set_index(list(TRADE_KEY)).index
+    entry = costs.reindex(priced_index)
+    if entry.isna().any():
+        raise D3AnalysisError("missing package entry cost for a frozen key")
+    priced["entry_cost_per_share"] = entry.to_numpy()
+    priced["net_credit_per_share"] = -priced["entry_cost_per_share"]
+    long = priced["direction"].astype(str) == "long"
+    priced["max_loss_per_share"] = priced["entry_cost_per_share"].abs()
+    if (~long).any():
+        width = priced.loc[~long, "wing_width"]
+        if width.isna().any():
+            raise D3AnalysisError("short trade missing wing_width")
+        short_max = (width.astype(float) - priced.loc[~long, "net_credit_per_share"]).clip(lower=0.0)
+        priced.loc[~long, "max_loss_per_share"] = short_max
+    priced["pnl_per_share"] = (1.0 - float(h)) * priced["pnl_per_share_mid"].astype(float) + float(
+        h
+    ) * priced["pnl_per_share_cross"].astype(float)
+    priced["included_in_portfolio"] = True
     if path == "F":
         priced["quantity"] = priced["quantity_mid"]
     elif path == "R":
@@ -235,16 +431,7 @@ def evaluate_path_at_h(book: "D3Book", h: float, *, path: str) -> dict[str, Any]
         raise ValueError(path)
     qty = priced["quantity"].abs().astype(float)
     priced["pnl_total"] = qty * priced["pnl_per_share"].astype(float)
-    priced["capital_at_risk_dollars"] = [
-        abs(float(q))
-        * _at_risk_row(
-            str(row.direction),
-            float(row.entry_cost_per_share),
-            float(row.net_credit_per_share),
-            float(row.max_loss_per_share),
-        )
-        for q, row in zip(priced["quantity"], priced.itertuples(index=False))
-    ]
+    priced["capital_at_risk_dollars"] = qty * _at_risk_series(priced)
     summary = build_date_summary(priced)
     car = float(compute_view_a(book.date_status, summary)["mean_cycle_car"])
     side = priced.groupby("direction", dropna=False)["pnl_total"].sum().to_dict()
@@ -263,7 +450,40 @@ def evaluate_path_at_h(book: "D3Book", h: float, *, path: str) -> dict[str, Any]
     }
     book.eval_cache[cache_key] = result
     book.eval_calls += 1
+    append_eval_checkpoint(book, path, h, result)
+    _d3_progress(
+        f"eval {path} h={float(h):.6f}",
+        eval_calls=book.eval_calls,
+        cache_size=len(book.eval_cache),
+        seconds=round(time.monotonic() - started, 3),
+    )
     return result
+
+
+def _init_eval_worker(
+    trades: pd.DataFrame,
+    legs: pd.DataFrame,
+    date_status: pd.DataFrame,
+    car_mid_ref: float | None,
+    car_cross_ref: float | None,
+) -> None:
+    global _WORKER_BOOK
+    os.environ.pop(EVIDENCE_DIR_ENV, None)
+    _WORKER_BOOK = D3Book(
+        trades=trades,
+        legs=legs,
+        date_status=date_status,
+        car_mid_ref=car_mid_ref,
+        car_cross_ref=car_cross_ref,
+    )
+
+
+def _worker_evaluate(item: tuple[str, float]) -> tuple[str, float, dict[str, Any]]:
+    if _WORKER_BOOK is None:
+        raise D3AnalysisError("worker book was not initialized")
+    path, h = item
+    result = evaluate_path_at_h(_WORKER_BOOK, float(h), path=path)
+    return path, float(h), result
 
 
 def _precompute_path_grid(
@@ -274,12 +494,74 @@ def _precompute_path_grid(
     label: str,
 ) -> None:
     total = len(grid)
-    _d3_log(f"{label} start n={total} cached_calls={book.eval_calls}")
-    for i, h in enumerate(grid, start=1):
-        evaluate_path_at_h(book, h, path=path)
-        if i == 1 or i == total or i % 10 == 0:
-            _d3_log(f"{label} {i}/{total} h={h:.2f} eval_calls={book.eval_calls}")
-    _d3_log(f"{label} done eval_calls={book.eval_calls}")
+    pending = [h for h in grid if _cache_key(path, h) not in book.eval_cache]
+    done = total - len(pending)
+    workers = d3_worker_count()
+    _d3_progress(
+        f"{label} start",
+        done=done,
+        total=total,
+        eval_calls=book.eval_calls,
+        cache_size=len(book.eval_cache),
+        workers=workers,
+        pending=len(pending),
+    )
+    if not pending:
+        _d3_progress(
+            f"{label} done",
+            done=total,
+            total=total,
+            eval_calls=book.eval_calls,
+            cache_size=len(book.eval_cache),
+        )
+        return
+    if workers > 1 and len(pending) > 1:
+        items = [(path, float(h)) for h in pending]
+        with ProcessPoolExecutor(
+            max_workers=min(workers, len(pending)),
+            initializer=_init_eval_worker,
+            initargs=(
+                book.trades,
+                book.legs,
+                book.date_status,
+                book.car_mid_ref,
+                book.car_cross_ref,
+            ),
+        ) as pool:
+            for i, (got_path, h, result) in enumerate(pool.map(_worker_evaluate, items), start=1):
+                book.eval_cache[_cache_key(got_path, h)] = result
+                book.eval_calls += 1
+                append_eval_checkpoint(book, got_path, h, result)
+                finished = done + i
+                if i == 1 or i == len(pending) or finished % 10 == 0:
+                    _d3_progress(
+                        label,
+                        done=finished,
+                        total=total,
+                        eval_calls=book.eval_calls,
+                        cache_size=len(book.eval_cache),
+                        h=h,
+                    )
+    else:
+        for i, h in enumerate(pending, start=1):
+            evaluate_path_at_h(book, h, path=path)
+            finished = done + i
+            if i == 1 or i == len(pending) or finished % 10 == 0:
+                _d3_progress(
+                    label,
+                    done=finished,
+                    total=total,
+                    eval_calls=book.eval_calls,
+                    cache_size=len(book.eval_cache),
+                    h=h,
+                )
+    _d3_progress(
+        f"{label} done",
+        done=total,
+        total=total,
+        eval_calls=book.eval_calls,
+        cache_size=len(book.eval_cache),
+    )
 
 
 def evaluate_paths(book: "D3Book", grid: tuple[float, ...] = H_VIS) -> pd.DataFrame:
@@ -547,7 +829,14 @@ def run_d3_from_book(
     )
     if blocker:
         return _blocked(blocker)
-    _d3_log(f"endpoint reconciliation official={official} n_trades={len(book.trades)}")
+    loaded = load_eval_checkpoint(book)
+    _d3_progress(
+        f"endpoint reconciliation official={official} n_trades={len(book.trades)}",
+        cache_size=len(book.eval_cache),
+        eval_calls=book.eval_calls,
+        checkpoint_loaded=loaded,
+        workers=d3_worker_count(),
+    )
     try:
         reconciliation = reconcile_d3_endpoints(book, official=official)
     except D3AnalysisError as exc:
@@ -817,6 +1106,30 @@ def write_d3_tables(result: D3Result, evidence_dir: Path) -> dict[str, Path]:
     return paths
 
 
+def _tail_progress_file(path: Path, stop: threading.Event) -> None:
+    """Print new progress-file lines so nbconvert capture does not hide them."""
+    position = 0
+    while not stop.is_set():
+        if path.exists():
+            with path.open("r", encoding="utf-8") as handle:
+                handle.seek(position)
+                chunk = handle.read()
+                if chunk:
+                    sys.stdout.write(chunk)
+                    if not chunk.endswith("\n"):
+                        sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    position = handle.tell()
+        stop.wait(0.5)
+    if path.exists():
+        with path.open("r", encoding="utf-8") as handle:
+            handle.seek(position)
+            chunk = handle.read()
+            if chunk:
+                sys.stdout.write(chunk)
+                sys.stdout.flush()
+
+
 def write_execution_receipt(
     *,
     evidence_dir: Path,
@@ -861,30 +1174,44 @@ def export_d3_evidence(
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root)
     env[EVIDENCE_DIR_ENV] = str(evidence_dir)
+    if WORKERS_ENV not in env:
+        env[WORKERS_ENV] = str(max(1, (os.cpu_count() or 2) - 1))
     python = Path("C:/MomentumCVG_env/venv/Scripts/python.exe")
     if not python.exists():
         python = Path(sys.executable)
     jupyter = [str(python), "-m", "jupyter"]
-
-    subprocess.run(
-        [
-            *jupyter,
-            "nbconvert",
-            "--to",
-            "notebook",
-            "--execute",
-            str(clean_notebook),
-            "--output",
-            executed.name,
-            "--output-dir",
-            str(evidence_dir),
-            "--ExecutePreprocessor.kernel_name=momentumcvg",
-            "--ExecutePreprocessor.timeout=-1",
-        ],
-        check=True,
-        cwd=repo_root,
-        env=env,
+    progress_file = evidence_dir / PROGRESS_NAME
+    stop = threading.Event()
+    tailer = threading.Thread(
+        target=_tail_progress_file,
+        args=(progress_file, stop),
+        daemon=True,
     )
+    tailer.start()
+    try:
+        completed = subprocess.run(
+            [
+                *jupyter,
+                "nbconvert",
+                "--to",
+                "notebook",
+                "--execute",
+                str(clean_notebook),
+                "--output",
+                executed.name,
+                "--output-dir",
+                str(evidence_dir),
+                "--ExecutePreprocessor.kernel_name=momentumcvg",
+                "--ExecutePreprocessor.timeout=-1",
+            ],
+            cwd=repo_root,
+            env=env,
+        )
+    finally:
+        stop.set()
+        tailer.join(timeout=2.0)
+    if completed.returncode != 0:
+        raise subprocess.CalledProcessError(completed.returncode, completed.args)
     subprocess.run(
         [
             *jupyter,
