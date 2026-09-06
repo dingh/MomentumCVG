@@ -2,11 +2,13 @@
 
 **Updated:** 2026-09-06
 
-**Status:** `ACCEPTED — PLAN FROZEN; D0 NOT STARTED`
+**Status:** `ACCEPTED — PLAN FROZEN; D0 DESIGN DRAFTED — AWAITING REVIEW`
 
-**Mode:** **Build/Audit.** Sprint-level plan accepted. Deliverable designs and implementation proceed only under one-deliverable authorization. **D0 has not started.**
+**Mode:** **Build/Audit.** Sprint-level plan accepted. **D0 design drafted — awaiting review; implementation not started.**
 
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md) — accepted detailed scope; canonical path; do not duplicate under `docs/tmp/`.
+
+**D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `PROPOSED — AWAITING REVIEW` (implementation not started)
 
 **Previous:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence; not edited by this sprint.
@@ -50,12 +52,12 @@ All deliverables are **pending**. None have started.
 
 | ID | Deliverable | Status |
 |---|---|---|
-| **D0** | Freeze research protocol details as needed and confirm input readiness | **Not started** |
+| **D0** | Freeze research protocol details as needed and confirm input readiness | **Design drafted — awaiting review; implementation not started** |
 | **D1** | Validate measurements; record `supported` / `unsupported` / `inconclusive` gate | Pending (after D0) |
 | **D2** | Conditional threshold study, only if D1 supports it | Pending (conditional) |
 | **D3** | Closeout: conclusions, limitations, implications for later work | Pending |
 
-Detailed methods freeze in a short design immediately before each deliverable. Plan acceptance does **not** start D0; begin D0 design only on explicit instruction.
+D0 design: [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md). Do not implement D0 or open association/profitability/threshold results until the design is accepted and implementation is authorized.
 
 ---
 
@@ -93,16 +95,11 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 **Plan status:** accepted and frozen.
 
-**D0 status:** **not started.** Awaiting explicit instruction to begin D0 design.
+**D0 status:** **design drafted — awaiting review; implementation not started.**
 
-Do not draft D0, implement analysis code, or run performance analysis until instructed.
+Design: [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md).
 
-When D0 design is authorized:
-
-1. Inspect artifacts and the accepted plan.
-2. Write a one-page D0 design; wait for acceptance.
-3. Implement/execute only the accepted deliverable.
-4. Present evidence before designing the next deliverable.
+Do not implement analysis code, execute the D0 study, or produce association, profitability, or threshold results until the D0 design is accepted and implementation is explicitly authorized.
 
 Threshold work requires an accepted D1 `supported` gate. Pause and rescope if proposed work changes frozen selection rules, expands into short-side research, searches many cutoffs after seeing results, or claims fill attainability from quotes alone.
 
@@ -112,5 +109,6 @@ Threshold work requires an accepted D1 `supported` gate. Pause and rescope if pr
 
 | Date | Event |
 |------|-------|
-| 2026-09-06 | Sprint 008 plan **accepted**. Agenda switched to Sprint 008 **Build/Audit**. D0 **not started**. |
+| 2026-09-06 | D0 design **drafted** (`docs/tmp/sprint008_d0_design.md`) — awaiting review; implementation not started. |
+| 2026-09-06 | Sprint 008 plan **accepted**. Agenda switched to Sprint 008 **Build/Audit**. |
 | 2026-09-06 | Sprint 007 closed (`EXECUTION_CALIBRATION_REQUIRED`). See [`007_closeout.md`](../sprint_memos/007_closeout.md). |

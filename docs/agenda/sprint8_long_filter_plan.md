@@ -3,10 +3,11 @@
 **Status:** `ACCEPTED`  
 **Accepted:** 2026-09-06  
 **Updated:** 2026-09-06  
-**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; plan accepted; **D0 not started**  
+**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; plan accepted; **D0 design drafted — awaiting review; implementation not started**  
 **Prior closeouts:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 **D2B H/M precedent:** [`docs/tmp/sprint007_d2b_evidence_review.md`](../tmp/sprint007_d2b_evidence_review.md); `src/backtest/sprint007_d2b_package_tradability.py`  
+**D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `PROPOSED — AWAITING REVIEW`  
 **Canonical path:** `docs/agenda/sprint8_long_filter_plan.md` — do not duplicate under `docs/tmp/`.  
 **Purpose:** Accepted sprint-level research protocol for a long-side-only measurement and conditional-threshold study. This plan freezes questions, gates, inference boundaries, and deliverable sequence. It deliberately defers deliverable-specific formulas, notebooks, schemas, and code footprints until each deliverable is designed and accepted.
 
@@ -24,7 +25,7 @@
 | **Method** | Define measurements → validate measurement–profitability relationship (required gate) → only then test simple thresholds |
 | **Not the goal** | Force profitability; rescue Sprint 006; retune signal windows; redesign short structures; claim fill attainability |
 | **Outcomes allowed** | Supported / unsupported / inconclusive measurement; effective / ineffective threshold — all valid completions |
-| **Approval boundary** | Plan **accepted**. D0 has **not** started. Await explicit instruction before beginning D0 design. Each later deliverable needs its own accepted short design before new granular output |
+| **Approval boundary** | Plan **accepted**. D0 design **drafted — awaiting review; implementation not started**. Each later deliverable needs its own accepted short design before new granular output |
 
 ---
 
@@ -449,7 +450,7 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 1. ~~Review and accept this sprint-level plan.~~ **Done** — plan accepted 2026-09-06.
 2. ~~Update `docs/agenda/current_sprint.md` to Sprint 008 **Build/Audit**.~~ **Done.**
-3. **D0 design has not started.** Begin D0 design only on explicit instruction.
+3. **D0 design drafted** — [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — **awaiting review; implementation not started.**
 4. For each deliverable thereafter: inspect → one-page design → wait for acceptance → implement/execute → evidence review → next design.
 5. Do not start threshold work until D1 gate acceptance authorizes D2.
 
@@ -465,6 +466,8 @@ Pause and rescope if proposed work:
 
 ## 15. Next action
 
-**Plan accepted. D0 not started.**
+**Plan accepted. D0 design drafted — awaiting review; implementation not started.**
 
-Awaiting explicit instruction to begin **D0 design**. Do not draft D0, implement analysis code, or run performance analysis until that instruction is given.
+Design: [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md).
+
+Do not implement D0 analysis code, execute the readiness study, or produce association / profitability / threshold results until the D0 design is accepted and implementation is authorized.
