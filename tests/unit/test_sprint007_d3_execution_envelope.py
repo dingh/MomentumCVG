@@ -22,6 +22,7 @@ from src.backtest.sprint007_d3_execution_envelope import (
     assemble_envelope,
     check_prerequisites,
     CAR_TOLERANCE,
+    H_DET,
     H_VIS,
     evaluate_path_at_h,
     export_d3_evidence,
@@ -243,6 +244,49 @@ def test_prerequisite_d1_stop_blocks() -> None:
         d2_final_class=CLASS_EXECUTION,
     )
     assert result.verdict == VERDICT_BLOCKED
+
+
+def test_evaluate_path_at_h_memoizes_same_h() -> None:
+    book = _long_book(p_mid=20.0, p_cross=-10.0, qty=2.0)
+    first = evaluate_path_at_h(book, 0.2, path="R")
+    calls = book.eval_calls
+    second = evaluate_path_at_h(book, 0.2, path="R")
+    assert book.eval_calls == calls
+    assert second["pnl"] == pytest.approx(first["pnl"])
+    assert second["car"] == pytest.approx(first["car"])
+    evaluate_path_at_h(book, 0.2, path="F")
+    assert book.eval_calls == calls + 1
+
+
+def test_path_r_pnl_and_car_share_one_evaluation() -> None:
+    book = _long_book(p_mid=20.0, p_cross=-10.0, qty=2.0)
+    metrics = evaluate_path_at_h(book, 0.15, path="R")
+    assert book.eval_calls == 1
+    assert float(evaluate_path_at_h(book, 0.15, path="R")["pnl"]) == pytest.approx(metrics["pnl"])
+    assert float(evaluate_path_at_h(book, 0.15, path="R")["car"]) == pytest.approx(metrics["car"])
+    assert book.eval_calls == 1
+
+
+def test_warm_h_det_does_not_repeat_grid_evals() -> None:
+    book = _long_book(p_mid=20.0, p_cross=-10.0, qty=2.0)
+    for h in H_DET:
+        evaluate_path_at_h(book, h, path="R")
+    calls_after_grid = book.eval_calls
+    assert calls_after_grid == len(H_DET)
+
+    def pnl_r(h: float) -> float:
+        return float(evaluate_path_at_h(book, h, path="R")["pnl"])
+
+    h_star = first_adverse_crossing(pnl_r, 0.0)
+    assert h_star is not None
+    # Midpoints and bisection may add points; the 101 H_det values must not recompute.
+    assert book.eval_calls < calls_after_grid + len(H_DET)
+    fresh = _long_book(p_mid=20.0, p_cross=-10.0, qty=2.0)
+    h_uncached = first_adverse_crossing(
+        lambda h: float(evaluate_path_at_h(fresh, h, path="R")["pnl"]),
+        0.0,
+    )
+    assert h_star == pytest.approx(h_uncached)
 
 
 def test_join_recovers_direction_from_trade_key() -> None:

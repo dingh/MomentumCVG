@@ -61,6 +61,10 @@ VERDICT_ENVELOPE = "D3_ENVELOPE"
 NO_CROSSING = "no_crossing"
 
 
+def _d3_log(message: str) -> None:
+    print(f"[D3] {message}", flush=True)
+
+
 class D3AnalysisError(Exception):
     """Raised when the envelope cannot be formed from persisted artifacts."""
 
@@ -205,10 +209,14 @@ def _at_risk_row(direction: str, entry_cost: float, net_credit: float, max_loss:
 
 
 def evaluate_path_at_h(book: "D3Book", h: float, *, path: str) -> dict[str, Any]:
+    cache_key = (path, float(h))
+    cached = book.eval_cache.get(cache_key)
+    if cached is not None:
+        return cached
     rows = []
     for trade in book.trades.itertuples(index=False):
-        key = (trade.trade_date, trade.ticker, trade.direction)
-        legs = book.legs_by_key[key]
+        trade_key = (trade.trade_date, trade.ticker, trade.direction)
+        legs = book.legs_by_key[trade_key]
         econ = per_share_economics_at_h(
             direction=trade.direction,
             legs=legs,
@@ -240,7 +248,7 @@ def evaluate_path_at_h(book: "D3Book", h: float, *, path: str) -> dict[str, Any]
     summary = build_date_summary(priced)
     car = float(compute_view_a(book.date_status, summary)["mean_cycle_car"])
     side = priced.groupby("direction", dropna=False)["pnl_total"].sum().to_dict()
-    return {
+    result = {
         "h": float(h),
         "path": path,
         "pnl": float(priced["pnl_total"].sum()),
@@ -252,8 +260,26 @@ def evaluate_path_at_h(book: "D3Book", h: float, *, path: str) -> dict[str, Any]
         "pnl_long": float(side.get("long", 0.0)),
         "pnl_short": float(side.get("short", 0.0)),
         "quantities": priced.set_index(list(TRADE_KEY))["quantity"],
-        "priced": priced,
     }
+    book.eval_cache[cache_key] = result
+    book.eval_calls += 1
+    return result
+
+
+def _precompute_path_grid(
+    book: "D3Book",
+    path: str,
+    grid: tuple[float, ...],
+    *,
+    label: str,
+) -> None:
+    total = len(grid)
+    _d3_log(f"{label} start n={total} cached_calls={book.eval_calls}")
+    for i, h in enumerate(grid, start=1):
+        evaluate_path_at_h(book, h, path=path)
+        if i == 1 or i == total or i % 10 == 0:
+            _d3_log(f"{label} {i}/{total} h={h:.2f} eval_calls={book.eval_calls}")
+    _d3_log(f"{label} done eval_calls={book.eval_calls}")
 
 
 def evaluate_paths(book: "D3Book", grid: tuple[float, ...] = H_VIS) -> pd.DataFrame:
@@ -273,6 +299,8 @@ class D3Book:
     legs_by_key: dict[tuple, pd.DataFrame] = field(default_factory=dict)
     car_mid_ref: float | None = None
     car_cross_ref: float | None = None
+    eval_cache: dict[tuple[str, float], dict[str, Any]] = field(default_factory=dict, repr=False)
+    eval_calls: int = 0
 
     def __post_init__(self) -> None:
         if not self.legs_by_key:
@@ -519,6 +547,7 @@ def run_d3_from_book(
     )
     if blocker:
         return _blocked(blocker)
+    _d3_log(f"endpoint reconciliation official={official} n_trades={len(book.trades)}")
     try:
         reconciliation = reconcile_d3_endpoints(book, official=official)
     except D3AnalysisError as exc:
@@ -526,6 +555,7 @@ def run_d3_from_book(
     if not all(row["passed"] for row in reconciliation):
         failed = [row["metric"] for row in reconciliation if not row["passed"]]
         return _blocked(f"endpoint reconciliation failed: {failed}", reconciliation)
+    _d3_log("endpoint reconciliation passed")
 
     p_mid = float(p_mid_ref if p_mid_ref is not None else book.trades["pnl_total_mid"].sum())
     if delta_price is None:
@@ -538,6 +568,9 @@ def run_d3_from_book(
         h_f_p0 = path_f_pnl_crossing(0.00, p_mid, delta_price)
     except D3AnalysisError as exc:
         return _blocked(str(exc), reconciliation)
+    _d3_log(
+        f"Path F P&L closed form h_F_50={h_f_50:.6f} h_F_25={h_f_25:.6f} h_F_P0={h_f_p0:.6f}"
+    )
 
     def pnl_r(h: float) -> float:
         return float(evaluate_path_at_h(book, h, path="R")["pnl"])
@@ -548,14 +581,35 @@ def run_d3_from_book(
     def car_f(h: float) -> float:
         return float(evaluate_path_at_h(book, h, path="F")["car"])
 
+    _precompute_path_grid(book, "R", H_DET, label="Path R H_det")
+    _precompute_path_grid(book, "F", H_DET, label="Path F H_det")
+
     try:
+        _d3_log("Path R first-adverse P<=0.50M")
         h_r_50 = first_adverse_crossing(pnl_r, 0.50 * p_mid)
+        _d3_log(f"h_R_50={h_r_50}")
+        _d3_log("Path R first-adverse P<=0.25M")
         h_r_25 = first_adverse_crossing(pnl_r, 0.25 * p_mid)
+        _d3_log(f"h_R_25={h_r_25}")
+        _d3_log("Path R first-adverse P<=0")
         h_r_p0 = first_adverse_crossing(pnl_r, 0.0)
+        _d3_log(f"h_R_P0={h_r_p0}")
+        _d3_log("Path R first-adverse CAR<=0")
         h_r_car0 = first_adverse_crossing(car_r, 0.0)
+        _d3_log(f"h_R_CAR0={h_r_car0}")
+        _d3_log("Path F first-adverse CAR<=0")
         h_f_car0 = first_adverse_crossing(car_f, 0.0)
+        _d3_log(f"h_F_CAR0={h_f_car0}")
     except D3AnalysisError as exc:
         return _blocked(str(exc), reconciliation)
+
+    _d3_log("monotonicity on cached H_det")
+    monotonicity = {
+        "P_R": monotonic_nonincreasing(pnl_r, dollar_tolerance(p_mid)),
+        "CAR_R": monotonic_nonincreasing(car_r, CAR_TOLERANCE),
+    }
+    _d3_log(f"monotonicity {monotonicity}")
+    _d3_log("H_vis curves")
 
     crossings = [
         Crossing("R", "primary", "pnl_50", 0.50 * p_mid, h_r_50, "bracket_bisection"),
@@ -568,6 +622,7 @@ def run_d3_from_book(
         Crossing("F", "diagnostic", "car_0", 0.0, h_f_car0, "bracket_bisection"),
     ]
     curves = evaluate_paths(book, H_VIS)
+    _d3_log("exact-root side snapshots")
     snapshot = side_snapshots_at_roots(
         book,
         {
@@ -578,6 +633,7 @@ def run_d3_from_book(
             "h=1": 1.0,
         },
     )
+    _d3_log(f"envelope complete eval_calls={book.eval_calls} cache={len(book.eval_cache)}")
     return assemble_envelope(
         h_R_50=h_r_50,
         h_R_25=h_r_25,
@@ -590,10 +646,7 @@ def run_d3_from_book(
         crossings=crossings,
         curves=curves,
         reconciliation=reconciliation,
-        monotonicity={
-            "P_R": monotonic_nonincreasing(pnl_r, dollar_tolerance(p_mid)),
-            "CAR_R": monotonic_nonincreasing(car_r, CAR_TOLERANCE),
-        },
+        monotonicity=monotonicity,
         manifest={"d3_code_commit_sha": get_current_repo_sha(), "official": official},
         side_snapshot=snapshot,
     )
@@ -872,9 +925,16 @@ def run_d3_analysis(
     if book is None:
         run_dir = run_dir or OFFICIAL_RUN_DIR
         official = True if official is None else official
+        _d3_log(f"official run_dir={run_dir}")
+        _d3_log("D0 validation")
         d0 = run_d0_validation(run_dir=run_dir)
+        _d3_log(f"D0 all_passed={d0.all_passed}")
+        _d3_log("D1 analysis")
         d1 = run_d1_analysis(run_dir=run_dir, d0_result=d0)
+        _d3_log(f"D1 verdict={d1.verdict}")
+        _d3_log("D2B class check")
         d2b = run_d2b_analysis(run_dir=run_dir, d0_result=d0, d1_result=d1)
+        _d3_log(f"D2B class={d2b.final_d3_class}")
         blocker = check_prerequisites(
             d0_passed=d0.all_passed,
             d1_verdict=d1.verdict,
@@ -883,10 +943,12 @@ def run_d3_analysis(
         if blocker:
             return _blocked(blocker)
         try:
+            _d3_log("loading official book")
             book = load_official_book(run_dir)
             mid_trades, _ = load_fill_primary_tables(run_dir, "mid")
             cross_trades, _ = load_fill_primary_tables(run_dir, "cross")
             bridge = compute_bridge_terms(mid_trades, cross_trades)
+            _d3_log(f"official book loaded n_trades={len(book.trades)}")
         except (D3AnalysisError, KeyError, OSError, ValueError) as exc:
             return _blocked(f"persisted artifacts cannot support D3: {exc}")
         return run_d3_from_book(
