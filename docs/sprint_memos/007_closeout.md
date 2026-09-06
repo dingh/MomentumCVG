@@ -114,13 +114,20 @@ These are disclosed because they are material. They do **not** set the primary o
 
 A **future** sprint — separately designed and authorized — should run a **manual-first execution-observation** project on the frozen selected book:
 
-1. **Export weekly order tickets** (identity, structure, intended net limit).
-2. **Record live package quotes** and whether a submitted limit would have been touched.
-3. **Then** validate order plumbing with **paper** trading only.
+1. Export weekly order tickets (identity, structure, and preregistered hypothetical net limits).
+2. Record, without placing live orders:
+   - arrival package midpoint / natural price;
+   - whether a preregistered hypothetical net limit was touched (touch / no-touch);
+   - time-to-touch;
+   - skipped observations;
+   - post-touch quote movement.
+3. After observation is defined, validate order plumbing with **paper** trading only.
 
-Paper fills do **not** prove live attainability. Live orders are **not** authorized. This closeout does not add broker code, place orders, or implement the observer.
+A quote touch is **not** a fill. Paper trading validates order plumbing only. Real fill probability, time-to-fill, implementation shortfall, and adverse selection remain unresolved until separately authorized live-order observation is available.
 
-This is the working-plan §11.B execution-shadow handoff, specialized to observation first. It is not a redesign hypothesis, not a stop of the current implementation, and not a filter search.
+Live orders are **not** authorized. This closeout does not add broker code, place orders, or implement the observer.
+
+This is the working-plan §11.B execution-shadow handoff, specialized to quote observation first. It is not a redesign hypothesis, not a stop of the current implementation, and not a filter search.
 
 ---
 
@@ -128,6 +135,7 @@ This is the working-plan §11.B execution-shadow handoff, specialized to observa
 
 - That the required Path R \(h\) is achievable in live or paper markets.
 - That midpoint, \(h_{R,50}\), \(h_{R,25}\), or \(h_{R,P0}\) is a live limit.
+- That a quote touch is a fill, or that paper plumbing tests establish fill probability, time-to-fill, implementation shortfall, or adverse selection.
 - That historical quotes imply attainable package fills.
 - That a spread/liquidity filter or long-only book is validated.
 - That Sprint 006 cross economics are revised.

@@ -248,7 +248,7 @@ Pause and request rescoping if proposed work:
 
 Sprint 007 is **closed**. The next sprint is **unauthorized**.
 
-The only justified later work is a **future** manual-first execution-observation project (export weekly order tickets; record live package quotes and limit-touch opportunities; then paper-trade to validate plumbing). Paper fills do not prove live attainability. Live orders are not authorized. That project is not started here.
+The only justified later work is a **future** manual-first execution-observation project: export weekly order tickets with preregistered hypothetical net limits; record arrival package midpoint/natural price, touch/no-touch, time-to-touch, skipped observations, and post-touch quote movement; then paper-trade to validate plumbing only. A quote touch is not a fill. Real fill probability, time-to-fill, implementation shortfall, and adverse selection remain unresolved until separately authorized live-order observation is available. Live orders are not authorized. That project is not started here.
 
 Preserved D3 bounds: \(h<0.2236\) retains 50% of midpoint P&L; \(h<0.3407\) retains 25%; \(h<0.4616\) remains dollar-profitable before unmodeled costs. Required \(h\) is **not** claimed to be achievable.
 
@@ -258,6 +258,7 @@ Preserved D3 bounds: \(h<0.2236\) retains 50% of midpoint P&L; \(h<0.3407\) reta
 
 | Date | Event |
 |------|-------|
+| 2026-09-06 | Doc fix: working-plan §17 records D1–D4 accepted / sprint closed; next-action text states touch ≠ fill and paper = plumbing only. |
 | 2026-09-06 | D3 evidence **accepted**. D4 **accepted**: `EXECUTION_CALIBRATION_REQUIRED`. Sprint 007 **closed**. Next sprint unauthorized. |
 | 2026-09-05 | D3 design **accepted**. D3 **implementation only** authorized. Official execution and D4 not authorized. |
 | 2026-09-03 | D1, D2A, D2B, and D2 overall **accepted**. Final class `D3_EXECUTION_FOCUSED`. D3 **design only** authorized. |

@@ -26,7 +26,7 @@ D0–D3 are **accepted**. D4 synthesizes those results only. No new P&L, no code
 | Companion CAR | Path R CAR first reaches zero at \(h_{R,\mathrm{CAR}0} = 0.4546\) |
 | Secondary findings | Expensive-package concentration and short-side fragility are disclosed only. They do not set a filter, a long-only book, or a second next action |
 | Next action | One future **manual-first execution-observation** project. Not a redesign. Not live trading |
-| Forbidden | Claiming the required \(h\) is achievable; selecting a cutoff; treating paper fills as live proof |
+| Forbidden | Claiming the required \(h\) is achievable; selecting a cutoff; treating a quote touch as a fill; treating paper fills as live proof |
 
 ---
 
@@ -57,13 +57,20 @@ Gross midpoint margin exists. Entry-price concession dominates the mid-to-cross 
 
 ## One next action
 
-A **future** sprint, separately designed and authorized, should run a manual-first execution-observation project:
+A **future** sprint, separately designed and authorized, should run a **manual-first execution-observation** project on the frozen selected book:
 
-1. Export weekly order tickets for the frozen selected book (identity, structure, intended net limit).
-2. Record live package quotes and whether a limit would have been touched.
+1. Export weekly order tickets (identity, structure, and preregistered hypothetical net limits).
+2. Record, without placing live orders:
+   - arrival package midpoint / natural price;
+   - whether a preregistered hypothetical net limit was touched (touch / no-touch);
+   - time-to-touch;
+   - skipped observations;
+   - post-touch quote movement.
 3. After observation is defined, validate order plumbing with **paper** trading only.
 
-Paper fills do **not** prove live attainability. Live orders are **not** authorized. This sprint does not add broker code, place orders, or implement the observer.
+A quote touch is **not** a fill. Paper trading validates order plumbing only. Real fill probability, time-to-fill, implementation shortfall, and adverse selection remain unresolved until separately authorized live-order observation is available.
+
+Live orders are **not** authorized. This sprint does not add broker code, place orders, or implement the observer.
 
 ---
 
@@ -73,6 +80,7 @@ Paper fills do **not** prove live attainability. Live orders are **not** authori
 - Filter / long-only / wing / window search
 - Selecting one \(h\) as a live limit
 - Claiming midpoint or any Path R mark is attainable
+- Treating a quote touch as a fill, or paper plumbing as live-order evidence
 - Starting the next sprint in this commit
 
 ---

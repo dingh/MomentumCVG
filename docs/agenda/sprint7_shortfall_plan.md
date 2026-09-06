@@ -456,6 +456,8 @@ Specify measurement of:
 
 Do not add broker connectivity or place orders in Sprint 007.
 
+D4 specialized option B to a future **manual-first** quote-observation project ([`docs/tmp/sprint007_d4_design.md`](../tmp/sprint007_d4_design.md); [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md)). A quote touch is not a fill. Paper trading validates order plumbing only. Real fill probability, time-to-fill, implementation shortfall, and adverse selection remain unresolved until separately authorized live-order observation is available.
+
 #### C. Stop decision
 
 State precisely which implementation is being stopped, which conclusions do not generalize to the underlying signal family, and what evidence would be required to reopen it.
@@ -598,14 +600,7 @@ Sprint 007 is complete only when all accepted deliverables jointly establish:
 
 Sprint 007 agenda and this plan were **accepted 2026-08-26**.
 
-D0 design is **accepted** at [`docs/tmp/sprint007_d0_design.md`](../tmp/sprint007_d0_design.md). D0 implementation is **complete** (verdict `READY_WITH_NARROW_ENABLING_CHANGE`).
+D0, D1, D2, D3, and D4 are **accepted**. Sprint 007 is **closed** with primary outcome `EXECUTION_CALIBRATION_REQUIRED`. See [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md).
 
-D1 design is **accepted** at [`docs/tmp/sprint007_d1_design.md`](../tmp/sprint007_d1_design.md). D1 implementation is **complete** and **awaiting evidence review**. D2 design is **not** authorized until D1 evidence is reviewed and accepted.
-
-It does not authorize:
-
-- D2–D4 design or work;
-- a full-history rerun;
-- a new economic configuration;
-- or any strategy, filter, structure, fill, or sizing change.
+The next sprint remains **unauthorized**. This plan does not authorize a full-history rerun, a new economic configuration, live orders, or any strategy, filter, structure, fill, or sizing change.
 
