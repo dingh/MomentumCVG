@@ -8,7 +8,7 @@
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 **D2B H/M precedent:** [`docs/tmp/sprint007_d2b_evidence_review.md`](../tmp/sprint007_d2b_evidence_review.md); `src/backtest/sprint007_d2b_package_tradability.py`  
 **D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `ACCEPTED`  
-**D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — `C:/MomentumCVG_env/runs/sprint008_d0_20260907T193835Z/`  
+**D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — `C:/MomentumCVG_env/runs/sprint008_d0_20260907T202025Z/` (SHA `5023fe7`)  
 **Canonical path:** `docs/agenda/sprint8_long_filter_plan.md` — do not duplicate under `docs/tmp/`.  
 **Purpose:** Accepted sprint-level research protocol for a long-side-only measurement and conditional-threshold study. This plan freezes questions, gates, inference boundaries, and deliverable sequence. It deliberately defers deliverable-specific formulas, notebooks, schemas, and code footprints until each deliverable is designed and accepted.
 
@@ -469,8 +469,8 @@ Pause and rescope if proposed work:
 
 **D0 execution complete — evidence awaiting review.**
 
-Computed verdict: `BLOCKED_BY_SPECIFIC_INPUT_GAP` (primary required-input failure `2025-04-04|MU`, \(H<0\) from crossed quotes).
+Computed verdict: `BLOCKED_BY_SPECIFIC_INPUT_GAP` (primary join/required-input failure `2025-04-04|MU`, crossed quotes → per-leg `ask>=bid` fail and \(H<0\)).
 
-Evidence: [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md); `C:/MomentumCVG_env/runs/sprint008_d0_20260907T193835Z/`.
+Evidence: [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md); `C:/MomentumCVG_env/runs/sprint008_d0_20260907T202025Z/` (executing SHA `5023fe7566fb0acf0d2ca4665a9b93df2a45112b`, clean working tree).
 
 Do not begin D1 association or threshold work until this evidence is reviewed.
