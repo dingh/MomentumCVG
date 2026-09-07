@@ -12,11 +12,16 @@ from src.backtest.sprint007_d2b_package_tradability import (
     package_half_spread,
 )
 from src.backtest.sprint008_d0_input_readiness import (
+    BUDGET_B,
+    CROSSED_QUOTE_EXCLUSION_REASON,
+    CROSSED_QUOTE_POLICY_VERSION,
     DOLLAR_TOL,
     MAX_NAMES,
     M3_LOOKBACK_DAYS,
     M3_MIN_HISTORY,
+    SCENARIOS_H,
     VERDICT_BLOCKED,
+    VERDICT_READY_NARROW,
     attach_outcomes_and_measurements,
     compute_m3_scores,
     compute_package_mh,
@@ -223,7 +228,11 @@ def _history_row(
         "unit_qty_ok": True,
         "expiry_match_legs": True,
         "per_leg_quotes_ok": True,
+        "legs_geometry_ok": True,
         "legs_structure_ok": True,
+        "crossed_quote_excluded": False,
+        "analysis_eligible": True,
+        "quote_exclusion_reason": None,
         "leg_strike": s0,
         "leg_expiry": expiry if expiry is not None else entry + timedelta(days=4),
         "strike_matches_body": True,
@@ -409,6 +418,8 @@ def test_all_rejected_cash_equals_full_budget_no_exception() -> None:
                 "direction": "long",
                 "structure_ok": True,
                 "in_N": True,
+                "analysis_eligible": True,
+                "crossed_quote_excluded": False,
                 "M": 5.0,
                 "H": 1.0,
                 "S0": 100.0,
@@ -420,6 +431,8 @@ def test_all_rejected_cash_equals_full_budget_no_exception() -> None:
                 "direction": "long",
                 "structure_ok": True,
                 "in_N": True,
+                "analysis_eligible": True,
+                "crossed_quote_excluded": False,
                 "M": 4.0,
                 "H": 1.0,
                 "S0": 100.0,
@@ -427,7 +440,6 @@ def test_all_rejected_cash_equals_full_budget_no_exception() -> None:
             },
         ]
     )
-    from src.backtest.sprint008_d0_input_readiness import SCENARIOS_H, BUDGET_B
 
     reject_all = pd.Series(True, index=panel.index)
     for h in SCENARIOS_H:
@@ -435,14 +447,11 @@ def test_all_rejected_cash_equals_full_budget_no_exception() -> None:
         assert result["passed"] is True, result
         assert result["reject_cash_ok"] is True
         assert result["max_abs_budget_error"] <= 1e-6
-        # Invested must be zero; cash = full budget.
-        sized = equal_dollar_quantities(panel, h=float(h))
-        assert float(np.nansum(sized["q_h"] * 0.0 + 0.0)) == 0.0
         assert BUDGET_B == pytest.approx(10_000.0)
 
 
-def test_per_leg_crossed_call_fails_even_if_package_h_nonneg() -> None:
-    """Crossed call ask<bid masked by wide put still fails per-leg quote check."""
+def test_crossed_call_excluded_even_if_package_h_positive() -> None:
+    """Crossed call masked by wide put: exclude as cash; do not treat as executable."""
     legs = _two_legs(
         bid_call=5.0,
         ask_call=4.0,  # crossed
@@ -451,10 +460,10 @@ def test_per_leg_crossed_call_fails_even_if_package_h_nonneg() -> None:
     )
     metrics = compute_package_mh(legs)
     row = metrics.iloc[0]
-    assert row["H"] == pytest.approx(0.5 * ((4.0 - 5.0) + (5.0 - 1.0)))
     assert row["H"] == pytest.approx(1.5)  # package H > 0
     assert bool(row["per_leg_quotes_ok"]) is False
-    assert bool(row["legs_structure_ok"]) is False
+    assert bool(row["crossed_quote_excluded"]) is True
+    assert row["quote_exclusion_reason"] == CROSSED_QUOTE_EXCLUSION_REASON
 
     trades = pd.DataFrame(
         [
@@ -475,8 +484,15 @@ def test_per_leg_crossed_call_fails_even_if_package_h_nonneg() -> None:
         ]
     )
     panel = attach_outcomes_and_measurements(trades, metrics)
+    assert bool(panel.iloc[0]["crossed_quote_excluded"]) is True
+    assert bool(panel.iloc[0]["analysis_eligible"]) is False
+    assert bool(panel.iloc[0]["in_N"]) is True
     panel = compute_m3_scores(panel)
-    verdict, gates, _ = evaluate_readiness_gates(
+    sized = equal_dollar_quantities(panel, h=1.0)
+    assert sized.iloc[0]["stake_dollars"] == pytest.approx(BUDGET_B)
+    assert sized.iloc[0]["q_h"] == pytest.approx(0.0)
+
+    verdict, gates, coverage = evaluate_readiness_gates(
         panel=panel,
         identity_gates=None,
         shared_quotes_ok=True,
@@ -484,11 +500,131 @@ def test_per_leg_crossed_call_fails_even_if_package_h_nonneg() -> None:
         accounting={"passed": True, "detail": "ok"},
         missing_outcome={"passed": True, "detail": "ok", "n_missing_x": 0},
     )
-    join_gate = next(g for g in gates if g.gate_id == "G2_joins")
-    req_gate = next(g for g in gates if g.gate_id == "G4_required_inputs")
-    assert join_gate.passed is False
-    assert req_gate.passed is False
-    assert verdict == VERDICT_BLOCKED
+    assert next(g for g in gates if g.gate_id == "G2_joins").passed is True
+    assert next(g for g in gates if g.gate_id == "G4_required_inputs").passed is True
+    assert verdict == VERDICT_READY_NARROW
+    assert coverage["n_crossed_quote_excluded"] == 1
+    assert coverage["crossed_quote_policy_version"] == CROSSED_QUOTE_POLICY_VERSION
+
+
+def test_valid_candidate_keeps_original_allocation_when_peer_crossed() -> None:
+    trade_date = date(2021, 6, 1)
+    good_legs = _two_legs(ticker="GOOD", trade_date=trade_date)
+    bad_legs = _two_legs(
+        ticker="BAD",
+        trade_date=trade_date,
+        bid_call=5.0,
+        ask_call=4.0,
+        bid_put=1.0,
+        ask_put=5.0,
+    )
+    metrics = compute_package_mh(pd.concat([good_legs, bad_legs], ignore_index=True))
+    trades = pd.DataFrame(
+        [
+            {
+                "trade_date": trade_date,
+                "ticker": "GOOD",
+                "direction": "long",
+                "structure_ok": True,
+                "in_N": True,
+                "signal_rank_pct": 0.9,
+                "included_in_portfolio": True,
+                "entry_spot": 100.0,
+                "exit_spot": 105.0,
+                "body_strike": 100.0,
+                "expiry_date": trade_date + timedelta(days=4),
+                "entry_cost_mid_per_share": float(
+                    metrics.loc[metrics["ticker"] == "GOOD", "M"].iloc[0]
+                ),
+            },
+            {
+                "trade_date": trade_date,
+                "ticker": "BAD",
+                "direction": "long",
+                "structure_ok": True,
+                "in_N": True,
+                "signal_rank_pct": 0.8,
+                "included_in_portfolio": True,
+                "entry_spot": 100.0,
+                "exit_spot": 105.0,
+                "body_strike": 100.0,
+                "expiry_date": trade_date + timedelta(days=4),
+                "entry_cost_mid_per_share": float(
+                    metrics.loc[metrics["ticker"] == "BAD", "M"].iloc[0]
+                ),
+            },
+        ]
+    )
+    panel = attach_outcomes_and_measurements(trades, metrics)
+    assert int(panel["in_N"].sum()) == 2
+    assert int((~panel["analysis_eligible"]).sum()) == 1
+    for h in SCENARIOS_H:
+        sized = equal_dollar_quantities(panel, h=float(h))
+        good = sized.loc[sized["ticker"] == "GOOD"].iloc[0]
+        bad = sized.loc[sized["ticker"] == "BAD"].iloc[0]
+        assert good["stake_dollars"] == pytest.approx(BUDGET_B / 2.0)
+        assert bad["stake_dollars"] == pytest.approx(BUDGET_B / 2.0)
+        assert bad["q_h"] == pytest.approx(0.0)
+        assert good["q_h"] == pytest.approx(
+            (BUDGET_B / 2.0) / float(good["entry_all_in"])
+        )
+        smoke = smoke_equal_dollar_accounting(panel, h=float(h))
+        assert smoke["passed"] is True
+
+
+def test_all_crossed_date_full_cash_all_h() -> None:
+    trade_date = date(2021, 6, 1)
+    legs = pd.concat(
+        [
+            _two_legs(
+                ticker="A",
+                trade_date=trade_date,
+                bid_call=5.0,
+                ask_call=4.0,
+                bid_put=3.0,
+                ask_put=2.0,
+            ),
+            _two_legs(
+                ticker="B",
+                trade_date=trade_date,
+                bid_call=6.0,
+                ask_call=5.0,
+                bid_put=4.0,
+                ask_put=3.0,
+            ),
+        ],
+        ignore_index=True,
+    )
+    metrics = compute_package_mh(legs)
+    trades = pd.DataFrame(
+        [
+            {
+                "trade_date": trade_date,
+                "ticker": t,
+                "direction": "long",
+                "structure_ok": True,
+                "in_N": True,
+                "signal_rank_pct": 0.9,
+                "included_in_portfolio": True,
+                "entry_spot": 100.0,
+                "exit_spot": 105.0,
+                "body_strike": 100.0,
+                "expiry_date": trade_date + timedelta(days=4),
+                "entry_cost_mid_per_share": float(
+                    metrics.loc[metrics["ticker"] == t, "M"].iloc[0]
+                ),
+            }
+            for t in ("A", "B")
+        ]
+    )
+    panel = attach_outcomes_and_measurements(trades, metrics)
+    assert bool(panel["crossed_quote_excluded"].all())
+    for h in SCENARIOS_H:
+        sized = equal_dollar_quantities(panel, h=float(h))
+        assert float(sized["q_h"].sum()) == pytest.approx(0.0)
+        smoke = smoke_equal_dollar_accounting(panel, h=float(h))
+        assert smoke["passed"] is True
+        assert smoke["max_abs_budget_error"] <= 1e-6
 
 
 def test_mismatched_body_vs_leg_strike_fails_readiness() -> None:
@@ -514,6 +650,7 @@ def test_mismatched_body_vs_leg_strike_fails_readiness() -> None:
     )
     panel = attach_outcomes_and_measurements(trades, metrics)
     assert bool(panel.iloc[0]["strike_matches_body"]) is False
+    assert bool(panel.iloc[0]["crossed_quote_excluded"]) is False
     panel = compute_m3_scores(panel)
     verdict, gates, _ = evaluate_readiness_gates(
         panel=panel,
@@ -534,7 +671,6 @@ def test_m3_ignores_capped_out_history() -> None:
     for i in range(19):
         entry = t - timedelta(days=30 + i)
         rows.append(_history_row(entry, ticker=f"H{i}", x=2.0, expiry=entry + timedelta(days=3)))
-    # 20th observation is capped out of N — must not satisfy min history or change mu.
     capped_entry = t - timedelta(days=10)
     rows.append(
         _history_row(
@@ -553,10 +689,45 @@ def test_m3_ignores_capped_out_history() -> None:
     assert target_row["m3_missing_reason"] == "cold_start"
     assert not np.isfinite(target_row["M3"])
 
-    # Control: same row with in_N True would reach 20 and pull mu toward large X/S0.
     rows[-1]["in_N"] = True
     panel_in = pd.DataFrame(rows + [target])
     scored_in = compute_m3_scores(panel_in)
+    target_in = scored_in.loc[scored_in["ticker"] == "TARGET"].iloc[0]
+    assert int(target_in["m3_n_history"]) == 20
+    assert np.isfinite(target_in["M3"])
+    assert target_in["m3_mu"] == pytest.approx((19 * 0.02 + 0.5) / 20)
+
+
+def test_m3_ignores_crossed_quote_history() -> None:
+    t = date(2022, 1, 10)
+    rows = []
+    for i in range(19):
+        entry = t - timedelta(days=30 + i)
+        rows.append(_history_row(entry, ticker=f"H{i}", x=2.0, expiry=entry + timedelta(days=3)))
+    crossed_entry = t - timedelta(days=10)
+    crossed = _history_row(
+        crossed_entry,
+        ticker="XQUOTE",
+        x=50.0,
+        expiry=crossed_entry + timedelta(days=2),
+    )
+    crossed["crossed_quote_excluded"] = True
+    crossed["analysis_eligible"] = False
+    crossed["per_leg_quotes_ok"] = False
+    rows.append(crossed)
+    target = _history_row(t, ticker="TARGET", x=3.0, m=6.0, h=2.0)
+    panel = pd.DataFrame(rows + [target])
+    scored = compute_m3_scores(panel)
+    target_row = scored.loc[scored["ticker"] == "TARGET"].iloc[0]
+    assert int(target_row["m3_n_history"]) == 19
+    assert target_row["m3_missing_reason"] == "cold_start"
+    assert not np.isfinite(target_row["M3"])
+
+    # Control: same observation eligible would reach 20 and shift mu.
+    rows[-1]["crossed_quote_excluded"] = False
+    rows[-1]["analysis_eligible"] = True
+    rows[-1]["per_leg_quotes_ok"] = True
+    scored_in = compute_m3_scores(pd.DataFrame(rows + [target]))
     target_in = scored_in.loc[scored_in["ticker"] == "TARGET"].iloc[0]
     assert int(target_in["m3_n_history"]) == 20
     assert np.isfinite(target_in["M3"])

@@ -46,6 +46,9 @@ M3_LOOKBACK_DAYS = 364
 M3_MIN_HISTORY = 20
 DOLLAR_TOL = 1e-8
 ACCOUNTING_TOL = 1e-6
+# Versioned crossed-quote exclusion policy (entry-known ask < bid on any leg).
+CROSSED_QUOTE_POLICY_VERSION = "sprint008_d0_crossed_quote_v1"
+CROSSED_QUOTE_EXCLUSION_REASON = "crossed_quote_ask_lt_bid"
 
 VERDICT_READY = "READY"
 VERDICT_READY_NARROW = "READY_WITH_NARROW_ENABLING_CHANGE"
@@ -215,6 +218,10 @@ def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
     Per-leg quote check (explicit): each leg must have finite bid/ask and
     ``ask >= bid``. Package-level ``H >= 0`` alone is insufficient — a crossed
     call can be masked by a wide put.
+
+    Under ``CROSSED_QUOTE_POLICY_VERSION``, finite ``ask < bid`` on any leg flags
+    ``crossed_quote_excluded`` (cash allocation). Missing/nonfinite quotes are
+    **not** exclusions — they remain blocking readiness failures.
     """
     columns = [
         *TRADE_KEY,
@@ -227,11 +234,19 @@ def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
         "strike_match",
         "unit_qty_ok",
         "expiry_match_legs",
+        "quotes_finite",
         "per_leg_quotes_ok",
+        "legs_geometry_ok",
         "legs_structure_ok",
+        "crossed_quote_excluded",
+        "quote_exclusion_reason",
         "leg_strike",
         "leg_expiry",
         "payoff_sum",
+        "call_bid",
+        "call_ask",
+        "put_bid",
+        "put_ask",
     ]
     if legs.empty:
         return pd.DataFrame(columns=columns)
@@ -269,14 +284,12 @@ def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
         expiry_match_legs = bool(
             expiries.notna().all() and expiries.nunique(dropna=True) == 1
         )
-        # Per-leg: finite bid/ask and ask >= bid on EVERY leg.
-        per_leg_quotes_ok = bool(
-            n_legs == 2
-            and np.isfinite(bid).all()
-            and np.isfinite(ask).all()
-            and bool(np.all(ask >= bid))
+        quotes_finite = bool(
+            n_legs == 2 and np.isfinite(bid).all() and np.isfinite(ask).all()
         )
-        legs_structure_ok = bool(
+        # Per-leg: finite bid/ask and ask >= bid on EVERY leg.
+        per_leg_quotes_ok = bool(quotes_finite and bool(np.all(ask >= bid)))
+        legs_geometry_ok = bool(
             n_legs == 2
             and has_call
             and has_put
@@ -284,7 +297,14 @@ def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
             and strike_match
             and unit_qty_ok
             and expiry_match_legs
-            and per_leg_quotes_ok
+        )
+        legs_structure_ok = bool(legs_geometry_ok and per_leg_quotes_ok)
+        # Crossed-quote exclusion: geometry ok + all quotes finite + any ask < bid.
+        crossed_quote_excluded = bool(
+            legs_geometry_ok and quotes_finite and bool(np.any(ask < bid))
+        )
+        quote_exclusion_reason = (
+            CROSSED_QUOTE_EXCLUSION_REASON if crossed_quote_excluded else None
         )
 
         if (
@@ -309,6 +329,13 @@ def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
             else float("nan")
         )
 
+        call_bid = call_ask = put_bid = put_ask = float("nan")
+        for ot, b, a in zip(option_types, bid, ask, strict=False):
+            if ot == "call":
+                call_bid, call_ask = float(b), float(a)
+            elif ot == "put":
+                put_bid, put_ask = float(b), float(a)
+
         rows.append(
             {
                 "trade_date": key[0],
@@ -323,11 +350,19 @@ def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
                 "strike_match": strike_match,
                 "unit_qty_ok": unit_qty_ok,
                 "expiry_match_legs": expiry_match_legs,
+                "quotes_finite": quotes_finite,
                 "per_leg_quotes_ok": per_leg_quotes_ok,
+                "legs_geometry_ok": legs_geometry_ok,
                 "legs_structure_ok": legs_structure_ok,
+                "crossed_quote_excluded": crossed_quote_excluded,
+                "quote_exclusion_reason": quote_exclusion_reason,
                 "leg_strike": leg_strike,
                 "leg_expiry": leg_expiry,
                 "payoff_sum": payoff_sum,
+                "call_bid": call_bid,
+                "call_ask": call_ask,
+                "put_bid": put_bid,
+                "put_ask": put_ask,
             }
         )
     return pd.DataFrame(rows)
@@ -336,7 +371,12 @@ def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
 def attach_outcomes_and_measurements(
     trades: pd.DataFrame, package_mh: pd.DataFrame
 ) -> pd.DataFrame:
-    """Attach S0, K, ST, X, M1, M2 and midpoint/ask/payoff reconciliations."""
+    """Attach S0, K, ST, X, M1, M2 and midpoint/ask/payoff reconciliations.
+
+    Also applies the versioned crossed-quote exclusion policy: ``in_N`` is
+    unchanged; ``crossed_quote_excluded`` / ``analysis_eligible`` flag cash
+    treatment and measurement eligibility.
+    """
     if trades.empty:
         out = trades.copy()
         for col in (
@@ -356,6 +396,10 @@ def attach_outcomes_and_measurements(
             "expiry_matches_trade",
             "outcome_finite",
             "payoff_reconcile_ok",
+            "crossed_quote_excluded",
+            "analysis_eligible",
+            "quote_exclusion_reason",
+            "crossed_quote_policy_version",
         ):
             out[col] = pd.Series(dtype=float)
         return out
@@ -394,6 +438,14 @@ def attach_outcomes_and_measurements(
         merged["delta_X_vs_payoff_sum"].abs() <= DOLLAR_TOL,
         np.where(outcome_avail & ~payoff_avail, False, True),
     )
+    if "crossed_quote_excluded" not in merged.columns:
+        merged["crossed_quote_excluded"] = False
+    else:
+        merged["crossed_quote_excluded"] = merged["crossed_quote_excluded"].fillna(False).astype(bool)
+    if "quote_exclusion_reason" not in merged.columns:
+        merged["quote_exclusion_reason"] = None
+    merged["crossed_quote_policy_version"] = CROSSED_QUOTE_POLICY_VERSION
+    merged["analysis_eligible"] = ~merged["crossed_quote_excluded"].astype(bool)
     merged["M1"] = np.where(
         merged["M"].to_numpy(dtype=float) > 0.0,
         merged["H"] / merged["M"],
@@ -411,9 +463,9 @@ def attach_outcomes_and_measurements(
 def compute_m3_scores(panel: pd.DataFrame) -> pd.DataFrame:
     """M3 = (M+H+fees)/(S0*mu_t) with rolling completed history.
 
-    Historical pool is restricted to ``in_N == True`` before applying time,
-    payoff, and spot eligibility. Missing when <20 obs or mu non-finite /
-    non-positive. Does not change N.
+    Historical pool requires ``in_N == True`` and ``analysis_eligible`` (crossed
+    quotes excluded) before time/payoff/spot filters. Missing when <20 obs or
+    mu non-finite / non-positive. Does not change N.
     """
     out = panel.copy()
     out["M3"] = np.nan
@@ -425,8 +477,15 @@ def compute_m3_scores(panel: pd.DataFrame) -> pd.DataFrame:
 
     if "in_N" not in out.columns:
         raise D0ReadinessError("compute_m3_scores requires in_N column")
+    if "analysis_eligible" not in out.columns:
+        if "crossed_quote_excluded" in out.columns:
+            out["analysis_eligible"] = ~out["crossed_quote_excluded"].astype(bool)
+        else:
+            out["analysis_eligible"] = True
 
-    hist = out.loc[out["in_N"] == True].copy()  # noqa: E712
+    hist = out.loc[
+        (out["in_N"] == True) & (out["analysis_eligible"] == True)  # noqa: E712
+    ].copy()
     hist["trade_date"] = hist["trade_date"].map(_as_date)
     hist["expiry_date"] = hist["expiry_date"].map(
         lambda v: _as_date(v) if pd.notna(v) else None
@@ -454,6 +513,15 @@ def compute_m3_scores(panel: pd.DataFrame) -> pd.DataFrame:
     reasons: list[str | None] = []
 
     for _, row in out.iterrows():
+        if bool(row.get("crossed_quote_excluded", False)) or not bool(
+            row.get("analysis_eligible", True)
+        ):
+            m3_vals.append(float("nan"))
+            n_hist_vals.append(0)
+            mu_vals.append(float("nan"))
+            reasons.append("crossed_quote_excluded")
+            continue
+
         t = _as_date(row["trade_date"])
         left = t - timedelta(days=M3_LOOKBACK_DAYS)
         if hist_pool.empty:
@@ -502,7 +570,12 @@ def compute_m3_scores(panel: pd.DataFrame) -> pd.DataFrame:
 
 
 def equal_dollar_quantities(panel: pd.DataFrame, h: float) -> pd.DataFrame:
-    """q_i(h)=(B/N)/(M_i + h H_i + fees). Ignores historical quantity."""
+    """q_i(h)=(B/N)/(M_i + h H_i + fees) for analysis-eligible names.
+
+    ``N`` and stake ``B/N`` use the full capped ``in_N`` set. Crossed-quote
+    exclusions keep their stake as cash with ``q_h = 0`` (no redistribution).
+    Ignores historical quantity.
+    """
     out = panel.copy()
     out["h"] = float(h)
     out["stake_dollars"] = np.nan
@@ -510,6 +583,12 @@ def equal_dollar_quantities(panel: pd.DataFrame, h: float) -> pd.DataFrame:
     out["entry_all_in"] = np.nan
     if out.empty:
         return out
+
+    if "analysis_eligible" not in out.columns:
+        if "crossed_quote_excluded" in out.columns:
+            out["analysis_eligible"] = ~out["crossed_quote_excluded"].astype(bool)
+        else:
+            out["analysis_eligible"] = True
 
     in_n = out["in_N"] == True  # noqa: E712
     work = out.loc[in_n].copy()
@@ -519,10 +598,11 @@ def equal_dollar_quantities(panel: pd.DataFrame, h: float) -> pd.DataFrame:
     counts = work.groupby("trade_date")["ticker"].transform("size").astype(float)
     stake = BUDGET_B / counts
     all_in = work["M"] + float(h) * work["H"] + FEES
-    q = stake / all_in
+    eligible = work["analysis_eligible"].astype(bool)
+    q = np.where(eligible.to_numpy(), stake.to_numpy() / all_in.to_numpy(dtype=float), 0.0)
     out.loc[in_n, "stake_dollars"] = stake.to_numpy()
     out.loc[in_n, "entry_all_in"] = all_in.to_numpy()
-    out.loc[in_n, "q_h"] = q.to_numpy()
+    out.loc[in_n, "q_h"] = q
     return out
 
 
@@ -532,7 +612,7 @@ def smoke_equal_dollar_accounting(
     *,
     reject_mask: pd.Series | None = None,
 ) -> dict[str, Any]:
-    """Accounting identity: invested + cash = B; rejects stay cash (no redistribute)."""
+    """Accounting identity: invested + cash = B; rejects/exclusions stay cash."""
     sized = equal_dollar_quantities(panel, h)
     in_n = sized["in_N"] == True  # noqa: E712
     if not in_n.any():
@@ -545,10 +625,14 @@ def smoke_equal_dollar_accounting(
             "detail": "no in_N names",
         }
 
+    if "analysis_eligible" not in sized.columns:
+        sized["analysis_eligible"] = True
+    crossed = ~sized["analysis_eligible"].astype(bool)
+
     if reject_mask is None:
-        reject = pd.Series(False, index=sized.index)
+        reject = crossed.copy()
     else:
-        reject = reject_mask.reindex(sized.index).fillna(False).astype(bool)
+        reject = reject_mask.reindex(sized.index).fillna(False).astype(bool) | crossed
 
     date_errors: list[float] = []
     reject_ok = True
@@ -569,8 +653,7 @@ def smoke_equal_dollar_accounting(
         err = abs((invested + cash) - BUDGET_B)
         date_errors.append(err)
 
-        # Rejected capital must equal stake * rejects; no redistribution into keepers.
-        # All-rejected: invested=0, cash=B (full budget remains cash).
+        # Rejected/excluded capital stays cash; no redistribution into keepers.
         if n_rejected:
             expected_invested = stake * float(keep.sum())
             if abs(invested - expected_invested) > ACCOUNTING_TOL:
@@ -587,7 +670,7 @@ def smoke_equal_dollar_accounting(
             elif abs(cash - BUDGET_B) > ACCOUNTING_TOL or abs(invested) > ACCOUNTING_TOL:
                 reject_ok = False
 
-        _ = trade_date  # date loop identity retained for clarity
+        _ = trade_date
 
     max_err = float(max(date_errors)) if date_errors else 0.0
     passed = max_err <= ACCOUNTING_TOL and reject_ok
@@ -676,21 +759,28 @@ def _primary_mask(frame: pd.DataFrame) -> pd.Series:
 
 
 def _required_input_ok(row: pd.Series) -> bool:
-    return (
+    """Required inputs for readiness.
+
+    Crossed-quote exclusions exempt only per-leg ``ask>=bid`` / resulting
+    ``H<0`` (and the quote component of ``legs_structure_ok``). Geometry,
+    midpoint/ask reconciliation, and other defects still fail.
+    """
+    crossed = bool(row.get("crossed_quote_excluded", False))
+    geometry_ok = bool(row.get("legs_geometry_ok", False)) or (
         int(row.get("n_legs", 0) or 0) == 2
         and bool(row.get("has_call"))
         and bool(row.get("has_put"))
         and bool(row.get("strike_match"))
         and bool(row.get("unit_qty_ok", False))
         and bool(row.get("expiry_match_legs", False))
-        and bool(row.get("per_leg_quotes_ok", False))
-        and bool(row.get("legs_structure_ok", False))
+    )
+    base = (
+        geometry_ok
         and bool(row.get("strike_matches_body", False))
         and bool(row.get("expiry_matches_trade", False))
         and _finite(row.get("M"))
         and float(row["M"]) > 0.0
         and _finite(row.get("H"))
-        and float(row["H"]) >= 0.0
         and _finite(row.get("ask_debit"))
         and abs(float(row.get("delta_MH_vs_ask", np.nan))) <= DOLLAR_TOL
         and _finite(row.get("S0"))
@@ -698,6 +788,15 @@ def _required_input_ok(row: pd.Series) -> bool:
         and _finite(row.get("K"))
         and abs(float(row.get("delta_M_vs_stored", np.nan))) <= DOLLAR_TOL
         and bool(row.get("payoff_reconcile_ok", True))
+    )
+    if crossed:
+        # Exempt per-leg ask>=bid and H>=0 only.
+        return base and bool(row.get("quotes_finite", True))
+    return (
+        base
+        and bool(row.get("per_leg_quotes_ok", False))
+        and bool(row.get("legs_structure_ok", False))
+        and float(row["H"]) >= 0.0
     )
 
 
@@ -715,6 +814,12 @@ def evaluate_readiness_gates(
     gates: list[GateResult] = []
     in_n = panel["in_N"] == True if not panel.empty else pd.Series(dtype=bool)  # noqa: E712
     n_panel = panel.loc[in_n].copy() if not panel.empty else panel.copy()
+    if not n_panel.empty and "analysis_eligible" not in n_panel.columns:
+        if "crossed_quote_excluded" in n_panel.columns:
+            n_panel["analysis_eligible"] = ~n_panel["crossed_quote_excluded"].astype(bool)
+        else:
+            n_panel["analysis_eligible"] = True
+            n_panel["crossed_quote_excluded"] = False
     primary = n_panel.loc[_primary_mask(n_panel)].copy() if not n_panel.empty else n_panel
 
     # G1 identity (reused Sprint 007 D0)
@@ -731,36 +836,48 @@ def evaluate_readiness_gates(
         gates.append(GateResult("G1_identity", True, "identity checks skipped (synthetic/unit)"))
 
     # G2 joins / shared quotes / per-leg structure
+    # Crossed-quote exclusions exempt only ask>=bid; geometry still required.
     join_ok = True
     join_detail = "no in_N rows"
+    n_crossed = 0
     if not n_panel.empty:
         for col, default in (
             ("unit_qty_ok", True),
             ("expiry_match_legs", True),
+            ("quotes_finite", True),
             ("per_leg_quotes_ok", True),
+            ("legs_geometry_ok", True),
             ("legs_structure_ok", True),
             ("strike_matches_body", True),
             ("expiry_matches_trade", True),
+            ("crossed_quote_excluded", False),
         ):
             if col not in n_panel.columns:
                 n_panel[col] = default
-        bad_legs = n_panel[
+        n_crossed = int(n_panel["crossed_quote_excluded"].astype(bool).sum())
+        geometry_bad = (
             (n_panel["n_legs"] != 2)
             | (~n_panel["has_call"].astype(bool))
             | (~n_panel["has_put"].astype(bool))
             | (~n_panel["strike_match"].astype(bool))
             | (~n_panel["unit_qty_ok"].astype(bool))
             | (~n_panel["expiry_match_legs"].astype(bool))
-            | (~n_panel["per_leg_quotes_ok"].astype(bool))
-            | (~n_panel["legs_structure_ok"].astype(bool))
+            | (~n_panel["legs_geometry_ok"].astype(bool))
             | (~n_panel["strike_matches_body"].astype(bool))
             | (~n_panel["expiry_matches_trade"].astype(bool))
             | (n_panel["K"].map(lambda v: not _finite(v)))
-        ]
+        )
+        # Missing/nonfinite quotes always block; ask<bid blocks only when not excluded.
+        quote_bad = (~n_panel["quotes_finite"].astype(bool)) | (
+            (~n_panel["per_leg_quotes_ok"].astype(bool))
+            & (~n_panel["crossed_quote_excluded"].astype(bool))
+        )
+        bad_legs = n_panel[geometry_bad | quote_bad]
         join_ok = bad_legs.empty and shared_quotes_ok
         join_detail = (
             f"bad_join_rows={len(bad_legs)} shared_quotes_ok={shared_quotes_ok} "
-            f"(per-leg ask>=bid required)"
+            f"crossed_quote_excluded={n_crossed} "
+            f"(policy={CROSSED_QUOTE_POLICY_VERSION}; per-leg ask>=bid required unless excluded)"
         )
     gates.append(GateResult("G2_joins", join_ok, join_detail))
 
@@ -781,7 +898,7 @@ def evaluate_readiness_gates(
         )
     gates.append(GateResult("G3_midpoint_authority", mid_ok, mid_detail))
 
-    # G4 required inputs on primary N
+    # G4 required inputs on primary N (crossed exclusions exempt ask>=bid / H>=0 only)
     req_ok = True
     req_fail_keys: list[str] = []
     if not primary.empty:
@@ -809,7 +926,6 @@ def evaluate_readiness_gates(
             n_payoff_fail = int((~primary["payoff_reconcile_ok"].astype(bool)).sum())
         outcome_ok = n_missing_primary == 0 and n_payoff_fail == 0
     if missing_outcome is not None and missing_outcome.get("n_missing_x", 0) > 0:
-        # Smoke may inject missing X; primary readiness still fails if rate > 0.
         pass
     gates.append(
         GateResult(
@@ -819,22 +935,33 @@ def evaluate_readiness_gates(
         )
     )
 
-    # G6 measurements
+    # G6 measurements — M1/M2 required on analysis-eligible rows with required inputs
     meas_ok = True
     meas_detail = "no primary rows"
     if not primary.empty:
-        req_pass = primary.apply(_required_input_ok, axis=1)
-        m1_ok = primary.loc[req_pass, "M1"].map(_finite).all() if req_pass.any() else True
-        m2_ok = primary.loc[req_pass, "M2"].map(_finite).all() if req_pass.any() else True
+        eligible = primary["analysis_eligible"].astype(bool) if "analysis_eligible" in primary.columns else pd.Series(True, index=primary.index)
+        eligible_primary = primary.loc[eligible]
+        if eligible_primary.empty:
+            m1_ok = m2_ok = True
+        else:
+            req_pass = eligible_primary.apply(_required_input_ok, axis=1)
+            m1_ok = (
+                eligible_primary.loc[req_pass, "M1"].map(_finite).all() if req_pass.any() else True
+            )
+            m2_ok = (
+                eligible_primary.loc[req_pass, "M2"].map(_finite).all() if req_pass.any() else True
+            )
         missing_m3 = primary["M3"].map(lambda v: not _finite(v))
         reasons = primary.loc[missing_m3, "m3_missing_reason"].fillna("unknown")
-        allowed = set(reasons).issubset({"cold_start", "bad_mu", "bad_inputs"})
-        # Missing M3 must not flip in_N.
+        allowed = set(reasons).issubset(
+            {"cold_start", "bad_mu", "bad_inputs", "crossed_quote_excluded"}
+        )
         n_unchanged = bool((primary["in_N"] == True).all())  # noqa: E712
         meas_ok = bool(m1_ok and m2_ok and allowed and n_unchanged)
         meas_detail = (
             f"m1_ok={bool(m1_ok)} m2_ok={bool(m2_ok)} "
-            f"m3_missing={int(missing_m3.sum())} allowed_reasons={allowed}"
+            f"m3_missing={int(missing_m3.sum())} allowed_reasons={allowed} "
+            f"n_analysis_eligible={int(eligible.sum())}"
         )
     gates.append(GateResult("G6_measurements", meas_ok, meas_detail))
 
@@ -870,11 +997,29 @@ def evaluate_readiness_gates(
         )
     )
 
+    excluded_keys: list[str] = []
+    if not n_panel.empty and "crossed_quote_excluded" in n_panel.columns:
+        ex = n_panel.loc[n_panel["crossed_quote_excluded"].astype(bool)]
+        excluded_keys = [
+            f"{r['trade_date']}|{r['ticker']}" for _, r in ex.iterrows()
+        ]
+    n_eligible = (
+        int(n_panel["analysis_eligible"].astype(bool).sum()) if not n_panel.empty else 0
+    )
+    primary_eligible = (
+        int(primary["analysis_eligible"].astype(bool).sum()) if not primary.empty else 0
+    )
+
     coverage = {
         "n_long_rows": int(len(panel)),
         "n_structure_ok": int((panel["structure_ok"] == True).sum()) if not panel.empty else 0,  # noqa: E712
         "n_in_N": int(in_n.sum()) if not panel.empty else 0,
         "n_primary_in_N": int(len(primary)),
+        "n_analysis_eligible": n_eligible,
+        "n_primary_analysis_eligible": primary_eligible,
+        "n_crossed_quote_excluded": n_crossed,
+        "crossed_quote_excluded_keys": excluded_keys,
+        "crossed_quote_policy_version": CROSSED_QUOTE_POLICY_VERSION,
         "primary_required_input_failures": len(req_fail_keys),
         "primary_missing_x": n_missing_primary,
         "m3_missing_primary": (
@@ -1142,6 +1287,7 @@ def run_d0_readiness(
             "M3_MIN_HISTORY": M3_MIN_HISTORY,
             "DOLLAR_TOL": DOLLAR_TOL,
             "ACCOUNTING_TOL": ACCOUNTING_TOL,
+            "CROSSED_QUOTE_POLICY_VERSION": CROSSED_QUOTE_POLICY_VERSION,
             "PRIMARY_START": PRIMARY_START.isoformat(),
             "PRIMARY_END": PRIMARY_END.isoformat(),
         },
@@ -1213,10 +1359,54 @@ def export_d0_readiness_evidence(
                 "delta_M_vs_stored",
                 "delta_MH_vs_ask",
                 "m3_missing_reason",
+                "crossed_quote_excluded",
+                "analysis_eligible",
+                "quote_exclusion_reason",
+                "call_bid",
+                "call_ask",
+                "put_bid",
+                "put_ask",
             )
             if c in result.panel.columns
         ]
         result.panel.loc[:, preview_cols].to_parquet(panel_path, index=False)
+
+    # Audit: crossed-quote exclusions with preserved original quotes.
+    excl_path = evidence_dir / "d0_crossed_quote_exclusions.json"
+    excl_rows: list[dict[str, Any]] = []
+    if not result.panel.empty and "crossed_quote_excluded" in result.panel.columns:
+        ex = result.panel.loc[result.panel["crossed_quote_excluded"].astype(bool)]
+        for _, row in ex.iterrows():
+            excl_rows.append(
+                {
+                    "key": f"{row['trade_date']}|{row['ticker']}",
+                    "trade_date": str(row["trade_date"]),
+                    "ticker": str(row["ticker"]),
+                    "reason": row.get("quote_exclusion_reason"),
+                    "policy_version": CROSSED_QUOTE_POLICY_VERSION,
+                    "call_bid": float(row["call_bid"]) if _finite(row.get("call_bid")) else None,
+                    "call_ask": float(row["call_ask"]) if _finite(row.get("call_ask")) else None,
+                    "put_bid": float(row["put_bid"]) if _finite(row.get("put_bid")) else None,
+                    "put_ask": float(row["put_ask"]) if _finite(row.get("put_ask")) else None,
+                    "M": float(row["M"]) if _finite(row.get("M")) else None,
+                    "H": float(row["H"]) if _finite(row.get("H")) else None,
+                    "in_N": bool(row.get("in_N", True)),
+                    "analysis_eligible": bool(row.get("analysis_eligible", False)),
+                    "stake_treatment": "cash",
+                }
+            )
+    excl_path.write_text(
+        json.dumps(
+            {
+                "policy_version": CROSSED_QUOTE_POLICY_VERSION,
+                "n_excluded": len(excl_rows),
+                "exclusions": excl_rows,
+            },
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
 
     if execute_notebook and clean_notebook is not None:
         repo_root = Path(__file__).resolve().parents[2]

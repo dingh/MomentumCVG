@@ -1,14 +1,48 @@
 # Sprint 008 D0 — Protocol freeze and input readiness
 
-**Status:** `ACCEPTED`  
+**Status:** `ACCEPTED` (amended)  
 **Accepted:** 2026-09-07 (implementation authorization)  
-**Updated:** 2026-09-07  
+**Updated:** 2026-09-07 — crossed-quote policy `sprint008_d0_crossed_quote_v1`  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](../agenda/sprint8_long_filter_plan.md)  
-**Evidence review:** [`docs/tmp/sprint008_d0_evidence_review.md`](sprint008_d0_evidence_review.md) — `BLOCKED_BY_SPECIFIC_INPUT_GAP`; awaiting review  
-**Official evidence:** `C:/MomentumCVG_env/runs/sprint008_d0_20260907T193835Z/`  
+**Evidence review:** [`docs/tmp/sprint008_d0_evidence_review.md`](sprint008_d0_evidence_review.md)  
 **Frozen contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json)  
 **Prior closeouts:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)
+
+---
+
+## Amendment — crossed-quote exclusion (`sprint008_d0_crossed_quote_v1`)
+
+**Policy version:** `sprint008_d0_crossed_quote_v1`
+
+If either unit leg has **finite** entry bid/ask with **`ask < bid`**, exclude the entire straddle from execution and trade-level analysis. Apply uniformly across tickers, dates, and all \(h\in\{0,0.25,0.50,1\}\) using **entry information only**.
+
+| Rule | Behavior |
+|---|---|
+| Detection | Finite bid/ask on both legs of a geometrically valid long straddle; any leg with `ask < bid` |
+| Preserve | Original bid/ask, \(M\), \(H\), exclusion reason in audit output |
+| Forbidden | Price repair, spread clipping, ticker-specific hard-codes (including MU) |
+| Missing/nonfinite quotes | **Not** an exclusion — remain blocking readiness failures |
+
+**Allocations**
+
+- Keep capped candidate set, `in_N`, and denominator \(N\) unchanged.
+- Flags: `crossed_quote_excluded`, `analysis_eligible` (\(= \neg\) excluded).
+- Eligible candidates: stake \(B/N\), \(q_i(h)=(B/N)/(M_i+hH_i+\mathrm{fees}_i)\).
+- Excluded candidates: \(q=0\); assigned stake remains **cash**; no replacement / redistribution.
+- All-excluded date: full budget cash.
+- Same policy applies to baseline and later experimental filters; excluded names get no fabricated trade returns or winner/loser labels.
+
+**Measurements**
+
+- Exclude flagged packages from trade-level measurement/profitability analysis and winner-retention denominators.
+- M3 history requires `in_N == True` **and** `analysis_eligible`; other M3 rules unchanged.
+
+**Readiness**
+
+- Documented crossed-quote exclusion may **pass** as intentional cash.
+- Exempt **only** the crossed-quote `ask>=bid` check and resulting \(H<0\) for those excluded packages.
+- All unrelated checks still block (geometry, strike/expiry, finite required inputs, midpoint/ask reconcile, outcomes, payoff reconcile).
 
 ---
 
@@ -170,7 +204,8 @@ Historical short-financed `quantity` is ignored for sizing (may be loaded only f
 | Case | Classification | Pass/fail / handling |
 |---|---|---|
 | \(N=0\) | Allowed calendar state | Full cash; trading P&L 0; keep date in calendar views — **not** a readiness failure |
-| Required entry inputs for a constructable long in the primary window: two unit legs with finite bid/ask; finite \(M>0\); finite \(H\ge 0\); \(M+H\) reconciles to ask debit; finite \(S_0>0\); finite \(K\) | **Required-input failure** if any name in \(N\) fails | D0 readiness **FAIL** → `BLOCKED_BY_SPECIFIC_INPUT_GAP` (name the keys). Do not impute. Do not silently drop from \(N\) to “pass” |
+| Required entry inputs for a constructable long in the primary window: two unit legs with finite bid/ask; finite \(M>0\); finite \(H\ge 0\) (unless crossed-quote excluded under `sprint008_d0_crossed_quote_v1`); \(M+H\) reconciles to ask debit; finite \(S_0>0\); finite \(K\) | **Required-input failure** if any name in \(N\) fails (crossed-quote exclusions exempt only `ask>=bid` / \(H<0\)) | D0 readiness **FAIL** → `BLOCKED_BY_SPECIFIC_INPUT_GAP` (name the keys). Do not impute. Do not silently drop from \(N\) to “pass”. Crossed quotes: keep in \(N\), mark excluded, stake stays cash |
+| Crossed quotes (`ask < bid` on a finite leg) under policy v1 | **Intentional cash exclusion** | Keep in \(N\); `analysis_eligible=False`; \(q=0\); **not** a readiness failure by itself |
 | Same required-input failures outside primary window | Report coverage | Do not block solely on pre-primary holes unless they prevent M3 history construction for primary entries |
 | M2 undefined only if \(S_0\le 0\) | Required-input failure when in \(N\) (primary) | Same as required \(S_0>0\) above |
 | M3 cold-start / insufficient history / non-finite or non-positive \(\mu_t\) | **Allowed missing measurement** | M3 = NA; **do not** change \(N\) or allocations; report cold-start rate — **not** a readiness failure by itself |
@@ -207,7 +242,7 @@ Numerator is the **full-cross** all-in entry hurdle (\(h=1\)), including fees. D
 
 **Historical pool and window**
 
-- Pool candidates: restrict first to **`in_N == True`** (capped long \(N\)), then apply the eligibility rules below. Capped-out constructable longs do **not** count toward the minimum history or enter \(\mu_t\).
+- Pool candidates: restrict first to **`in_N == True`** and **`analysis_eligible`** (crossed-quote policy), then apply the eligibility rules below. Capped-out or crossed-quote-excluded constructable longs do **not** count toward the minimum history or enter \(\mu_t\).
 - Observation \(j\) is eligible for \(\mu_t\) only if:
   - `expiry_date` \(< t\) (strict completed-before-entry cutoff; holding period finished);
   - `entry_date` \(\in [t - L,\ t)\) (rolling lookback; left-closed, right-open);
@@ -261,9 +296,9 @@ Allowed M3 cold starts alone do **not** force `BLOCKED_*`.
 ### 5.4 Required checks (pass/fail)
 
 1. **Identity** — receipt SHA, execution SHA, artifact presence.
-2. **Joins / per-leg quotes** — every \(N\) key has exactly two `+1` unit legs (one call, one put), matching leg expiry, leg strikes matching the trade body strike/expiry, shared mid/cross **bid/ask**. **Per-leg quote check (explicit):** each leg must have finite bid/ask and **`ask >= bid`**. Package-level \(H\ge 0\) alone is insufficient (a crossed call can be masked by a wide put).
+2. **Joins / per-leg quotes** — every \(N\) key has exactly two `+1` unit legs (one call, one put), matching leg expiry, leg strikes matching the trade body strike/expiry, shared mid/cross **bid/ask**. **Per-leg quote check (explicit):** each leg must have finite bid/ask and **`ask >= bid`**, unless the package is a documented crossed-quote exclusion under `sprint008_d0_crossed_quote_v1` (cash; still requires finite quotes and geometry). Package-level \(H\ge 0\) alone is insufficient (a crossed call can be masked by a wide put).
 3. **Midpoint authority** — \(M\) from D2B midpoint helper on bid/ask; stored `mid` not used as \(M\); \(M\) reconciles to `entry_cost_mid_per_share`; \(M+H\) reconciles to unit ask debit.
-4. **Required-input coverage** — primary-window \(N\): 100% finite \(M>0\), \(H\ge 0\), per-leg `ask>=bid`, \(S_0>0\), \(K\), body/leg strike+expiry match; else FAIL.
+4. **Required-input coverage** — primary-window \(N\): 100% finite \(M>0\), \(S_0>0\), \(K\), body/leg strike+expiry match; \(H\ge 0\) and per-leg `ask>=bid` required unless crossed-quote excluded; else FAIL.
 5. **Outcome coverage** — primary-window \(N\): 100% finite \(X\ge 0\); when outcomes are available, \(X\) must reconcile to the sum of recorded unit-leg `expiry_payoff_per_unit`; else FAIL. Missing outcomes never coerced to 0 P&L/cash in any smoke path.
 6. **Measurements** — M1/M2 defined wherever required inputs pass; M3 missingness equals cold-start / bad \(\mu_t\) only; missing M3 leaves \(N\) and \(q_i(h)\) unchanged.
 7. **Reconstruction** — capped `structure_ok` long set equals declared \(N\); disclose equality/difference vs included.
@@ -284,9 +319,12 @@ Allowed M3 cold starts alone do **not** force `BLOCKED_*`.
 | Missing \(X\) on one invested name | Stake remains; P&L unknown; portfolio aggregate marked incomplete; not zero-filled |
 | Dummy measurement reject under fixed \(q_i(h)\) | Rejected \(B/N\) stays cash; no redistribution |
 | All candidates rejected under each \(h\in\{0,0.25,0.50,1\}\) | Invested \(=0\); cash \(=B\); no exception |
-| Crossed call masked by wide put (\(H>0\) package-level) | Per-leg `ask>=bid` fails; readiness blocked |
+| Crossed call masked by wide put (\(H>0\) package-level) | Flagged `crossed_quote_excluded`; \(q=0\); stake cash; readiness may pass |
 | Body strike ≠ matching unit-leg strikes | Join / required-input readiness fails |
 | Capped-out (`in_N=False`) history row with large \(X/S_0\) | Does not satisfy min-20 history; does not change \(\mu_t\) |
+| Crossed-quote-excluded history row | Does not satisfy min-20 history; does not change \(\mu_t\) |
+| Peer exclusion on a date | Valid peers keep original \(B/N\) stake and \(q_i(h)\); no redistribution |
+| Entire date crossed-quote excluded | Invested \(=0\); cash \(=B\) for all four \(h\) |
 
 ---
 
