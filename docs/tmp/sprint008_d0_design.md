@@ -1,13 +1,15 @@
 # Sprint 008 D0 — Protocol freeze and input readiness
 
-**Status:** `ACCEPTED` (amended)  
+**Status:** `ACCEPTED` (amended; D0 complete and accepted)  
 **Accepted:** 2026-09-07 (implementation authorization)  
-**Updated:** 2026-09-07 — crossed-quote policy `sprint008_d0_crossed_quote_v1`  
+**Updated:** 2026-09-07 — crossed-quote policy `sprint008_d0_crossed_quote_v1`; D0 evidence accepted  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](../agenda/sprint8_long_filter_plan.md)  
-**Evidence review:** [`docs/tmp/sprint008_d0_evidence_review.md`](sprint008_d0_evidence_review.md)  
+**Evidence review:** [`docs/tmp/sprint008_d0_evidence_review.md`](sprint008_d0_evidence_review.md) — **ACCEPTED** `READY_WITH_NARROW_ENABLING_CHANGE`  
+**Official evidence:** `C:/MomentumCVG_env/runs/sprint008_d0_20260907T204449Z/` (SHA `af24f50`)  
 **Frozen contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json)  
-**Prior closeouts:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)
+**Prior closeouts:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
+**Next:** [`docs/tmp/sprint008_d1_design.md`](sprint008_d1_design.md) — D1 design awaiting review
 
 ---
 
@@ -56,7 +58,7 @@ If either unit leg has **finite** entry bid/ask with **`ask < bid`**, exclude th
 
 ## Authorization
 
-This design is **accepted**. D0 implementation and the official readiness run are complete; evidence awaits review. Association, profitability, thresholds, and D1 remain unauthorized.
+This design is **accepted**. D0 implementation and the official readiness run are complete and **accepted**. Association, profitability, thresholds, and D1 implementation remain unauthorized until the D1 design is accepted.
 
 ---
 

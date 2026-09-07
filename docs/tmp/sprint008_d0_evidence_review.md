@@ -6,17 +6,17 @@
 **Working tree at execution:** clean  
 **Policy version:** `sprint008_d0_crossed_quote_v1`  
 **Evidence dir:** `C:/MomentumCVG_env/runs/sprint008_d0_20260907T204449Z/` (outside repo; **fresh** rerun)  
-**Prior blocked runs (superseded for review):** `…/sprint008_d0_20260907T202025Z/`, `…/sprint008_d0_20260907T193835Z/`  
+**Prior blocked runs (superseded):** `…/sprint008_d0_20260907T202025Z/`, `…/sprint008_d0_20260907T193835Z/`  
 **Official artifacts:** `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` (unchanged)  
 **Official execution SHA:** `e205b9acc5d0400aa38169de721acb7fb8268f29`  
 **Command:** `C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint008_d0_readiness.py` (with `PYTHONPATH` = repo root)  
-**Status:** **D0 execution complete — evidence awaiting review**
+**Status:** **D0 ACCEPTED** (2026-09-07) — crossed-quote amendment + readiness evidence reviewed
 
 ---
 
 ## Verdict
 
-**`READY_WITH_NARROW_ENABLING_CHANGE`**
+**`READY_WITH_NARROW_ENABLING_CHANGE`** — **accepted**
 
 All gates pass under the versioned crossed-quote exclusion policy. One package is intentionally held as cash:
 
@@ -114,12 +114,6 @@ Notebook (clean, in repo): `notebooks/sprint008/d0_input_readiness.ipynb` — CL
 
 ---
 
-## Remaining blockers
+## Review decision (recorded)
 
-None for D0 readiness under the amended policy. **D1–D3 remain pending** (not started).
-
----
-
-## Suggested review decision
-
-Accept the computed verdict `READY_WITH_NARROW_ENABLING_CHANGE` and the crossed-quote cash treatment for `2025-04-04|MU`, then authorize D1 design. Do not start association/profitability/threshold work until this evidence is reviewed.
+**Accept** computed verdict `READY_WITH_NARROW_ENABLING_CHANGE` and crossed-quote cash treatment for `2025-04-04|MU`. D0 closed. Next: D1 design review ([`sprint008_d1_design.md`](sprint008_d1_design.md)).

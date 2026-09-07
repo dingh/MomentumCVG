@@ -2,14 +2,15 @@
 
 **Updated:** 2026-09-07
 
-**Status:** `D0 EXECUTION COMPLETE — EVIDENCE AWAITING REVIEW` (`READY_WITH_NARROW_ENABLING_CHANGE`)
+**Status:** `D1 DESIGN AWAITING REVIEW`
 
-**Mode:** **Build/Audit.** Sprint-level plan accepted. D0 design amended (`sprint008_d0_crossed_quote_v1`) and re-executed; evidence under review. D1–D3 pending.
+**Mode:** **Build/Audit.** Sprint-level plan accepted. **D0 accepted.** D1 design drafted; implementation unauthorized until design acceptance.
 
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md) — accepted detailed scope; canonical path; do not duplicate under `docs/tmp/`.
 
 **D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `ACCEPTED` (+ crossed-quote amendment v1)  
-**D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — verdict `READY_WITH_NARROW_ENABLING_CHANGE`; official run `C:/MomentumCVG_env/runs/sprint008_d0_20260907T204449Z/` (SHA `af24f50`, clean tree)
+**D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — **accepted** `READY_WITH_NARROW_ENABLING_CHANGE`; `C:/MomentumCVG_env/runs/sprint008_d0_20260907T204449Z/` (SHA `af24f50`)  
+**D1 design:** [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) — `DRAFT — AWAITING REVIEW`
 
 **Previous:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence; not edited by this sprint.
@@ -42,6 +43,7 @@ Method order is fixed:
 | Sizing | Scenario all-in cost: \(q_i(h)=(B/N)/(M_i + h H_i + \mathrm{fees}_i)\); freeze quantities within each \(h\) |
 | Dependence | Consecutive-date block resampling; block protocol freezes in D1 before association output |
 | Primary scenario | Full cross \(h=1\); midpoint diagnostic; limited intermediates as sensitivity only |
+| Crossed quotes | Policy `sprint008_d0_crossed_quote_v1`: exclude from execution/analysis; keep in \(N\); stake cash |
 
 Full protocol: [`sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md).
 
@@ -51,15 +53,15 @@ Full protocol: [`sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md).
 
 | ID | Deliverable | Status |
 |---|---|---|
-| **D0** | Freeze research protocol details as needed and confirm input readiness | **Execution complete — evidence awaiting review** (`READY_WITH_NARROW_ENABLING_CHANGE`) |
-| **D1** | Validate measurements; record `supported` / `unsupported` / `inconclusive` gate | Pending (awaiting D0 evidence review) |
+| **D0** | Freeze research protocol details as needed and confirm input readiness | **Accepted** (`READY_WITH_NARROW_ENABLING_CHANGE`) |
+| **D1** | Validate measurements; record `supported` / `unsupported` / `inconclusive` gate | **Design awaiting review** |
 | **D2** | Conditional threshold study, only if D1 supports it | Pending (conditional) |
 | **D3** | Closeout: conclusions, limitations, implications for later work | Pending |
 
-D0 design: [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md).  
-D0 evidence: [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md).
+D0: [`sprint008_d0_design.md`](../tmp/sprint008_d0_design.md), [`sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md).  
+D1 design: [`sprint008_d1_design.md`](../tmp/sprint008_d1_design.md).
 
-Do not start D1 association/profitability/threshold work until the D0 evidence is reviewed and any required protocol amendment is accepted.
+Do not implement D1 or run association/threshold analysis until the D1 design is accepted.
 
 ---
 
@@ -67,7 +69,7 @@ Do not start D1 association/profitability/threshold work until the D0 evidence i
 
 Sprint 008 is complete when:
 
-- [ ] D0 confirms protocol freeze / input readiness (or records a specific blocker).
+- [x] D0 confirms protocol freeze / input readiness (or records a specific blocker).
 - [ ] D1 records an explicit measurement gate decision.
 - [ ] D2 runs the conditional threshold study if justified, or records a stop without threshold search.
 - [ ] D3 closes with a defensible answer to the central question.
@@ -97,9 +99,11 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 **Plan status:** accepted and frozen.
 
-**D0 status:** **execution complete — evidence awaiting review.** Computed verdict `READY_WITH_NARROW_ENABLING_CHANGE` under policy `sprint008_d0_crossed_quote_v1` (1 exclusion: `2025-04-04|MU` held as cash; `in_N` unchanged). Rerun SHA `af24f50`.
+**D0 status:** **accepted** — `READY_WITH_NARROW_ENABLING_CHANGE` under `sprint008_d0_crossed_quote_v1`.
 
-Reviewers should accept readiness + cash treatment, then authorize D1 design. Do not run association, profitability, or threshold analysis yet.
+**D1 status:** **design awaiting review** ([`sprint008_d1_design.md`](../tmp/sprint008_d1_design.md)). Development-only association protocol, block resampling, multiplicity, and per-measurement / D2 gates are frozen in that draft for reviewer acceptance.
+
+Do not implement D1, run association analysis, or select thresholds until the D1 design is accepted.
 
 ---
 
@@ -107,9 +111,10 @@ Reviewers should accept readiness + cash treatment, then authorize D1 design. Do
 
 | Date | Event |
 |------|-------|
-| 2026-09-07 | D0 **rerun** under crossed-quote policy v1; evidence `sprint008_d0_20260907T204449Z`; SHA `af24f50` (clean); verdict `READY_WITH_NARROW_ENABLING_CHANGE` (MU cash-excluded). Evidence awaiting review. |
-| 2026-09-07 | D0 **rerun** after validation fixes; evidence `sprint008_d0_20260907T202025Z`; SHA `5023fe7` (clean); verdict still `BLOCKED_BY_SPECIFIC_INPUT_GAP` (MU preserved). Evidence awaiting review. |
-| 2026-09-07 | D0 **executed**; evidence `sprint008_d0_20260907T193835Z`; verdict `BLOCKED_BY_SPECIFIC_INPUT_GAP`. Evidence awaiting review. |
+| 2026-09-07 | D0 **accepted**; D1 design **drafted** (`sprint008_d1_design.md`). Agenda → `D1 DESIGN AWAITING REVIEW`. |
+| 2026-09-07 | D0 **rerun** under crossed-quote policy v1; evidence `sprint008_d0_20260907T204449Z`; SHA `af24f50` (clean); verdict `READY_WITH_NARROW_ENABLING_CHANGE` (MU cash-excluded). |
+| 2026-09-07 | D0 **rerun** after validation fixes; evidence `sprint008_d0_20260907T202025Z`; SHA `5023fe7` (clean); verdict still `BLOCKED_BY_SPECIFIC_INPUT_GAP` (MU preserved). |
+| 2026-09-07 | D0 **executed**; evidence `sprint008_d0_20260907T193835Z`; verdict `BLOCKED_BY_SPECIFIC_INPUT_GAP`. |
 | 2026-09-07 | D0 design revised (midpoint authority, M3 full-cross rolling hurdle, deterministic missing-data gates). |
 | 2026-09-06 | D0 design **drafted** (`docs/tmp/sprint008_d0_design.md`). |
 | 2026-09-06 | Sprint 008 plan **accepted**. Agenda switched to Sprint 008 **Build/Audit**. |
