@@ -65,7 +65,7 @@ Leg key: Sprint 007 `LEG_KEY` = `(trade_date, ticker, direction, expiry_date, op
 | \(H\) | Mid→full-cross package concession | D2B `package_half_spread` = \(0.5\sum \|q_u\|(\mathrm{ask}-\mathrm{bid})\) on the same unit legs; **not** from historical `quantity` or P&L deltas | \$/share | **Entry-known** |
 | \(S_0\) | Entry spot | `trade_log.entry_spot` | \$/share | **Entry-known** |
 | \(K\) | Common ATM strike | `trade_log.body_strike` (legs’ strikes must match) | \$/share | **Entry-known** |
-| \(X\) | \(\lvert S_T - K \rvert\) | `abs(exit_spot - body_strike)`; cross-check \(\sum\) `expiry_payoff_per_unit` on unit long legs | \$/share | **Outcome (post-expiry)** |
+| \(X\) | \(\lvert S_T - K \rvert\); when outcomes are available must reconcile to \(\sum\) unit-leg `expiry_payoff_per_unit` | `abs(exit_spot - body_strike)` vs leg payoff sum | \$/share | **Outcome (post-expiry)** |
 | Fees | Explicit research fees | Protocol pin \(\mathrm{fees}_i=0\) | \$/share | Entry-known (constant) |
 
 **Authoritative midpoint:** compute \(M\) with `midpoint_package_cashflow(unit_quantity, bid, ask)`. Stored ORATS `mid` must not define fills or \(M\).
@@ -207,7 +207,7 @@ Numerator is the **full-cross** all-in entry hurdle (\(h=1\)), including fees. D
 
 **Historical pool and window**
 
-- Pool candidates: long constructable trades (\(N\)-eligible definition) in the official run.
+- Pool candidates: restrict first to **`in_N == True`** (capped long \(N\)), then apply the eligibility rules below. Capped-out constructable longs do **not** count toward the minimum history or enter \(\mu_t\).
 - Observation \(j\) is eligible for \(\mu_t\) only if:
   - `expiry_date` \(< t\) (strict completed-before-entry cutoff; holding period finished);
   - `entry_date` \(\in [t - L,\ t)\) (rolling lookback; left-closed, right-open);
@@ -261,13 +261,13 @@ Allowed M3 cold starts alone do **not** force `BLOCKED_*`.
 ### 5.4 Required checks (pass/fail)
 
 1. **Identity** — receipt SHA, execution SHA, artifact presence.
-2. **Joins** — every \(N\) key has exactly two unit legs (call+put), shared mid/cross **bid/ask**, matching strikes/\(K\).
+2. **Joins / per-leg quotes** — every \(N\) key has exactly two `+1` unit legs (one call, one put), matching leg expiry, leg strikes matching the trade body strike/expiry, shared mid/cross **bid/ask**. **Per-leg quote check (explicit):** each leg must have finite bid/ask and **`ask >= bid`**. Package-level \(H\ge 0\) alone is insufficient (a crossed call can be masked by a wide put).
 3. **Midpoint authority** — \(M\) from D2B midpoint helper on bid/ask; stored `mid` not used as \(M\); \(M\) reconciles to `entry_cost_mid_per_share`; \(M+H\) reconciles to unit ask debit.
-4. **Required-input coverage** — primary-window \(N\): 100% finite \(M>0\), \(H\ge 0\), \(S_0>0\), \(K\); else FAIL.
-5. **Outcome coverage** — primary-window \(N\): 100% finite \(X\ge 0\); else FAIL. Missing outcomes never coerced to 0 P&L/cash in any smoke path.
+4. **Required-input coverage** — primary-window \(N\): 100% finite \(M>0\), \(H\ge 0\), per-leg `ask>=bid`, \(S_0>0\), \(K\), body/leg strike+expiry match; else FAIL.
+5. **Outcome coverage** — primary-window \(N\): 100% finite \(X\ge 0\); when outcomes are available, \(X\) must reconcile to the sum of recorded unit-leg `expiry_payoff_per_unit`; else FAIL. Missing outcomes never coerced to 0 P&L/cash in any smoke path.
 6. **Measurements** — M1/M2 defined wherever required inputs pass; M3 missingness equals cold-start / bad \(\mu_t\) only; missing M3 leaves \(N\) and \(q_i(h)\) unchanged.
 7. **Reconstruction** — capped `structure_ok` long set equals declared \(N\); disclose equality/difference vs included.
-8. **Accounting** — equal-stake consumption \(B/N\); within-\(h\) quantity freeze smoke; rejected cash not redistributed; historical `quantity` unused.
+8. **Accounting** — equal-stake consumption \(B/N\) across \(h\in\{0,0.25,0.50,1\}\); within-\(h\) quantity freeze smoke; rejected cash not redistributed; all-rejected dates leave invested \(=0\) and cash \(=B\) with no exception; historical `quantity` unused.
 9. **Non-goals held** — no Spearman/groups/thresholds/P&L leaderboards in D0 outputs.
 
 ### 5.5 Focused unit-test cases (design freeze)
@@ -283,6 +283,10 @@ Allowed M3 cold starts alone do **not** force `BLOCKED_*`.
 | M3 window respects `expiry < t` and entry in \([t-364,t)\) | Future/`expiry\ge t` / outside lookback excluded |
 | Missing \(X\) on one invested name | Stake remains; P&L unknown; portfolio aggregate marked incomplete; not zero-filled |
 | Dummy measurement reject under fixed \(q_i(h)\) | Rejected \(B/N\) stays cash; no redistribution |
+| All candidates rejected under each \(h\in\{0,0.25,0.50,1\}\) | Invested \(=0\); cash \(=B\); no exception |
+| Crossed call masked by wide put (\(H>0\) package-level) | Per-leg `ask>=bid` fails; readiness blocked |
+| Body strike ≠ matching unit-leg strikes | Join / required-input readiness fails |
+| Capped-out (`in_N=False`) history row with large \(X/S_0\) | Does not satisfy min-20 history; does not change \(\mu_t\) |
 
 ---
 

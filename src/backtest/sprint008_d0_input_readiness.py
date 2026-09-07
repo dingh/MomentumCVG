@@ -210,8 +210,29 @@ def reconstruct_capped_long_n(long_trades: pd.DataFrame) -> pd.DataFrame:
 
 
 def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
-    """Per-trade M, H, ask_debit from unit bid/ask (ignore stored mid)."""
-    columns = [*TRADE_KEY, "M", "H", "ask_debit", "n_legs", "has_call", "has_put", "strike_match"]
+    """Per-trade M, H, ask_debit from unit bid/ask (ignore stored mid).
+
+    Per-leg quote check (explicit): each leg must have finite bid/ask and
+    ``ask >= bid``. Package-level ``H >= 0`` alone is insufficient — a crossed
+    call can be masked by a wide put.
+    """
+    columns = [
+        *TRADE_KEY,
+        "M",
+        "H",
+        "ask_debit",
+        "n_legs",
+        "has_call",
+        "has_put",
+        "strike_match",
+        "unit_qty_ok",
+        "expiry_match_legs",
+        "per_leg_quotes_ok",
+        "legs_structure_ok",
+        "leg_strike",
+        "leg_expiry",
+        "payoff_sum",
+    ]
     if legs.empty:
         return pd.DataFrame(columns=columns)
 
@@ -223,11 +244,51 @@ def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
         ask = pd.to_numeric(grp["ask"], errors="coerce").to_numpy(dtype=float)
         # Stored mid is deliberately unused for M/H.
         _ = grp["mid"] if "mid" in grp.columns else None
-        option_types = set(grp["option_type"].astype(str).str.lower())
+        option_types = [str(v).lower() for v in grp["option_type"].tolist()]
+        type_set = set(option_types)
         strikes = pd.to_numeric(grp["strike"], errors="coerce")
-        strike_match = bool(strikes.nunique(dropna=True) == 1)
+        expiries = grp["expiry_date"].map(
+            lambda v: _as_date(v) if pd.notna(v) else None
+        )
+        payoff = (
+            pd.to_numeric(grp["expiry_payoff_per_unit"], errors="coerce").to_numpy(dtype=float)
+            if "expiry_payoff_per_unit" in grp.columns
+            else np.full(len(grp), np.nan)
+        )
+
+        n_legs = int(len(grp))
+        has_call = "call" in type_set
+        has_put = "put" in type_set
+        strike_match = bool(strikes.nunique(dropna=True) == 1) and bool(strikes.notna().all())
+        unit_qty_ok = bool(
+            n_legs == 2
+            and len(uq) == 2
+            and np.isfinite(uq).all()
+            and np.allclose(uq, 1.0, rtol=0.0, atol=0.0)
+        )
+        expiry_match_legs = bool(
+            expiries.notna().all() and expiries.nunique(dropna=True) == 1
+        )
+        # Per-leg: finite bid/ask and ask >= bid on EVERY leg.
+        per_leg_quotes_ok = bool(
+            n_legs == 2
+            and np.isfinite(bid).all()
+            and np.isfinite(ask).all()
+            and bool(np.all(ask >= bid))
+        )
+        legs_structure_ok = bool(
+            n_legs == 2
+            and has_call
+            and has_put
+            and len(type_set) == 2
+            and strike_match
+            and unit_qty_ok
+            and expiry_match_legs
+            and per_leg_quotes_ok
+        )
+
         if (
-            len(grp) == 0
+            n_legs == 0
             or np.isnan(uq).any()
             or np.isnan(bid).any()
             or np.isnan(ask).any()
@@ -239,6 +300,15 @@ def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
             m_val = midpoint_package_cashflow(uq, bid, ask)
             h_val = package_half_spread(uq, bid, ask)
             ask_debit = float(np.sum(uq * ask))
+
+        leg_strike = float(strikes.iloc[0]) if strike_match else float("nan")
+        leg_expiry = expiries.iloc[0] if expiry_match_legs else None
+        payoff_sum = (
+            float(np.sum(payoff))
+            if np.isfinite(payoff).all() and unit_qty_ok
+            else float("nan")
+        )
+
         rows.append(
             {
                 "trade_date": key[0],
@@ -247,10 +317,17 @@ def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
                 "M": m_val,
                 "H": h_val,
                 "ask_debit": ask_debit,
-                "n_legs": int(len(grp)),
-                "has_call": "call" in option_types,
-                "has_put": "put" in option_types,
+                "n_legs": n_legs,
+                "has_call": has_call,
+                "has_put": has_put,
                 "strike_match": strike_match,
+                "unit_qty_ok": unit_qty_ok,
+                "expiry_match_legs": expiry_match_legs,
+                "per_leg_quotes_ok": per_leg_quotes_ok,
+                "legs_structure_ok": legs_structure_ok,
+                "leg_strike": leg_strike,
+                "leg_expiry": leg_expiry,
+                "payoff_sum": payoff_sum,
             }
         )
     return pd.DataFrame(rows)
@@ -259,7 +336,7 @@ def compute_package_mh(legs: pd.DataFrame) -> pd.DataFrame:
 def attach_outcomes_and_measurements(
     trades: pd.DataFrame, package_mh: pd.DataFrame
 ) -> pd.DataFrame:
-    """Attach S0, K, ST, X, M1, M2 and midpoint/ask reconciliations."""
+    """Attach S0, K, ST, X, M1, M2 and midpoint/ask/payoff reconciliations."""
     if trades.empty:
         out = trades.copy()
         for col in (
@@ -274,7 +351,11 @@ def attach_outcomes_and_measurements(
             "M2",
             "delta_M_vs_stored",
             "delta_MH_vs_ask",
+            "delta_X_vs_payoff_sum",
+            "strike_matches_body",
+            "expiry_matches_trade",
             "outcome_finite",
+            "payoff_reconcile_ok",
         ):
             out[col] = pd.Series(dtype=float)
         return out
@@ -287,6 +368,32 @@ def attach_outcomes_and_measurements(
     stored_mid = pd.to_numeric(merged["entry_cost_mid_per_share"], errors="coerce")
     merged["delta_M_vs_stored"] = merged["M"] - stored_mid
     merged["delta_MH_vs_ask"] = (merged["M"] + merged["H"]) - merged["ask_debit"]
+    merged["strike_matches_body"] = (
+        merged["leg_strike"].map(_finite)
+        & merged["K"].map(_finite)
+        & ((merged["leg_strike"] - merged["K"]).abs() <= DOLLAR_TOL)
+    )
+    trade_expiry = merged["expiry_date"].map(
+        lambda v: _as_date(v) if pd.notna(v) else None
+    )
+    if "leg_expiry" in merged.columns:
+        merged["expiry_matches_trade"] = [
+            (leg_exp is not None and tr_exp is not None and _as_date(leg_exp) == tr_exp)
+            for leg_exp, tr_exp in zip(merged["leg_expiry"], trade_expiry, strict=False)
+        ]
+    else:
+        merged["expiry_matches_trade"] = False
+    if "payoff_sum" not in merged.columns:
+        merged["payoff_sum"] = np.nan
+    merged["delta_X_vs_payoff_sum"] = merged["X"] - merged["payoff_sum"]
+    # When outcomes available, X must reconcile to sum of unit-leg expiry payoffs.
+    outcome_avail = merged["X"].map(_finite) & merged["X"].ge(0.0)
+    payoff_avail = merged["payoff_sum"].map(_finite)
+    merged["payoff_reconcile_ok"] = np.where(
+        outcome_avail & payoff_avail,
+        merged["delta_X_vs_payoff_sum"].abs() <= DOLLAR_TOL,
+        np.where(outcome_avail & ~payoff_avail, False, True),
+    )
     merged["M1"] = np.where(
         merged["M"].to_numpy(dtype=float) > 0.0,
         merged["H"] / merged["M"],
@@ -297,15 +404,16 @@ def attach_outcomes_and_measurements(
         merged["H"] / merged["S0"],
         np.nan,
     )
-    merged["outcome_finite"] = merged["X"].map(_finite) & merged["X"].ge(0.0)
+    merged["outcome_finite"] = outcome_avail
     return merged
 
 
 def compute_m3_scores(panel: pd.DataFrame) -> pd.DataFrame:
     """M3 = (M+H+fees)/(S0*mu_t) with rolling completed history.
 
-    History eligibility: expiry < t, entry in [t-364, t), X>=0 finite, S0>0.
-    Missing when <20 obs or mu non-finite/non-positive. Does not change N.
+    Historical pool is restricted to ``in_N == True`` before applying time,
+    payoff, and spot eligibility. Missing when <20 obs or mu non-finite /
+    non-positive. Does not change N.
     """
     out = panel.copy()
     out["M3"] = np.nan
@@ -315,7 +423,10 @@ def compute_m3_scores(panel: pd.DataFrame) -> pd.DataFrame:
     if out.empty:
         return out
 
-    hist = out.copy()
+    if "in_N" not in out.columns:
+        raise D0ReadinessError("compute_m3_scores requires in_N column")
+
+    hist = out.loc[out["in_N"] == True].copy()  # noqa: E712
     hist["trade_date"] = hist["trade_date"].map(_as_date)
     hist["expiry_date"] = hist["expiry_date"].map(
         lambda v: _as_date(v) if pd.notna(v) else None
@@ -334,7 +445,6 @@ def compute_m3_scores(panel: pd.DataFrame) -> pd.DataFrame:
     )
     hist_pool = hist.loc[eligible_mask].copy()
 
-    # Pre-index by entry date for window scans.
     if not hist_pool.empty:
         hist_pool = hist_pool.sort_values("trade_date", kind="mergesort").reset_index(drop=True)
 
@@ -447,6 +557,7 @@ def smoke_equal_dollar_accounting(
         stake = BUDGET_B / float(n)
         keep = ~reject.loc[grp.index]
         kept = grp.loc[keep]
+        n_rejected = int((~keep).sum())
         if kept.empty:
             invested = 0.0
             cash = BUDGET_B
@@ -454,21 +565,27 @@ def smoke_equal_dollar_accounting(
             invested = float(
                 np.nansum(kept["q_h"].to_numpy(dtype=float) * kept["entry_all_in"].to_numpy(dtype=float))
             )
-            n_rejected = int((~keep).sum())
             cash = stake * float(n_rejected)
         err = abs((invested + cash) - BUDGET_B)
         date_errors.append(err)
 
         # Rejected capital must equal stake * rejects; no redistribution into keepers.
+        # All-rejected: invested=0, cash=B (full budget remains cash).
         if n_rejected:
             expected_invested = stake * float(keep.sum())
             if abs(invested - expected_invested) > ACCOUNTING_TOL:
                 reject_ok = False
-            # Keepers still use original q_i (frozen), so per-name spend remains stake.
             if keep.any():
                 keeper_spend = kept["q_h"] * kept["entry_all_in"]
-                if not np.allclose(keeper_spend.to_numpy(dtype=float), stake, atol=ACCOUNTING_TOL, equal_nan=False):
+                if not np.allclose(
+                    keeper_spend.to_numpy(dtype=float),
+                    stake,
+                    atol=ACCOUNTING_TOL,
+                    equal_nan=False,
+                ):
                     reject_ok = False
+            elif abs(cash - BUDGET_B) > ACCOUNTING_TOL or abs(invested) > ACCOUNTING_TOL:
+                reject_ok = False
 
         _ = trade_date  # date loop identity retained for clarity
 
@@ -564,6 +681,12 @@ def _required_input_ok(row: pd.Series) -> bool:
         and bool(row.get("has_call"))
         and bool(row.get("has_put"))
         and bool(row.get("strike_match"))
+        and bool(row.get("unit_qty_ok", False))
+        and bool(row.get("expiry_match_legs", False))
+        and bool(row.get("per_leg_quotes_ok", False))
+        and bool(row.get("legs_structure_ok", False))
+        and bool(row.get("strike_matches_body", False))
+        and bool(row.get("expiry_matches_trade", False))
         and _finite(row.get("M"))
         and float(row["M"]) > 0.0
         and _finite(row.get("H"))
@@ -574,6 +697,7 @@ def _required_input_ok(row: pd.Series) -> bool:
         and float(row["S0"]) > 0.0
         and _finite(row.get("K"))
         and abs(float(row.get("delta_M_vs_stored", np.nan))) <= DOLLAR_TOL
+        and bool(row.get("payoff_reconcile_ok", True))
     )
 
 
@@ -606,20 +730,37 @@ def evaluate_readiness_gates(
     else:
         gates.append(GateResult("G1_identity", True, "identity checks skipped (synthetic/unit)"))
 
-    # G2 joins / shared quotes
+    # G2 joins / shared quotes / per-leg structure
     join_ok = True
     join_detail = "no in_N rows"
     if not n_panel.empty:
+        for col, default in (
+            ("unit_qty_ok", True),
+            ("expiry_match_legs", True),
+            ("per_leg_quotes_ok", True),
+            ("legs_structure_ok", True),
+            ("strike_matches_body", True),
+            ("expiry_matches_trade", True),
+        ):
+            if col not in n_panel.columns:
+                n_panel[col] = default
         bad_legs = n_panel[
             (n_panel["n_legs"] != 2)
-            | (~n_panel["has_call"])
-            | (~n_panel["has_put"])
-            | (~n_panel["strike_match"])
+            | (~n_panel["has_call"].astype(bool))
+            | (~n_panel["has_put"].astype(bool))
+            | (~n_panel["strike_match"].astype(bool))
+            | (~n_panel["unit_qty_ok"].astype(bool))
+            | (~n_panel["expiry_match_legs"].astype(bool))
+            | (~n_panel["per_leg_quotes_ok"].astype(bool))
+            | (~n_panel["legs_structure_ok"].astype(bool))
+            | (~n_panel["strike_matches_body"].astype(bool))
+            | (~n_panel["expiry_matches_trade"].astype(bool))
             | (n_panel["K"].map(lambda v: not _finite(v)))
         ]
         join_ok = bad_legs.empty and shared_quotes_ok
         join_detail = (
-            f"bad_join_rows={len(bad_legs)} shared_quotes_ok={shared_quotes_ok}"
+            f"bad_join_rows={len(bad_legs)} shared_quotes_ok={shared_quotes_ok} "
+            f"(per-leg ask>=bid required)"
         )
     gates.append(GateResult("G2_joins", join_ok, join_detail))
 
@@ -657,13 +798,16 @@ def evaluate_readiness_gates(
         )
     )
 
-    # G5 outcome coverage on primary N
+    # G5 outcome coverage on primary N (+ payoff reconcile when outcomes present)
     outcome_ok = True
     n_missing_primary = 0
+    n_payoff_fail = 0
     if not primary.empty:
         missing = ~(primary["X"].map(_finite) & primary["X"].ge(0.0))
         n_missing_primary = int(missing.sum())
-        outcome_ok = n_missing_primary == 0
+        if "payoff_reconcile_ok" in primary.columns:
+            n_payoff_fail = int((~primary["payoff_reconcile_ok"].astype(bool)).sum())
+        outcome_ok = n_missing_primary == 0 and n_payoff_fail == 0
     if missing_outcome is not None and missing_outcome.get("n_missing_x", 0) > 0:
         # Smoke may inject missing X; primary readiness still fails if rate > 0.
         pass
@@ -671,7 +815,7 @@ def evaluate_readiness_gates(
         GateResult(
             "G5_outcome_coverage",
             outcome_ok,
-            f"primary_missing_x={n_missing_primary}",
+            f"primary_missing_x={n_missing_primary} payoff_reconcile_failures={n_payoff_fail}",
         )
     )
 
@@ -885,7 +1029,7 @@ def run_d0_readiness(
     t_stage = time.perf_counter()
     constructable = reconstructed.loc[reconstructed["structure_ok"] == True].copy()  # noqa: E712
     constructable_panel = attach_outcomes_and_measurements(constructable, package_mh)
-    # M3 history uses constructable longs; scores then subset to capped N.
+    # M3 history pool is in_N only; scores computed on constructable then subset to N.
     constructable_panel = compute_m3_scores(constructable_panel)
     panel = constructable_panel.loc[constructable_panel["in_N"] == True].copy()  # noqa: E712
     timings["outcomes_measurements"] = _progress(
@@ -898,23 +1042,66 @@ def run_d0_readiness(
     t_stage = time.perf_counter()
     if "in_N" not in panel.columns:
         panel["in_N"] = True
-    accounting_primary = smoke_equal_dollar_accounting(panel, h=1.0, reject_mask=reject_mask)
-    # Dummy reject smoke when no mask provided: reject first name/day under frozen q_i.
+    scenario_results: dict[str, Any] = {}
+    all_scenarios_pass = True
+    for h in SCENARIOS_H:
+        scenario_results[str(h)] = smoke_equal_dollar_accounting(
+            panel, h=float(h), reject_mask=reject_mask
+        )
+        if not scenario_results[str(h)]["passed"]:
+            all_scenarios_pass = False
+    # Dummy partial reject under primary h.
+    accounting_primary = dict(scenario_results[str(1.0)])
+    accounting_primary["scenarios"] = scenario_results
     if reject_mask is None and not panel.empty:
         dummy = pd.Series(False, index=panel.index)
         first_idx = panel.groupby("trade_date", sort=False).head(1).index
         dummy.loc[first_idx] = True
         accounting_reject = smoke_equal_dollar_accounting(panel, h=1.0, reject_mask=dummy)
+        # All-rejected smoke across every accepted h (no exception; cash = B).
+        all_reject = pd.Series(True, index=panel.index)
+        all_reject_by_h: dict[str, Any] = {}
+        all_reject_pass = True
+        for h in SCENARIOS_H:
+            ar = smoke_equal_dollar_accounting(
+                panel, h=float(h), reject_mask=all_reject
+            )
+            all_reject_by_h[str(h)] = ar
+            if not ar["passed"]:
+                all_reject_pass = False
+        accounting_all_reject = all_reject_by_h[str(1.0)]
         accounting_primary = {
             **accounting_primary,
             "dummy_reject_passed": accounting_reject["passed"],
             "dummy_reject_detail": accounting_reject["detail"],
-            "passed": bool(accounting_primary["passed"] and accounting_reject["passed"]),
+            "all_reject_passed": all_reject_pass,
+            "all_reject_by_h": {
+                k: {"passed": v["passed"], "detail": v["detail"]}
+                for k, v in all_reject_by_h.items()
+            },
+            "all_reject_detail": accounting_all_reject["detail"],
+            "scenarios_all_passed": all_scenarios_pass,
+            "passed": bool(
+                all_scenarios_pass
+                and accounting_reject["passed"]
+                and all_reject_pass
+            ),
             "detail": (
-                f"{accounting_primary['detail']}; "
-                f"dummy_reject={accounting_reject['detail']}"
+                f"scenarios_all_passed={all_scenarios_pass}; "
+                f"h=1 {scenario_results['1.0']['detail']}; "
+                f"dummy_reject={accounting_reject['detail']}; "
+                f"all_reject_all_h={all_reject_pass} "
+                f"all_reject_h1={accounting_all_reject['detail']}"
             ),
         }
+    else:
+        accounting_primary["scenarios_all_passed"] = all_scenarios_pass
+        accounting_primary["passed"] = bool(
+            all_scenarios_pass and accounting_primary.get("passed", False)
+        )
+        accounting_primary["detail"] = (
+            f"scenarios_all_passed={all_scenarios_pass}; {accounting_primary.get('detail')}"
+        )
     missing_smoke = missing_outcome_smoke(panel, h=1.0)
     timings["accounting_smoke"] = _progress(
         "accounting_smoke", t_stage, note=accounting_primary.get("detail", "")
