@@ -3,12 +3,12 @@
 **Status:** `ACCEPTED`  
 **Accepted:** 2026-09-06  
 **Updated:** 2026-09-06  
-**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; **D0 execution complete — evidence awaiting review** (`BLOCKED_BY_SPECIFIC_INPUT_GAP`)  
+**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; **D0 execution complete — evidence awaiting review** (`READY_WITH_NARROW_ENABLING_CHANGE`)  
 **Prior closeouts:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 **D2B H/M precedent:** [`docs/tmp/sprint007_d2b_evidence_review.md`](../tmp/sprint007_d2b_evidence_review.md); `src/backtest/sprint007_d2b_package_tradability.py`  
 **D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `ACCEPTED`  
-**D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — `C:/MomentumCVG_env/runs/sprint008_d0_20260907T202025Z/` (SHA `5023fe7`)  
+**D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — `C:/MomentumCVG_env/runs/sprint008_d0_20260907T204449Z/` (SHA `af24f50`; policy `sprint008_d0_crossed_quote_v1`)  
 **Canonical path:** `docs/agenda/sprint8_long_filter_plan.md` — do not duplicate under `docs/tmp/`.  
 **Purpose:** Accepted sprint-level research protocol for a long-side-only measurement and conditional-threshold study. This plan freezes questions, gates, inference boundaries, and deliverable sequence. It deliberately defers deliverable-specific formulas, notebooks, schemas, and code footprints until each deliverable is designed and accepted.
 
@@ -26,7 +26,7 @@
 | **Method** | Define measurements → validate measurement–profitability relationship (required gate) → only then test simple thresholds |
 | **Not the goal** | Force profitability; rescue Sprint 006; retune signal windows; redesign short structures; claim fill attainability |
 | **Outcomes allowed** | Supported / unsupported / inconclusive measurement; effective / ineffective threshold — all valid completions |
-| **Approval boundary** | Plan **accepted**. D0 **executed** — evidence awaiting review (`BLOCKED_BY_SPECIFIC_INPUT_GAP`). D1–D3 pending. |
+| **Approval boundary** | Plan **accepted**. D0 **executed** — evidence awaiting review (`READY_WITH_NARROW_ENABLING_CHANGE`). D1–D3 pending. |
 
 ---
 
@@ -453,7 +453,7 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 2. ~~Update `docs/agenda/current_sprint.md` to Sprint 008 **Build/Audit**.~~ **Done.**
 3. ~~D0 design~~ **Accepted**; ~~implementation/execution~~ **complete** — evidence awaiting review ([`sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md)).
 4. For each deliverable thereafter: inspect → one-page design → wait for acceptance → implement/execute → evidence review → next design.
-5. Do not start threshold work until D1 gate acceptance authorizes D2. Do not start D1 while D0 remains blocked under the current required-input rule unless a versioned amendment is accepted.
+5. Do not start threshold work until D1 gate acceptance authorizes D2. Do not start D1 until D0 evidence review accepts `READY_WITH_NARROW_ENABLING_CHANGE` under the crossed-quote amendment.
 
 Pause and rescope if proposed work:
 
@@ -469,8 +469,8 @@ Pause and rescope if proposed work:
 
 **D0 execution complete — evidence awaiting review.**
 
-Computed verdict: `BLOCKED_BY_SPECIFIC_INPUT_GAP` (primary join/required-input failure `2025-04-04|MU`, crossed quotes → per-leg `ask>=bid` fail and \(H<0\)).
+Computed verdict: `READY_WITH_NARROW_ENABLING_CHANGE` under policy `sprint008_d0_crossed_quote_v1` (1 exclusion: `2025-04-04|MU` held as cash; `in_N` unchanged).
 
-Evidence: [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md); `C:/MomentumCVG_env/runs/sprint008_d0_20260907T202025Z/` (executing SHA `5023fe7566fb0acf0d2ca4665a9b93df2a45112b`, clean working tree).
+Evidence: [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md); `C:/MomentumCVG_env/runs/sprint008_d0_20260907T204449Z/` (executing SHA `af24f5056fca806fd417fd727b7193949943e4c5`, clean working tree).
 
 Do not begin D1 association or threshold work until this evidence is reviewed.
