@@ -3,11 +3,12 @@
 **Status:** `ACCEPTED`  
 **Accepted:** 2026-09-06  
 **Updated:** 2026-09-06  
-**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; plan accepted; **D0 design drafted — awaiting review; implementation not started**  
+**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; **D0 execution complete — evidence awaiting review** (`BLOCKED_BY_SPECIFIC_INPUT_GAP`)  
 **Prior closeouts:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 **D2B H/M precedent:** [`docs/tmp/sprint007_d2b_evidence_review.md`](../tmp/sprint007_d2b_evidence_review.md); `src/backtest/sprint007_d2b_package_tradability.py`  
-**D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `PROPOSED — AWAITING REVIEW`  
+**D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `ACCEPTED`  
+**D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — `C:/MomentumCVG_env/runs/sprint008_d0_20260907T193835Z/`  
 **Canonical path:** `docs/agenda/sprint8_long_filter_plan.md` — do not duplicate under `docs/tmp/`.  
 **Purpose:** Accepted sprint-level research protocol for a long-side-only measurement and conditional-threshold study. This plan freezes questions, gates, inference boundaries, and deliverable sequence. It deliberately defers deliverable-specific formulas, notebooks, schemas, and code footprints until each deliverable is designed and accepted.
 
@@ -25,7 +26,7 @@
 | **Method** | Define measurements → validate measurement–profitability relationship (required gate) → only then test simple thresholds |
 | **Not the goal** | Force profitability; rescue Sprint 006; retune signal windows; redesign short structures; claim fill attainability |
 | **Outcomes allowed** | Supported / unsupported / inconclusive measurement; effective / ineffective threshold — all valid completions |
-| **Approval boundary** | Plan **accepted**. D0 design **drafted — awaiting review; implementation not started**. Each later deliverable needs its own accepted short design before new granular output |
+| **Approval boundary** | Plan **accepted**. D0 **executed** — evidence awaiting review (`BLOCKED_BY_SPECIFIC_INPUT_GAP`). D1–D3 pending. |
 
 ---
 
@@ -450,9 +451,9 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 1. ~~Review and accept this sprint-level plan.~~ **Done** — plan accepted 2026-09-06.
 2. ~~Update `docs/agenda/current_sprint.md` to Sprint 008 **Build/Audit**.~~ **Done.**
-3. **D0 design drafted** — [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — **awaiting review; implementation not started.**
+3. ~~D0 design~~ **Accepted**; ~~implementation/execution~~ **complete** — evidence awaiting review ([`sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md)).
 4. For each deliverable thereafter: inspect → one-page design → wait for acceptance → implement/execute → evidence review → next design.
-5. Do not start threshold work until D1 gate acceptance authorizes D2.
+5. Do not start threshold work until D1 gate acceptance authorizes D2. Do not start D1 while D0 remains blocked under the current required-input rule unless a versioned amendment is accepted.
 
 Pause and rescope if proposed work:
 
@@ -466,8 +467,10 @@ Pause and rescope if proposed work:
 
 ## 15. Next action
 
-**Plan accepted. D0 design drafted — awaiting review; implementation not started.**
+**D0 execution complete — evidence awaiting review.**
 
-Design: [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md).
+Computed verdict: `BLOCKED_BY_SPECIFIC_INPUT_GAP` (primary required-input failure `2025-04-04|MU`, \(H<0\) from crossed quotes).
 
-Do not implement D0 analysis code, execute the readiness study, or produce association / profitability / threshold results until the D0 design is accepted and implementation is authorized.
+Evidence: [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md); `C:/MomentumCVG_env/runs/sprint008_d0_20260907T193835Z/`.
+
+Do not begin D1 association or threshold work until this evidence is reviewed.

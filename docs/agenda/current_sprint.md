@@ -2,13 +2,14 @@
 
 **Updated:** 2026-09-07
 
-**Status:** `ACCEPTED — PLAN FROZEN; D0 DESIGN DRAFTED — AWAITING REVIEW`
+**Status:** `D0 EXECUTION COMPLETE — EVIDENCE AWAITING REVIEW` (`BLOCKED_BY_SPECIFIC_INPUT_GAP`)
 
-**Mode:** **Build/Audit.** Sprint-level plan accepted. **D0 design drafted — awaiting review; implementation not started.**
+**Mode:** **Build/Audit.** Sprint-level plan accepted. D0 design accepted and executed; evidence under review. D1–D3 pending.
 
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md) — accepted detailed scope; canonical path; do not duplicate under `docs/tmp/`.
 
-**D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `PROPOSED — AWAITING REVIEW` (implementation not started)
+**D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `ACCEPTED`  
+**D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — verdict `BLOCKED_BY_SPECIFIC_INPUT_GAP`; official run `C:/MomentumCVG_env/runs/sprint008_d0_20260907T193835Z/`
 
 **Previous:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence; not edited by this sprint.
@@ -48,16 +49,17 @@ Full protocol: [`sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md).
 
 ## 3. Deliverables
 
-All deliverables remain pending for **implementation/evidence**. D0 **design** is drafted and awaiting review; D0 implementation has **not** started. D1–D3 have not started.
-
 | ID | Deliverable | Status |
 |---|---|---|
-| **D0** | Freeze research protocol details as needed and confirm input readiness | **Design drafted — awaiting review; implementation not started** |
-| **D1** | Validate measurements; record `supported` / `unsupported` / `inconclusive` gate | Pending (after D0) |
+| **D0** | Freeze research protocol details as needed and confirm input readiness | **Execution complete — evidence awaiting review** (`BLOCKED_BY_SPECIFIC_INPUT_GAP`) |
+| **D1** | Validate measurements; record `supported` / `unsupported` / `inconclusive` gate | Pending (blocked while D0 G4 fails under current rules) |
 | **D2** | Conditional threshold study, only if D1 supports it | Pending (conditional) |
 | **D3** | Closeout: conclusions, limitations, implications for later work | Pending |
 
-D0 design: [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md). Do not implement D0 or open association/profitability/threshold results until the design is accepted and implementation is authorized.
+D0 design: [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md).  
+D0 evidence: [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md).
+
+Do not start D1 association/profitability/threshold work until the D0 evidence is reviewed and any required protocol amendment is accepted.
 
 ---
 
@@ -95,13 +97,9 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 **Plan status:** accepted and frozen.
 
-**D0 status:** **design drafted — awaiting review; implementation not started.**
+**D0 status:** **execution complete — evidence awaiting review.** Computed verdict `BLOCKED_BY_SPECIFIC_INPUT_GAP` (primary required-input failure: `2025-04-04|MU`, \(H<0\) from crossed quotes).
 
-Design: [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md).
-
-Do not implement analysis code, execute the D0 study, or produce association, profitability, or threshold results until the D0 design is accepted and implementation is explicitly authorized.
-
-Threshold work requires an accepted D1 `supported` gate. Pause and rescope if proposed work changes frozen selection rules, expands into short-side research, searches many cutoffs after seeing results, or claims fill attainability from quotes alone.
+Reviewers should accept the blocker as design-faithful or authorize a versioned crossed-quote amendment before D1. Do not run association, profitability, or threshold analysis yet.
 
 ---
 
@@ -109,7 +107,8 @@ Threshold work requires an accepted D1 `supported` gate. Pause and rescope if pr
 
 | Date | Event |
 |------|-------|
-| 2026-09-07 | D0 design revised (midpoint authority, M3 full-cross rolling hurdle, deterministic missing-data gates). Agenda: distinguish drafted D0 design from pending implementation. |
-| 2026-09-06 | D0 design **drafted** (`docs/tmp/sprint008_d0_design.md`) — awaiting review; implementation not started. |
+| 2026-09-07 | D0 **executed**; evidence `sprint008_d0_20260907T193835Z`; verdict `BLOCKED_BY_SPECIFIC_INPUT_GAP`. Evidence awaiting review. |
+| 2026-09-07 | D0 design revised (midpoint authority, M3 full-cross rolling hurdle, deterministic missing-data gates). |
+| 2026-09-06 | D0 design **drafted** (`docs/tmp/sprint008_d0_design.md`). |
 | 2026-09-06 | Sprint 008 plan **accepted**. Agenda switched to Sprint 008 **Build/Audit**. |
 | 2026-09-06 | Sprint 007 closed (`EXECUTION_CALIBRATION_REQUIRED`). See [`007_closeout.md`](../sprint_memos/007_closeout.md). |

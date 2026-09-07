@@ -1,9 +1,12 @@
 # Sprint 008 D0 — Protocol freeze and input readiness
 
-**Status:** `PROPOSED — AWAITING REVIEW`  
+**Status:** `ACCEPTED`  
+**Accepted:** 2026-09-07 (implementation authorization)  
 **Updated:** 2026-09-07  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](../agenda/sprint8_long_filter_plan.md)  
+**Evidence review:** [`docs/tmp/sprint008_d0_evidence_review.md`](sprint008_d0_evidence_review.md) — `BLOCKED_BY_SPECIFIC_INPUT_GAP`; awaiting review  
+**Official evidence:** `C:/MomentumCVG_env/runs/sprint008_d0_20260907T193835Z/`  
 **Frozen contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json)  
 **Prior closeouts:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)
 
@@ -19,7 +22,7 @@
 
 ## Authorization
 
-This document is **D0 design only**. Implementation, readiness execution, association analysis, profitability, and thresholds remain unauthorized until this design is accepted and D0 implementation is separately authorized.
+This design is **accepted**. D0 implementation and the official readiness run are complete; evidence awaits review. Association, profitability, thresholds, and D1 remain unauthorized.
 
 ---
 
