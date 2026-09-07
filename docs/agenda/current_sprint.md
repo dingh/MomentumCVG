@@ -1,6 +1,6 @@
 # Current sprint — 008
 
-**Updated:** 2026-09-06
+**Updated:** 2026-09-07
 
 **Status:** `ACCEPTED — PLAN FROZEN; D0 DESIGN DRAFTED — AWAITING REVIEW`
 
@@ -48,7 +48,7 @@ Full protocol: [`sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md).
 
 ## 3. Deliverables
 
-All deliverables are **pending**. None have started.
+All deliverables remain pending for **implementation/evidence**. D0 **design** is drafted and awaiting review; D0 implementation has **not** started. D1–D3 have not started.
 
 | ID | Deliverable | Status |
 |---|---|---|
@@ -109,6 +109,7 @@ Threshold work requires an accepted D1 `supported` gate. Pause and rescope if pr
 
 | Date | Event |
 |------|-------|
+| 2026-09-07 | D0 design revised (midpoint authority, M3 full-cross rolling hurdle, deterministic missing-data gates). Agenda: distinguish drafted D0 design from pending implementation. |
 | 2026-09-06 | D0 design **drafted** (`docs/tmp/sprint008_d0_design.md`) — awaiting review; implementation not started. |
 | 2026-09-06 | Sprint 008 plan **accepted**. Agenda switched to Sprint 008 **Build/Audit**. |
 | 2026-09-06 | Sprint 007 closed (`EXECUTION_CALIBRATION_REQUIRED`). See [`007_closeout.md`](../sprint_memos/007_closeout.md). |

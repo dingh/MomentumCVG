@@ -1,7 +1,7 @@
 # Sprint 008 D0 — Protocol freeze and input readiness
 
 **Status:** `PROPOSED — AWAITING REVIEW`  
-**Updated:** 2026-09-06  
+**Updated:** 2026-09-07  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](../agenda/sprint8_long_filter_plan.md)  
 **Frozen contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json)  
@@ -57,31 +57,40 @@ Leg key: Sprint 007 `LEG_KEY` = `(trade_date, ticker, direction, expiry_date, op
 
 | Symbol | Definition (accepted) | Primary source | Units | Timing |
 |---|---|---|---|---|
-| Call/put quotes | `bid`, `ask`, `mid` on body legs | `leg_log_*` (shared mid≡cross quotes; D2B-verified pattern) | \$/share per leg | **Entry-known** |
-| \(M\) | Midpoint debit of complete long straddle | Prefer recompute from unit legs: \(\sum q_u \cdot \mathrm{mid}\); cross-check `trade_log.entry_cost_mid_per_share` | \$/share | **Entry-known** |
-| \(H\) | Mid→full-cross package concession | `package_half_spread` = \(0.5\sum \|q_u\|(\mathrm{ask}-\mathrm{bid})\) on the same unit legs; **not** from historical `quantity` or P&L deltas | \$/share | **Entry-known** |
+| Call/put quotes | `bid`, `ask` on body legs; stored ORATS `mid` is **metadata only** | `leg_log_*` (shared bid/ask mid≡cross; D2B-verified pattern) | \$/share per leg | **Entry-known** |
+| \(M\) | Midpoint debit of complete long straddle: \(M=\sum q_u\,(\mathrm{bid}+0.5(\mathrm{ask}-\mathrm{bid}))\) via D2B `midpoint_package_cashflow` | Unit legs’ **bid/ask** only — **not** stored `mid` | \$/share | **Entry-known** |
+| \(H\) | Mid→full-cross package concession | D2B `package_half_spread` = \(0.5\sum \|q_u\|(\mathrm{ask}-\mathrm{bid})\) on the same unit legs; **not** from historical `quantity` or P&L deltas | \$/share | **Entry-known** |
 | \(S_0\) | Entry spot | `trade_log.entry_spot` | \$/share | **Entry-known** |
 | \(K\) | Common ATM strike | `trade_log.body_strike` (legs’ strikes must match) | \$/share | **Entry-known** |
 | \(X\) | \(\lvert S_T - K \rvert\) | `abs(exit_spot - body_strike)`; cross-check \(\sum\) `expiry_payoff_per_unit` on unit long legs | \$/share | **Outcome (post-expiry)** |
 | Fees | Explicit research fees | Protocol pin \(\mathrm{fees}_i=0\) | \$/share | Entry-known (constant) |
 
+**Authoritative midpoint:** compute \(M\) with `midpoint_package_cashflow(unit_quantity, bid, ask)`. Stored ORATS `mid` must not define fills or \(M\).
+
+**Required reconciliations (every \(N\) key):**
+
+1. \(M\) vs `trade_log.entry_cost_mid_per_share` within a predeclared absolute tolerance (freeze in implementation; default \(10^{-8}\) dollars/share unless artifact scale requires wider).
+2. \(M + H\) equals the **total ask debit** of the two unit long legs: \(\sum q_u\,\mathrm{ask}\) (with \(q_u=+1\) on call and put), same tolerance.
+3. \(H \ge 0\) and \(M > 0\) for sizeable names.
+
 **Do not** use historical `trade_log.quantity` / short-financed Tier-A sizes for the research baseline.  
-**Do not** derive \(H\) from mid vs cross `pnl_total` or resized Path-R artifacts.
+**Do not** derive \(H\) from mid vs cross `pnl_total` or resized Path-R artifacts.  
+**Do not** substitute stored `mid` for \(\mathrm{bid}+0.5(\mathrm{ask}-\mathrm{bid})\).
 
 ### 1.4 Entry features vs outcome labels
 
 | Entry-known (measurements / sizing inputs) | Later outcomes (labels only) |
 |---|---|
-| Quotes, \(M\), \(H\), \(S_0\), \(K\), \(\mathrm{fees}\), M1, M2, M3 scale inputs available at \(t\) | \(S_T\), \(X\), scenario net P&L, net return per dollar |
+| Quotes (bid/ask), \(M\), \(H\), \(S_0\), \(K\), \(\mathrm{fees}\), M1, M2, M3 (when history sufficient) | \(S_T\), \(X\), scenario net P&L, net return per dollar |
 
-Future outcome availability must **not** redefine \(N\). Missing labels affect association coverage only.
+Future outcome availability must **not** redefine \(N\) or invested stakes. Missing outcomes stay **unknown** (see §3.2).
 
 ### 1.5 Confirmed vs gaps
 
 | Item | Status |
 |---|---|
 | Official identity + paired long quotes | **Confirmed** pattern (re-verify in D0 exec) |
-| \(M\), \(H\) from unit legs; `entry_cost_mid_per_share` cross-check | **Confirmed** fields |
+| \(M\), \(H\) from unit bid/ask via D2B helpers; `entry_cost_mid_per_share` and \(M+H=\)ask-debit checks | **Confirmed** fields; re-verify identities in D0 exec |
 | \(S_0\), \(K\), \(X\) fields | **Confirmed** on constructable longs in inspection |
 | Rich long panel beyond `candidate_view` | **`trade_log` is required** — `candidate_view` has only stage/reason codes |
 | Legs for structure failures | **Absent** (expected; those names are outside constructable \(N\)) |
@@ -153,23 +162,25 @@ Historical short-financed `quantity` is ignored for sizing (may be loaded only f
 - Within one \(h\): freeze \(q_i(h)\) across unfiltered vs threshold comparisons; rejected stakes stay cash; no redistribution.
 - Across \(h\): quantities may differ.
 
-### 3.2 Missingness and calendar policies
+### 3.2 Missingness and calendar policies (deterministic)
 
-| Case | Policy |
-|---|---|
-| \(N=0\) | Full cash; trading P&L 0; keep date in calendar views |
-| Missing quotes / non-finite \(M\) or \(H\) or \(M\le 0\) or \(H<0\) | Name **not** sizeable; document; do not impute. Prefer fail D0 readiness if any constructable long in primary window is affected |
-| Missing measurement (e.g. \(S_0\le 0\) for M2; M3 cold-start) | Measurement NA; exclude from that measurement’s association only; **do not** remove from \(N\) |
-| Missing outcome (\(S_T\) / \(X\)) | Exclude from trade-level association/labels; stake still counts in \(N\) and cash accounting unless D0 finds systematic absence (blocker) |
-| Outcome-driven dropping of names from \(N\) | **Forbidden** |
+| Case | Classification | Pass/fail / handling |
+|---|---|---|
+| \(N=0\) | Allowed calendar state | Full cash; trading P&L 0; keep date in calendar views — **not** a readiness failure |
+| Required entry inputs for a constructable long in the primary window: two unit legs with finite bid/ask; finite \(M>0\); finite \(H\ge 0\); \(M+H\) reconciles to ask debit; finite \(S_0>0\); finite \(K\) | **Required-input failure** if any name in \(N\) fails | D0 readiness **FAIL** → `BLOCKED_BY_SPECIFIC_INPUT_GAP` (name the keys). Do not impute. Do not silently drop from \(N\) to “pass” |
+| Same required-input failures outside primary window | Report coverage | Do not block solely on pre-primary holes unless they prevent M3 history construction for primary entries |
+| M2 undefined only if \(S_0\le 0\) | Required-input failure when in \(N\) (primary) | Same as required \(S_0>0\) above |
+| M3 cold-start / insufficient history / non-finite or non-positive \(\mu_t\) | **Allowed missing measurement** | M3 = NA; **do not** change \(N\) or allocations; report cold-start rate — **not** a readiness failure by itself |
+| Missing outcome (\(S_T\) or \(X\) non-finite) on a name in \(N\) | **Allowed unknown outcome** | Keep name in \(N\); keep invested stake \(B/N\) and \(q_i(h)\); mark trade-level return **unknown**; mark any portfolio aggregate that would include that trade **incomplete**. **Never** treat missing outcome as cash, zero payoff, or zero P&L. D0 readiness **FAIL** if primary-window outcome-missing rate \(> 0\) among sizeable \(N\) names (inspection expected 0; any positive rate is an input gap) |
+| Outcome-driven dropping of names from \(N\) | Forbidden | Always **FAIL** if observed |
 
-Net P&L at scenario \(h\) (per share, long straddle research units):
+Net P&L at scenario \(h\) is defined **only** when \(X\) is finite:
 
 \[
 X - (M + h H + \mathrm{fees})
 \]
 
-Dollar P&L: \(q_i(h)\) times that per-share value (fees already in entry; no second fee layer).
+Dollar P&L: \(q_i(h)\) times that per-share value (fees already in entry; no second fee layer). If \(X\) is missing, P&L is unknown — not zero.
 
 ---
 
@@ -179,23 +190,35 @@ Dollar P&L: \(q_i(h)\) times that per-share value (fees already in entry; no sec
 |---|---|---|---|---|
 | **M1** | \(H/M\) | Yes | Legs + \(M>0\) | **Include** (benchmark; D2B equivalent) |
 | **M2** | \(H/S_0\) | Yes | \(H\), \(S_0>0\) | **Include** |
-| **M3** | Past-only hurdle scale (below) | Yes (scale uses completed history only) | Needs prior completed \(X/S_0\) | **Include** — feasible without engine work |
+| **M3** | Full-cross payoff hurdle / past payoff scale (below) | Yes (scale uses completed history only) | Rolling completed \(X/S_0\) history | **Include** — feasible without engine work |
 
-### 4.1 Optional M3 — explicit simple scale (no profitability tuning)
+### 4.1 M3 — full-cross hurdle vs rolling past-only scale (no profitability tuning)
 
-At entry date \(t\), over long constructable trades with `expiry_date < t` and finite \(X_j, S_{0,j}>0\):
-
-\[
-\mu_t = \mathrm{mean}_j (X_j / S_{0,j})
-\]
-
-using **all** such completed observations available in the official run history before \(t\) (no rolling-window search). Cold-start: if fewer than **20** completed observations, M3 is missing.
+**Score (fixed across all execution-cost sensitivities \(h\)):**
 
 \[
-\mathrm{M3}_i = \frac{M_i / S_{0,i}}{\mu_t}
+\mathrm{M3}_i = \frac{M_i + H_i + \mathrm{fees}_i}{S_{0,i}\,\mu_t}
 \]
 
-Interpretation: mid debit as a fraction of spot, relative to the historical mean payoff/spot scale. Higher → richer entry price vs past realized payoff scale → expected worse net returns. Uses no same-trade \(X\).
+Numerator is the **full-cross** all-in entry hurdle (\(h=1\)), including fees. Do **not** replace \(H_i\) with \(h H_i\) when reporting M3 under intermediate scenarios — the measurement definition stays the full-cross hurdle so M3 is comparable across \(h\).
+
+**Historical pool and window**
+
+- Pool candidates: long constructable trades (\(N\)-eligible definition) in the official run.
+- Observation \(j\) is eligible for \(\mu_t\) only if:
+  - `expiry_date` \(< t\) (strict completed-before-entry cutoff; holding period finished);
+  - `entry_date` \(\in [t - L,\ t)\) (rolling lookback; left-closed, right-open);
+  - finite \(X_j \ge 0\) (include valid **zero** payoffs);
+  - finite \(S_{0,j} > 0\).
+- **Fixed lookback** \(L = 364\) calendar days (52 weeks). Not tuned to profitability or coverage after looking at results.
+- \[
+  \mu_t = \mathrm{mean}_j (X_j / S_{0,j})
+  \]
+  over eligible \(j\).
+
+**Missing M3** when any of: fewer than **20** eligible historical observations; \(\mu_t\) non-finite; or \(\mu_t \le 0\). Missing M3 does **not** change \(N\) or allocations.
+
+Interpretation: full-cross entry cost as a fraction of spot, relative to the recent completed mean payoff/spot scale. Higher → higher hurdle vs past realized payoff scale → expected worse net returns. Uses no same-trade \(X\).
 
 Association criteria, consecutive-date block length, and multiplicity remain **D1**.
 
@@ -217,9 +240,9 @@ Reuse: Sprint 007 artifact identity/pairing; D2B package half-spread / midpoint 
 
 1. Verify official run identity/hashes.
 2. Build long candidate panel; reconstruct \(N\); reconcile to included/funnel.
-3. Join unit legs; compute \(M\), \(H\); cross-check mid debit field.
-4. Attach \(S_0\), \(K\), \(X\); compute M1, M2, M3 (coverage only).
-5. Smoke equal-dollar accounting: \(\sum_i q_i(h)(M_i+hH_i)=B\) on dates with all sizeable names; cash identity under a dummy retain/reject mask; **no** profitability reporting.
+3. Join unit legs; compute \(M\) via `midpoint_package_cashflow(unit_quantity, bid, ask)` and \(H\) via `package_half_spread`; reconcile to `entry_cost_mid_per_share` and to ask debit \(M+H\).
+4. Attach \(S_0\), \(K\), \(X\); compute M1, M2, M3 (coverage / missingness only — no association).
+5. Smoke equal-dollar accounting: \(\sum_i q_i(h)(M_i+hH_i+\mathrm{fees}_i)=B\) on dates with all sizeable names; cash identity under a dummy retain/reject mask; **no** profitability reporting.
 6. Emit readiness tables outside repo; notebook narrative only.
 
 ### 5.3 Acceptance gates → verdict
@@ -227,17 +250,36 @@ Reuse: Sprint 007 artifact identity/pairing; D2B package half-spread / midpoint 
 | Verdict | When |
 |---|---|
 | `READY` | All identity/join/coverage/accounting checks pass with **zero** new production helpers beyond notebook-only scripts (unlikely given reuse needs) |
-| `READY_WITH_NARROW_ENABLING_CHANGE` | Checks pass using the small helper/tests above; no input gap remains |
-| `BLOCKED_BY_SPECIFIC_INPUT_GAP` | Named missing field/coverage (e.g. constructable longs without quotes; systematic missing \(S_T\); inability to reconstruct \(N\)) |
+| `READY_WITH_NARROW_ENABLING_CHANGE` | Checks pass using the small helper/tests above; no required-input or outcome-coverage gap remains |
+| `BLOCKED_BY_SPECIFIC_INPUT_GAP` | Any §3.2 required-input failure or primary-window outcome-missing rate \(> 0\); inability to reconstruct \(N\); \(M\)/ask-debit reconciliation failure |
+
+Allowed M3 cold starts alone do **not** force `BLOCKED_*`.
 
 ### 5.4 Required checks (pass/fail)
 
 1. **Identity** — receipt SHA, execution SHA, artifact presence.
-2. **Joins** — every \(N\) key has exactly two unit legs (call+put), shared mid/cross quotes, matching strikes/\(K\).
-3. **Coverage** — primary-window constructable longs: finite \(M,H,S_0,K\); \(X\) finite for label coverage report; M1/M2 non-null rates; M3 cold-start rate.
-4. **Reconstruction** — capped `structure_ok` long set equals declared \(N\); disclose equality/difference vs included.
-5. **Accounting** — equal-stake consumption \(B/N\); within-\(h\) quantity freeze smoke; rejected cash not redistributed; historical `quantity` unused.
-6. **Non-goals held** — no Spearman/groups/thresholds/P&L leaderboards in D0 outputs.
+2. **Joins** — every \(N\) key has exactly two unit legs (call+put), shared mid/cross **bid/ask**, matching strikes/\(K\).
+3. **Midpoint authority** — \(M\) from D2B midpoint helper on bid/ask; stored `mid` not used as \(M\); \(M\) reconciles to `entry_cost_mid_per_share`; \(M+H\) reconciles to unit ask debit.
+4. **Required-input coverage** — primary-window \(N\): 100% finite \(M>0\), \(H\ge 0\), \(S_0>0\), \(K\); else FAIL.
+5. **Outcome coverage** — primary-window \(N\): 100% finite \(X\ge 0\); else FAIL. Missing outcomes never coerced to 0 P&L/cash in any smoke path.
+6. **Measurements** — M1/M2 defined wherever required inputs pass; M3 missingness equals cold-start / bad \(\mu_t\) only; missing M3 leaves \(N\) and \(q_i(h)\) unchanged.
+7. **Reconstruction** — capped `structure_ok` long set equals declared \(N\); disclose equality/difference vs included.
+8. **Accounting** — equal-stake consumption \(B/N\); within-\(h\) quantity freeze smoke; rejected cash not redistributed; historical `quantity` unused.
+9. **Non-goals held** — no Spearman/groups/thresholds/P&L leaderboards in D0 outputs.
+
+### 5.5 Focused unit-test cases (design freeze)
+
+| Test | Expect |
+|---|---|
+| Synthetic two-leg bid/ask → \(M=\) `midpoint_package_cashflow`, \(H=\) half-spread, \(M+H=\) ask debit | Pass within tolerance |
+| Stored `mid` deliberately ≠ bid/ask midpoint | \(M\) still follows bid/ask helper (ignores stored mid) |
+| `entry_cost_mid_per_share` mismatch beyond tolerance | Readiness check fails |
+| \(N\) reconstruction with >25 constructable longs | Cap keeps 25 by rank/ticker; overflow excluded from \(N\) |
+| M3 with 19 eligible history rows | M3 missing; allocations unchanged |
+| M3 with 20 rows including \(X=0\) | Zero payoff included in \(\mu_t\); M3 finite if \(\mu_t>0\) |
+| M3 window respects `expiry < t` and entry in \([t-364,t)\) | Future/`expiry\ge t` / outside lookback excluded |
+| Missing \(X\) on one invested name | Stake remains; P&L unknown; portfolio aggregate marked incomplete; not zero-filled |
+| Dummy measurement reject under fixed \(q_i(h)\) | Rejected \(B/N\) stays cash; no redistribution |
 
 ---
 
@@ -254,8 +296,8 @@ Reuse: Sprint 007 artifact identity/pairing; D2B package half-spread / midpoint 
 
 ## 7. Summary for reviewers
 
-**Approach:** Artifact-first long panel from official `trade_log` + `leg_log`, reconstruct capped constructable \(N\), compute quote-based \(M/H\), build equal-dollar \(q_i(h)\), confirm M1/M2 and a simple past-only M3, prove accounting identities — via a narrow helper + notebook.
+**Approach:** Artifact-first long panel from official `trade_log` + `leg_log`, reconstruct capped constructable \(N\), compute bid/ask \(M/H\) via D2B helpers (with ask-debit reconciliation), build equal-dollar \(q_i(h)\), confirm M1/M2 and fixed full-cross M3 with 364-day rolling history, prove accounting identities — via a narrow helper + notebook.
 
-**Concrete gaps:** None identified that block M1/M2 or equal-dollar sizing on this official run, provided reconstruction and quote joins re-verify cleanly. Residual risks: (a) `candidate_view` alone is insufficient (mitigated by `trade_log`); (b) `max_names_cap` quote coverage is untested because count=0; (c) fees left at zero by protocol.
+**Concrete gaps:** None identified that block M1/M2/equal-dollar sizing on this official run, provided reconstruction, bid/ask midpoint authority, and 100% primary outcome coverage re-verify cleanly. Residual risks: (a) `candidate_view` alone is insufficient (mitigated by `trade_log`); (b) `max_names_cap` quote coverage is untested because count=0; (c) fees left at zero by protocol; (d) early-window M3 cold starts are allowed and must not alter \(N\).
 
 **Provisional verdict path:** `READY_WITH_NARROW_ENABLING_CHANGE`.
