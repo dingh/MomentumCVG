@@ -1,8 +1,9 @@
 # Sprint 008 D1 — Measurement validation and gate decision
 
-**Status:** `DRAFT — AWAITING REVIEW`  
+**Status:** `ACCEPTED`  
 **Drafted:** 2026-09-07  
 **Revised:** 2026-09-07 (review findings vs commit `8ea69e1`)  
+**Accepted:** 2026-09-07 (implementation authorization; clarifications below)  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](../agenda/sprint8_long_filter_plan.md)  
 **Prerequisite:** D0 **accepted** — [`docs/tmp/sprint008_d0_evidence_review.md`](sprint008_d0_evidence_review.md); evidence `C:/MomentumCVG_env/runs/sprint008_d0_20260907T204449Z/` (SHA `af24f50`); policy `sprint008_d0_crossed_quote_v1`  
@@ -27,7 +28,13 @@ At least the cost-intensity benchmark **M1** (\(H/M\)) will show a directionally
 
 ## Authorization
 
-This design is a **draft for review**. D1 implementation, association output, threshold selection, and D2 remain **unauthorized** until this design is accepted.
+This design is **accepted**. D1 implementation and the official development-only run are authorized. Threshold selection and D2 remain unauthorized until D1 evidence is reviewed.
+
+### Implementation clarifications (accepted with design)
+
+1. **Scenario-specific quantities.** For each \(h\), compute \(q_i(h)=(B/N)/(M_i+hH_i+\mathrm{fees}_i)\) separately. Freeze those quantities within that scenario across grouping, resampling, and comparisons. **Do not** reuse \(h=1\) quantities for other \(h\).
+2. **Bootstrap date multiplicity.** When a date is drawn more than once, repeat its **complete** trade cross-section that many times. Preserve occurrence multiplicity; do **not** deduplicate dates or trade keys.
+3. **Within-date Spearman.** Undefined when scores **or** returns are constant within the date (or \(<2\) names). Exclude and disclose those dates. If **no** valid dates remain, `P-wd` is **false**; apply the ordered classification table.
 
 ---
 
@@ -80,7 +87,7 @@ r_i(h) = \frac{X_i - C_i(h)}{C_i(h)}
 = \frac{q_i(h)\,(X_i - C_i(h))}{B/N}
 \]
 
-(equal-stake identity). Primary gate uses **\(h=1\)**. Report \(h\in\{0,0.25,0.50\}\) as development-only sensitivity (same frozen quintile memberships and quantities; no scenario shopping).
+(equal-stake identity). Primary gate uses **\(h=1\)**. Report \(h\in\{0,0.25,0.50\}\) as development-only sensitivity: recompute \(C(h)\), \(q(h)\), \(r(h)\), \(g(h)\), \(d(h)\) with **scenario-specific** quantities; reuse frozen quintile memberships from the \(h=1\) measurement sort. Do not reuse \(h=1\) quantities for other \(h\).
 
 If \(C_i(h)\le 0\) or non-finite: trade is **invalid for association** under that \(h\) (disclose count; do not impute).
 
@@ -186,8 +193,8 @@ Freeze:
 | RNG seed | **`20260907`** (NumPy Generator default bit generator; document in manifest) |
 | Sampling | Draw block **starts** independently with replacement from \(\{1,\ldots,T-L+1\}\) |
 | Concatenation | Append blocks in draw order until the concatenated date multiset has length \(\ge T\) |
-| Truncation | Keep the first \(T\) date occurrences (with replacement structure preserved); drop any overflow |
-| Within-path trades | Union of full cross-sections for those \(T\) (possibly repeated) dates |
+| Truncation | Keep the first \(T\) date **occurrences** (multiplicity preserved; do not unique-dedupe) |
+| Within-path trades | For each occurrence of a date, include that date’s **full** analysis-eligible cross-section again |
 
 **Preserve during resampling:** original scenario quantities \(q_i(h)\), entry-time measurement values (including M3 as of entry), frozen quintile labels, and crossed-quote / eligibility flags. Do **not** recompute M3 or re-form quintiles inside the bootstrap.
 
@@ -223,7 +230,7 @@ Evaluate each measurement on development data under \(h=1\). Exactly one label.
 | **P-stat** | Adjusted statistical support | Bonferroni bootstrap lower bound for \(\Delta_m\) is defined and \(> 0\) |
 | **P-sign** | Direction | Point \(\Delta_m > 0\) |
 | **P-half** | Development-half stability | Using **frozen** quintile labels: in Dev-A (`2020-01-01`→`2021-12-31`) and Dev-B (`2022-01-01`→`2023-12-31`), both halves have finite \(\Delta\) and \(\Delta>0\) (group means on trades whose `trade_date` falls in the half). **Do not** require significant Spearman in either half |
-| **P-wd** | Within-date robustness | Among development dates with ≥2 analysis-eligible names, finite \(m\), and **non-constant** \(m\) within the date: (median within-date Spearman \(\rho(m,r)\le 0\)) **OR** (≥50% of such dates have \(\rho<0\)). Dates with constant \(m\) or <2 names are excluded from the denominator and disclosed |
+| **P-wd** | Within-date robustness | Among development dates with ≥2 analysis-eligible names and finite \(m\): exclude dates where \(m\) **or** \(r\) is constant (Spearman undefined); disclose exclusions. On remaining dates: (median within-date Spearman \(\rho(m,r)\le 0\)) **OR** (≥50% have \(\rho<0\)). If **zero** valid dates remain, `P-wd` is **false** |
 | **P-gross** | Gross-edge (M1, M2 only; N/A for M3) | See §6.2 |
 | **P-wrong** | Wrong-signed / negligible | \(\Delta_m \le 0\) **or** (\(\Delta_m < 0.02\) **and** adjusted interval does not have lower bound \(>0\)) |
 
@@ -266,10 +273,10 @@ Apply **first matching row** (top to bottom). Every measurement gets exactly one
 | 6 | `P-econ` **and** `P-stat` **and** `P-sign` **and** `P-half` **and** `P-wd`, but not `P-gross` (M1/M2) | `inconclusive` |
 | 7 | `P-sign` **and** `P-stat` **and** not `P-econ` **and** \(\Delta_m \ge 0.02\) | `inconclusive` |
 | 8 | `P-econ` **and** `P-sign` **and** not `P-stat` | `inconclusive` |
-| 9 | Supported-style group separation (`P-econ` **and** `P-sign` **and** `P-half`) with weak/non-significant pooled Spearman | Still eligible for row 3 if `P-stat`/`P-wd`/`P-gross` hold — **Spearman does not block** |
-| 10 | Otherwise (including flat/wrong-signed without meeting row 2’s `P-wrong` already) | `unsupported` if \(\Delta_m\le 0\) or adjusted upper bound \(<0\); else `inconclusive` |
+| 9 | *(commentary only — not a separate exit)* Weak/non-significant pooled Spearman never overrides rows 1–8 |
+| 10 | Otherwise | `unsupported` if \(\Delta_m\le 0\) or adjusted upper bound \(<0\); else `inconclusive` |
 
-Row 9 is a clarification, not a separate exit: weak Spearman never overrides rows 1–8.
+Row 9 is explanatory commentary only.
 
 **Only `supported` permits D2 candidacy for that measurement.**
 
@@ -291,7 +298,7 @@ If multiple measurements are `supported`, rank for D2 candidacy by (1) point \(\
 
 Report but **do not** use for classification:
 
-- \(\Delta_m\) and group means under \(h\in\{0,0.25,0.50\}\) with **frozen** quintile memberships and original quantities;
+- \(\Delta_m\) and group means under \(h\in\{0,0.25,0.50\}\) with **frozen** quintile memberships and **scenario-specific** \(q(h)\);
 - Descriptive ordinary 95% bootstrap intervals for \(\Delta_m\) and Spearman;
 - Validity counts for bootstrap paths.
 
@@ -354,7 +361,7 @@ Committed notebook remains clean (narrative entrypoint).
 - No fill-attainability claims.
 - No edits to official Sprint 006/007 artifacts.
 
-**Stop** after this design is reviewed. Implementation starts only on explicit acceptance.
+**Stop** after readiness evidence is produced and awaiting review. D2 is not authorized by D1 implementation alone.
 
 ---
 
