@@ -3,13 +3,13 @@
 **Status:** `ACCEPTED`  
 **Accepted:** 2026-09-06  
 **Updated:** 2026-09-07  
-**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; **D0 accepted**; **D1 design awaiting review**  
+**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; **D0 accepted**; **D1 design awaiting review** (revised)  
 **Prior closeouts:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 **D2B H/M precedent:** [`docs/tmp/sprint007_d2b_evidence_review.md`](../tmp/sprint007_d2b_evidence_review.md); `src/backtest/sprint007_d2b_package_tradability.py`  
 **D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `ACCEPTED`  
 **D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — **accepted**; `C:/MomentumCVG_env/runs/sprint008_d0_20260907T204449Z/` (SHA `af24f50`; policy `sprint008_d0_crossed_quote_v1`)  
-**D1 design:** [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) — `DRAFT — AWAITING REVIEW`  
+**D1 design:** [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) — `DRAFT — AWAITING REVIEW` (revised vs `8ea69e1`)  
 **Canonical path:** `docs/agenda/sprint8_long_filter_plan.md` — do not duplicate under `docs/tmp/`.  
 **Purpose:** Accepted sprint-level research protocol for a long-side-only measurement and conditional-threshold study. This plan freezes questions, gates, inference boundaries, and deliverable sequence. It deliberately defers deliverable-specific formulas, notebooks, schemas, and code footprints until each deliverable is designed and accepted.
 
@@ -248,10 +248,12 @@ A statistically significant Spearman correlation alone is **insufficient**.
 
 Examine, for each candidate measurement, trade-level **net return per dollar invested** on the equal-dollar baseline:
 
-1. **Spearman rank correlation** between measurement and net return (sign expected a priori).
-2. **Five predefined score groups**, formed without optimizing against profitability (e.g. equal-count quintiles after a deterministic sort on the measurement; exact tie/missing rules frozen in D1).
-3. Per group: counts, mean net returns, uncertainty, and contribution from large winners.
-4. Consistency across chronological periods and **within entry dates** (measurement should still rank trades usefully inside a date, not only via date-level shocks).
+1. **Primary endpoint (D1):** predefined contrast \(\Delta=\overline{r}_{\mathrm{Q1}}-\overline{r}_{\mathrm{Q5}}\) with Bonferroni-adjusted consecutive-date block-bootstrap intervals over the three-measurement family (formulas in the D1 design).
+2. **Five predefined score groups**, formed without optimizing against profitability (equal-count quintiles; tie/missing/freeze rules in D1).
+3. Per group: counts, mean net returns, uncertainty, gross midpoint P&L vs execution drag, and contribution from large winners.
+4. Consistency across development chronological halves (group \(\Delta\)) and **within entry dates** (robustness check in D1).
+
+Pooled Spearman is a **supporting diagnostic** in D1; it is not the multiplicity-controlled gate.
 
 ### 7.3 Dependence and multiplicity
 
@@ -269,9 +271,9 @@ D1 must specify and justify—**before** examining association results—block l
 
 For cost-based measurements (\(H/M\), \(H/S_0\)):
 
-- Separately report **gross payoff performance** and **execution cost** using consistent denominators.
+- Separately report **gross midpoint P&L** \((X-M)/C\) and **execution drag** \((hH+\mathrm{fees})/C\) with \(C=M+hH+\mathrm{fees}\) (D1 formulas).
 - Acknowledge that subtracting costs induces some mechanical association with net profitability.
-- Significance on net alone does **not** establish that a filter preserves enough **gross** edge while cutting costs.
+- Significance on net alone does **not** establish that a better score group retains enough **gross midpoint** edge while cutting drag.
 
 ### 7.5 Preregistered go/no-go (architecture; formulas in D1)
 
@@ -284,7 +286,7 @@ Before opening new association results, D1 freezes criteria covering:
 | Stability | Same qualitative pattern across development subperiods |
 | Coverage | Enough trades/dates in extreme groups; not a tiny tail |
 | Cutoff support | Evidence that a **simple** threshold could remove a consistently poor region without requiring a complex model |
-| Gross-edge check | For cost measures: survivors retain non-trivial gross payoff contribution |
+| Gross-edge check | For cost measures: Q1 retains non-trivial gross midpoint P&L vs sample (explicit D1 formulas) |
 
 Weak overall correlation may coexist with a consistently poor extreme group; the predefined group analysis must evaluate that possibility explicitly.
 
@@ -378,7 +380,7 @@ Detailed methods freeze in one-page designs immediately before each deliverable.
 
 **Question:** Which entry-time measurements, if any, reliably distinguish equal-dollar net profitability in a way that supports a simple cutoff?
 
-**Required answer:** Per measurement: `supported` / `unsupported` / `inconclusive`, plus one sprint-level gate decision for whether D2 threshold work is authorized. Dependence protocol (consecutive-date block length, resampling procedure, assumptions, multiplicity) must be frozen in the D1 design before association output.
+**Required answer:** Per measurement: `supported` / `unsupported` / `inconclusive`, plus one sprint-level gate decision for whether D2 threshold work is authorized. Dependence protocol (overlapping consecutive-date blocks, resampling, seed, Bonferroni multiplicity on \(\Delta\)) must be frozen in the D1 design before association output. Evaluation-period outcomes stay closed during D1.
 
 ### D2 — Conditional threshold study (if justified)
 
@@ -469,10 +471,10 @@ Pause and rescope if proposed work:
 
 ## 15. Next action
 
-**D1 design awaiting review.**
+**D1 design awaiting review** (revised draft vs `8ea69e1`).
 
 D0 is **accepted** (`READY_WITH_NARROW_ENABLING_CHANGE`, policy `sprint008_d0_crossed_quote_v1`).
 
 Draft: [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md).
 
-Do not implement D1, run association analysis, or select thresholds until the D1 design is accepted.
+Do not implement D1, run association analysis, inspect evaluation outcomes, or select thresholds until the D1 design is accepted.

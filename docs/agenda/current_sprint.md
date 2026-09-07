@@ -101,7 +101,7 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 **D0 status:** **accepted** — `READY_WITH_NARROW_ENABLING_CHANGE` under `sprint008_d0_crossed_quote_v1`.
 
-**D1 status:** **design awaiting review** ([`sprint008_d1_design.md`](../tmp/sprint008_d1_design.md)). Development-only association protocol, block resampling, multiplicity, and per-measurement / D2 gates are frozen in that draft for reviewer acceptance.
+**D1 status:** **design awaiting review** ([`sprint008_d1_design.md`](../tmp/sprint008_d1_design.md)). Revised draft freezes \(\Delta=\overline{r}_{Q1}-\overline{r}_{Q5}\) with Bonferroni block-bootstrap multiplicity, corrected gross/drag decomposition, development-only outputs, and an exhaustive label table.
 
 Do not implement D1, run association analysis, or select thresholds until the D1 design is accepted.
 
@@ -111,6 +111,7 @@ Do not implement D1, run association analysis, or select thresholds until the D1
 
 | Date | Event |
 |------|-------|
+| 2026-09-07 | D1 design **revised** (Bonferroni \(\Delta\) gate, gross/drag decomposition, development-only firewall, bootstrap/grouping protocol, exhaustive labels). Still `DRAFT — AWAITING REVIEW`. |
 | 2026-09-07 | D0 **accepted**; D1 design **drafted** (`sprint008_d1_design.md`). Agenda → `D1 DESIGN AWAITING REVIEW`. |
 | 2026-09-07 | D0 **rerun** under crossed-quote policy v1; evidence `sprint008_d0_20260907T204449Z`; SHA `af24f50` (clean); verdict `READY_WITH_NARROW_ENABLING_CHANGE` (MU cash-excluded). |
 | 2026-09-07 | D0 **rerun** after validation fixes; evidence `sprint008_d0_20260907T202025Z`; SHA `5023fe7` (clean); verdict still `BLOCKED_BY_SPECIFIC_INPUT_GAP` (MU preserved). |
