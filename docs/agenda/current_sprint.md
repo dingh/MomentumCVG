@@ -2,15 +2,16 @@
 
 **Updated:** 2026-09-07
 
-**Status:** `D1 IMPLEMENTATION IN PROGRESS`
+**Status:** `D1 EXECUTION COMPLETE — EVIDENCE AWAITING REVIEW` (`STOP_NO_THRESHOLDS`)
 
-**Mode:** **Build/Audit.** Sprint-level plan accepted. **D0 accepted.** D1 design **accepted**; implementation in progress.
+**Mode:** **Build/Audit.** Sprint-level plan accepted. **D0 accepted.** D1 design accepted and executed; evidence under review. D2–D3 pending.
 
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md) — accepted detailed scope; canonical path; do not duplicate under `docs/tmp/`.
 
 **D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `ACCEPTED` (+ crossed-quote amendment v1)  
 **D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — **accepted** `READY_WITH_NARROW_ENABLING_CHANGE`; `C:/MomentumCVG_env/runs/sprint008_d0_20260907T204449Z/` (SHA `af24f50`)  
-**D1 design:** [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) — `ACCEPTED`
+**D1 design:** [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) — `ACCEPTED`  
+**D1 evidence:** [`docs/tmp/sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md) — gate `STOP_NO_THRESHOLDS`; `C:/MomentumCVG_env/runs/sprint008_d1_20260907T223037Z/` (exec SHA `72629a0`, clean tree)
 
 **Previous:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence; not edited by this sprint.
@@ -54,14 +55,14 @@ Full protocol: [`sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md).
 | ID | Deliverable | Status |
 |---|---|---|
 | **D0** | Freeze research protocol details as needed and confirm input readiness | **Accepted** (`READY_WITH_NARROW_ENABLING_CHANGE`) |
-| **D1** | Validate measurements; record `supported` / `unsupported` / `inconclusive` gate | **Implementation in progress** |
-| **D2** | Conditional threshold study, only if D1 supports it | Pending (conditional) |
+| **D1** | Validate measurements; record `supported` / `unsupported` / `inconclusive` gate | **Execution complete — evidence awaiting review** (`STOP_NO_THRESHOLDS`) |
+| **D2** | Conditional threshold study, only if D1 supports it | Pending (stop unless evidence review amends gate) |
 | **D3** | Closeout: conclusions, limitations, implications for later work | Pending |
 
 D0: [`sprint008_d0_design.md`](../tmp/sprint008_d0_design.md), [`sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md).  
-D1 design: [`sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) — accepted; implementation in progress.
+D1: [`sprint008_d1_design.md`](../tmp/sprint008_d1_design.md), [`sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md).
 
-Do not start D2 or select thresholds until D1 evidence is reviewed.
+Do not start D2 or select thresholds until D1 evidence is reviewed (current computed gate: stop).
 
 ---
 
@@ -101,9 +102,9 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 **D0 status:** **accepted** — `READY_WITH_NARROW_ENABLING_CHANGE` under `sprint008_d0_crossed_quote_v1`.
 
-**D1 status:** **implementation in progress** ([`sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) accepted). Official development-only run and evidence review remain after implementation + focused tests.
+**D1 status:** **execution complete — evidence awaiting review.** Labels: M1/M2 `inconclusive`, M3 `unsupported`. Gate **`STOP_NO_THRESHOLDS`**. Evidence `sprint008_d1_20260907T223037Z` (exec SHA `72629a0`).
 
-Do not start D2 or select thresholds until D1 evidence is reviewed and the sprint gate authorizes it.
+Do not start D2 or select thresholds unless evidence review amends the gate.
 
 ---
 
@@ -111,6 +112,7 @@ Do not start D2 or select thresholds until D1 evidence is reviewed and the sprin
 
 | Date | Event |
 |------|-------|
+| 2026-09-07 | D1 **executed**; evidence `sprint008_d1_20260907T223037Z`; SHA `72629a0` (clean); labels M1/M2 inconclusive, M3 unsupported; gate `STOP_NO_THRESHOLDS`. Evidence awaiting review. |
 | 2026-09-07 | D1 design **accepted**; agenda → `D1 IMPLEMENTATION IN PROGRESS`. |
 | 2026-09-07 | D1 design **revised** (Bonferroni \(\Delta\) gate, gross/drag decomposition, development-only firewall, bootstrap/grouping protocol, exhaustive labels). Still `DRAFT — AWAITING REVIEW`. |
 | 2026-09-07 | D0 **accepted**; D1 design **drafted** (`sprint008_d1_design.md`). Agenda → `D1 DESIGN AWAITING REVIEW`. |

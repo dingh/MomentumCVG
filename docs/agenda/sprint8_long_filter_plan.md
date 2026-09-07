@@ -3,13 +3,14 @@
 **Status:** `ACCEPTED`  
 **Accepted:** 2026-09-06  
 **Updated:** 2026-09-07  
-**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; **D0 accepted**; **D1 design awaiting review** (revised)  
+**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; **D0 accepted**; **D1 execution complete — evidence awaiting review** (`STOP_NO_THRESHOLDS`)  
 **Prior closeouts:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 **D2B H/M precedent:** [`docs/tmp/sprint007_d2b_evidence_review.md`](../tmp/sprint007_d2b_evidence_review.md); `src/backtest/sprint007_d2b_package_tradability.py`  
 **D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `ACCEPTED`  
 **D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — **accepted**; `C:/MomentumCVG_env/runs/sprint008_d0_20260907T204449Z/` (SHA `af24f50`; policy `sprint008_d0_crossed_quote_v1`)  
-**D1 design:** [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) — `ACCEPTED` (implementation clarifications recorded)  
+**D1 design:** [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) — `ACCEPTED`  
+**D1 evidence:** [`docs/tmp/sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md) — `C:/MomentumCVG_env/runs/sprint008_d1_20260907T223037Z/` (SHA `72629a0`)  
 **Canonical path:** `docs/agenda/sprint8_long_filter_plan.md` — do not duplicate under `docs/tmp/`.  
 **Purpose:** Accepted sprint-level research protocol for a long-side-only measurement and conditional-threshold study. This plan freezes questions, gates, inference boundaries, and deliverable sequence. It deliberately defers deliverable-specific formulas, notebooks, schemas, and code footprints until each deliverable is designed and accepted.
 
@@ -27,7 +28,7 @@
 | **Method** | Define measurements → validate measurement–profitability relationship (required gate) → only then test simple thresholds |
 | **Not the goal** | Force profitability; rescue Sprint 006; retune signal windows; redesign short structures; claim fill attainability |
 | **Outcomes allowed** | Supported / unsupported / inconclusive measurement; effective / ineffective threshold — all valid completions |
-| **Approval boundary** | Plan **accepted**. D0 **accepted**. D1 design awaiting review. D2–D3 pending. |
+| **Approval boundary** | Plan **accepted**. D0 **accepted**. D1 **executed** — evidence awaiting review (`STOP_NO_THRESHOLDS`). D2–D3 pending. |
 
 ---
 
@@ -455,9 +456,9 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 1. ~~Review and accept this sprint-level plan.~~ **Done** — plan accepted 2026-09-06.
 2. ~~Update `docs/agenda/current_sprint.md` to Sprint 008 **Build/Audit**.~~ **Done.**
 3. ~~D0 design~~ **Accepted**; ~~implementation/execution~~ **complete**; ~~evidence~~ **accepted** ([`sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md)).
-4. ~~D1 design~~ **Drafted** — awaiting review ([`sprint008_d1_design.md`](../tmp/sprint008_d1_design.md)).
+4. ~~D1 design~~ **Accepted**; ~~implementation/execution~~ **complete** — evidence awaiting review ([`sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md)).
 5. For each deliverable thereafter: inspect → one-page design → wait for acceptance → implement/execute → evidence review → next design.
-6. Do not start threshold work until D1 gate acceptance authorizes D2. Do not implement D1 until the D1 design is accepted.
+6. Do not start threshold work until D1 gate acceptance authorizes D2 (current computed gate: stop).
 
 Pause and rescope if proposed work:
 
@@ -471,10 +472,10 @@ Pause and rescope if proposed work:
 
 ## 15. Next action
 
-**D1 design awaiting review** (revised draft vs `8ea69e1`).
+**D1 execution complete — evidence awaiting review.**
 
-D0 is **accepted** (`READY_WITH_NARROW_ENABLING_CHANGE`, policy `sprint008_d0_crossed_quote_v1`).
+Computed gate: `STOP_NO_THRESHOLDS` (M1/M2 `inconclusive`; M3 `unsupported`).
 
-Draft: [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md).
+Evidence: [`docs/tmp/sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md); `C:/MomentumCVG_env/runs/sprint008_d1_20260907T223037Z/` (executing SHA `72629a0d29f56771d1ff4a4ee3fe9cb227d593e4`, clean working tree).
 
-Do not implement D1, run association analysis, inspect evaluation outcomes, or select thresholds until the D1 design is accepted.
+Do not begin D2 threshold work unless this evidence is reviewed and the gate is amended.
