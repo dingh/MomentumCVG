@@ -243,7 +243,8 @@ def select_within_date_groups(
         }
 
     work["_tk"] = work["ticker"].astype(str)
-    work = work.sort_values(["_m", "_tk"], ascending=True, kind="mergesort").reset_index(drop=True)
+    # Keep original index so callers can label the parent panel (no reset_index).
+    work = work.sort_values(["_m", "_tk"], ascending=True, kind="mergesort")
     k = int(n // GROUP_FRACTION_DENOM)
     if k < 1:
         return {
