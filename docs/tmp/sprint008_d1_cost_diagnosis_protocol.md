@@ -1,8 +1,10 @@
 # Sprint 008 D1 — cost diagnosis and fixed U-exclusion follow-up
 
-**Status:** `PROTOCOL FROZEN — FOLLOW-UP EXECUTED; EVIDENCE AWAITING REVIEW`  
+**Status:** `PROTOCOL FROZEN — CORRECTED EVIDENCE AWAITING REVIEW`  
 **Drafted / frozen:** 2026-09-11 (before examining new results)  
-**Evidence:** [`sprint008_d1_cost_diagnosis_evidence.md`](sprint008_d1_cost_diagnosis_evidence.md) — `C:/MomentumCVG_env/runs/sprint008_d1_cost_diagnosis_20260911T162501Z/`  
+**Correction executed:** 2026-09-12 — drawdown peak includes initial $0; descriptive half-period exclusion and weekly concentration; no automatic recommendation.  
+**Evidence:** [`sprint008_d1_cost_diagnosis_evidence.md`](sprint008_d1_cost_diagnosis_evidence.md) — `C:/MomentumCVG_env/runs/sprint008_d1_cost_diagnosis_20260912T211530Z/`  
+**Prior evidence preserved:** `C:/MomentumCVG_env/runs/sprint008_d1_cost_diagnosis_20260911T162501Z/`  
 **Authorization:** User request; **limited amendment** authorizing exactly two fixed U-group exclusions (M1, M2). Does **not** reopen broader D2 threshold search.  
 **Preserved:** Historical D1 labels and gate **`STOP_NO_THRESHOLDS`**. Prior within-date L−U HAC inference remains unchanged when reproduced.  
 **Post-hoc disclosure:** Designed **after** seeing D1 and within-date follow-up results. Exploratory evidence, **not** independent confirmation.  

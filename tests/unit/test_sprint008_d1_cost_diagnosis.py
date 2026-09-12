@@ -19,6 +19,7 @@ from src.backtest.sprint008_d1_cost_diagnosis import (
     CostDiagnosisError,
     attach_decomposition_columns,
     build_portfolio_comparison,
+    fixed_budget_max_drawdown,
     require_all_executed_outcomes,
     select_groups_with_middle,
     summarize_decomposition,
@@ -214,6 +215,68 @@ def test_bonferroni_family_four() -> None:
     assert ADJUSTED_CI_LEVEL == pytest.approx(0.9875)
     assert bonferroni_adjust_p(0.01, family_size=4) == pytest.approx(0.04)
     assert bonferroni_adjust_p(0.3, family_size=4) == pytest.approx(1.0)
+
+
+def test_drawdown_includes_initial_zero_on_losing_path() -> None:
+    # cum = -10000, -20000. Peak must stay at 0, so max drawdown is -20000
+    # (omitting the start would report only -10000).
+    assert fixed_budget_max_drawdown(np.array([-10_000.0, -10_000.0])) == pytest.approx(
+        -20_000.0
+    )
+
+
+def test_drawdown_after_recovery() -> None:
+    # Initial loss from $0, then a new high, then a smaller pullback.
+    # cum: -10000, +15000, +7000. Peak path: 0, 15000, 15000.
+    # Drawdowns: -10000, 0, -8000. Maximum is the initial -10000.
+    assert fixed_budget_max_drawdown(
+        np.array([-10_000.0, 25_000.0, -8_000.0])
+    ) == pytest.approx(-10_000.0)
+    # Subsequent decline from a high exceeds the initial loss.
+    # cum: +10000, -15000. Peak 10000; drawdown -25000.
+    assert fixed_budget_max_drawdown(np.array([10_000.0, -25_000.0])) == pytest.approx(
+        -25_000.0
+    )
+
+
+def test_half_period_dollar_totals_reconcile() -> None:
+    rows = []
+    for d, x_high in ((date(2020, 6, 1), 0.2), (date(2022, 6, 6), 1.8)):
+        for i, t in enumerate(list("ABCDE"), start=1):
+            x = 1.4 if t == "A" else (x_high if t == "E" else 1.0)
+            rows.append(_row(trade_date=d, ticker=t, M=1.0, H=0.1 * i, X=x, M1=0.1 * i))
+    panel = pd.DataFrame(rows)
+    econ = attach_decomposition_columns(attach_scenario_economics(panel, 1.0))
+    # Groups labeled on econ directly.
+    for d in (date(2020, 6, 1), date(2022, 6, 6)):
+        day = econ.loc[econ["trade_date"] == d].copy()
+        sel = select_groups_with_middle(day, "M1")
+        econ.loc[sel["low"].index, "group_M1"] = "L"
+        econ.loc[sel["high"].index, "group_M1"] = "U"
+        econ.loc[sel["middle"].index, "group_M1"] = "middle"
+    paired = pd.DataFrame(
+        [
+            {"measurement": "M1", "trade_date": date(2020, 6, 1)},
+            {"measurement": "M1", "trade_date": date(2022, 6, 6)},
+        ]
+    )
+    _, summary = build_portfolio_comparison(econ, paired, "M1")
+    assert summary["half_period_reconcile_ok"] is True
+    h1 = summary["half_periods"]["2020-2021"]
+    h2 = summary["half_periods"]["2022-2023"]
+    assert h1["n_dates"] == 1 and h2["n_dates"] == 1
+    assert h1["pnl_baseline"] + h2["pnl_baseline"] == pytest.approx(
+        summary["total_pnl_baseline"]
+    )
+    assert h1["pnl_filtered"] + h2["pnl_filtered"] == pytest.approx(
+        summary["total_pnl_filtered"]
+    )
+    assert h1["losses_avoided"] + h2["losses_avoided"] == pytest.approx(
+        summary["losses_avoided"]
+    )
+    assert h1["winning_profits_sacrificed"] + h2["winning_profits_sacrificed"] == pytest.approx(
+        summary["winning_profits_sacrificed"]
+    )
 
 
 def test_summarize_decomposition_identity() -> None:

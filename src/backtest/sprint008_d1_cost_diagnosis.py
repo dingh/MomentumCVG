@@ -76,6 +76,12 @@ ORDINARY_CI_LEVEL = 0.95
 ADJUSTED_CI_LEVEL = 1.0 - ALPHA / FAMILY_SIZE  # 0.9875
 RECONCILE_D_TOL = 1e-9
 PRIOR_D_TOL = 1e-8
+# Reviewed evidence whose core economics this correction must reconcile.
+# That run's drawdowns are superseded (peak omitted the initial zero).
+PRIOR_COST_DIAGNOSIS_EVIDENCE = (
+    "C:/MomentumCVG_env/runs/sprint008_d1_cost_diagnosis_20260911T162501Z/"
+)
+CORE_PNL_TOL = 1e-4
 
 
 class CostDiagnosisError(FollowupValidationError):
@@ -109,6 +115,25 @@ def _finite(value: Any) -> bool:
         return bool(np.isfinite(float(value)))
     except (TypeError, ValueError):
         return False
+
+
+def fixed_budget_max_drawdown(pnl: np.ndarray) -> float:
+    """Peak-to-trough of cumulative fixed-budget dollar P&L.
+
+    The running peak is the maximum of zero and cumulative P&L observed so
+    far (the path starts at $0). This is not compounded account equity and
+    not intraholding-period risk.
+    """
+    arr = np.asarray(pnl, dtype=float)
+    if arr.size == 0:
+        return 0.0
+    cum = np.cumsum(arr)
+    peak = 0.0
+    worst = 0.0
+    for level in cum:
+        peak = max(peak, float(level))
+        worst = min(worst, float(level) - peak)
+    return float(worst)
 
 
 def _progress(stage: str, started: float, *, note: str = "") -> float:
@@ -500,6 +525,22 @@ def build_portfolio_comparison(
 
         invested_base = float(len(executed) * stake)
         invested_filt = float(len(retained) * stake)
+        # Date-level gross and spread contributions on the same stake and B.
+        # p_g = (B/N)*g, p_a = (B/N)*a; cash names contribute 0.
+        if len(executed):
+            stake_x = pd.to_numeric(executed["stake_dollars"], errors="coerce")
+            pnl_gross = float((stake_x * pd.to_numeric(executed["g"], errors="coerce")).sum())
+            pnl_drag = float((stake_x * pd.to_numeric(executed["a"], errors="coerce")).sum())
+        else:
+            pnl_gross = 0.0
+            pnl_drag = 0.0
+        r_gross = pnl_gross / BUDGET_B
+        r_drag = pnl_drag / BUDGET_B
+        if abs((r_gross - r_drag) - r_base) > ACCOUNTING_TOL:
+            raise CostDiagnosisError(
+                f"{measurement} {td}: date gross-drag identity failed "
+                f"({r_gross} - {r_drag} vs {r_base})"
+            )
         rows.append(
             {
                 "measurement": measurement,
@@ -511,10 +552,15 @@ def build_portfolio_comparison(
                 "n_excluded_u": int(len(u_trades)),
                 "R_baseline": r_base,
                 "R_filtered": r_filt,
+                "R_gross": r_gross,
+                "R_drag": r_drag,
                 "uplift": uplift,
                 "pnl_baseline": float(np.nansum(p_all)),
                 "pnl_filtered": float(np.nansum(p_ret)),
+                "pnl_gross": pnl_gross,
+                "pnl_drag": pnl_drag,
                 "pnl_u": float(np.nansum(p_u)) if len(p_u) else 0.0,
+                "uplift_dollars": float(-np.nansum(p_u)) if len(p_u) else 0.0,
                 "invested_frac_baseline": invested_base / BUDGET_B,
                 "invested_frac_filtered": invested_filt / BUDGET_B,
                 "cash_frac_filtered": 1.0 - invested_filt / BUDGET_B,
@@ -589,13 +635,11 @@ def build_portfolio_comparison(
             top_ret[f"top{top_n}_count_retained"] = int(retained_mask.sum())
             top_ret[f"top{top_n}_n"] = int(len(top))
 
-    # Cumulative fixed-budget P&L and peak-to-trough
+    # Cumulative fixed-budget P&L. Peak includes the initial $0 starting point.
     cum_base = port["pnl_baseline"].cumsum()
     cum_filt = port["pnl_filtered"].cumsum()
-    def _max_dd(cum: pd.Series) -> float:
-        peak = cum.cummax()
-        dd = cum - peak
-        return float(dd.min()) if len(dd) else 0.0
+    dd_base = fixed_budget_max_drawdown(port["pnl_baseline"].to_numpy(dtype=float))
+    dd_filt = fixed_budget_max_drawdown(port["pnl_filtered"].to_numpy(dtype=float))
 
     summary = {
         "measurement": measurement,
@@ -603,14 +647,21 @@ def build_portfolio_comparison(
         "n_dates_exclusion_applied": int(port["exclude_u_applied"].sum()),
         "mean_R_baseline": float(port["R_baseline"].mean()),
         "mean_R_filtered": float(port["R_filtered"].mean()),
+        "mean_R_gross": float(port["R_gross"].mean()),
+        "mean_R_drag": float(port["R_drag"].mean()),
         "mean_uplift": float(port["uplift"].mean()),
         "total_pnl_baseline": float(port["pnl_baseline"].sum()),
         "total_pnl_filtered": float(port["pnl_filtered"].sum()),
+        "total_pnl_gross": float(port["pnl_gross"].sum()),
+        "total_pnl_drag": float(port["pnl_drag"].sum()),
         "total_pnl_improvement": pnl_improvement,
         "losses_avoided": losses_avoided,
         "winning_profits_sacrificed": winning_sacrificed,
         "identity_improvement_ok": abs(pnl_improvement - float(-np.sum(excl_p)))
         <= ACCOUNTING_TOL,
+        "date_gross_minus_drag_ok": bool(
+            ((port["R_gross"] - port["R_drag"] - port["R_baseline"]).abs().max() <= ACCOUNTING_TOL)
+        ),
         "mean_invested_frac_baseline": float(port["invested_frac_baseline"].mean()),
         "mean_invested_frac_filtered": float(port["invested_frac_filtered"].mean()),
         "mean_cash_frac_filtered": float(port["cash_frac_filtered"].mean()),
@@ -625,16 +676,144 @@ def build_portfolio_comparison(
         **top_ret,
         "cum_pnl_baseline_final": float(cum_base.iloc[-1]) if len(cum_base) else 0.0,
         "cum_pnl_filtered_final": float(cum_filt.iloc[-1]) if len(cum_filt) else 0.0,
-        "peak_to_trough_baseline": _max_dd(cum_base),
-        "peak_to_trough_filtered": _max_dd(cum_filt),
+        "peak_to_trough_baseline": dd_base,
+        "peak_to_trough_filtered": dd_filt,
         "note_drawdown": (
-            "Peak-to-trough on cumulative fixed-budget date P&L; "
-            "not compounded equity or intraholding drawdown."
+            "Peak-to-trough of cumulative fixed-budget dollar P&L. "
+            "Running peak is max(0, cumulative P&L so far). "
+            "Not compounded account equity and not intraholding-period risk. "
+            "Complete development period under the fixed-budget convention."
         ),
+        "half_periods": {
+            "2020-2021": exclusion_window_metrics(
+                port, executed_all, DEV_A_START, DEV_A_END
+            ),
+            "2022-2023": exclusion_window_metrics(
+                port, executed_all, DEV_B_START, DEV_B_END
+            ),
+        },
+        "weekly_uplift": weekly_uplift_distribution(port),
     }
+    h1 = summary["half_periods"]["2020-2021"]
+    h2 = summary["half_periods"]["2022-2023"]
+    full_map = {
+        "pnl_baseline": summary["total_pnl_baseline"],
+        "pnl_filtered": summary["total_pnl_filtered"],
+        "losses_avoided": summary["losses_avoided"],
+        "winning_profits_sacrificed": summary["winning_profits_sacrificed"],
+    }
+    half_ok = True
+    for key, full in full_map.items():
+        if abs((h1[key] + h2[key]) - full) > 0.05:
+            half_ok = False
+            raise CostDiagnosisError(
+                f"{measurement}: half-period {key} does not reconcile "
+                f"({h1[key]} + {h2[key]} vs {full})"
+            )
+    summary["half_period_reconcile_ok"] = half_ok
     port["cum_pnl_baseline"] = cum_base
     port["cum_pnl_filtered"] = cum_filt
     return port, summary
+
+
+def exclusion_window_metrics(
+    port: pd.DataFrame,
+    executed_all: pd.DataFrame,
+    start: date,
+    end: date,
+) -> dict[str, Any]:
+    """Descriptive fixed-exclusion stats on a date window. No significance test."""
+    dates = port["trade_date"].map(_as_date)
+    sub = port.loc[(dates >= start) & (dates <= end)]
+    edates = executed_all["trade_date"].map(_as_date)
+    exec_w = executed_all.loc[(edates >= start) & (edates <= end)]
+    excl_w = exec_w.loc[exec_w["_excl"].to_numpy()]
+    ret_w = exec_w.loc[~exec_w["_excl"].to_numpy()]
+    excl_p = excl_w["p"].to_numpy(dtype=float) if len(excl_w) else np.array([])
+    base_p = exec_w["p"].to_numpy(dtype=float) if len(exec_w) else np.array([])
+    ret_p = ret_w["p"].to_numpy(dtype=float) if len(ret_w) else np.array([])
+    losses_avoided = float(-np.sum(excl_p[excl_p < 0])) if len(excl_p) else 0.0
+    winning_sacrificed = float(np.sum(excl_p[excl_p > 0])) if len(excl_p) else 0.0
+    sum_win_base = float(np.sum(base_p[base_p > 0])) if len(base_p) else 0.0
+    sum_win_ret = float(np.sum(ret_p[ret_p > 0])) if len(ret_p) else 0.0
+    return {
+        "start": str(start),
+        "end": str(end),
+        "n_dates": int(len(sub)),
+        "pnl_baseline": float(sub["pnl_baseline"].sum()) if len(sub) else 0.0,
+        "pnl_filtered": float(sub["pnl_filtered"].sum()) if len(sub) else 0.0,
+        "mean_uplift": float(sub["uplift"].mean()) if len(sub) else None,
+        "losses_avoided": losses_avoided,
+        "winning_profits_sacrificed": winning_sacrificed,
+        "winning_profit_retention": (
+            sum_win_ret / sum_win_base if sum_win_base > 0 else None
+        ),
+        "weighting": "descriptive_split_no_new_test",
+    }
+
+
+def weekly_uplift_distribution(port: pd.DataFrame) -> dict[str, Any]:
+    """Distribution of weekly uplift on the complete development calendar."""
+    if port.empty:
+        return {"n_dates": 0}
+    uplift = port["uplift"].to_numpy(dtype=float)
+    dollars = port["uplift_dollars"].to_numpy(dtype=float)
+    zero_tol = 1e-8  # dollars
+    n = int(len(port))
+    n_pos = int(np.sum(dollars > zero_tol))
+    n_neg = int(np.sum(dollars < -zero_tol))
+    n_zero = n - n_pos - n_neg
+    pos_total = float(dollars[dollars > zero_tol].sum()) if n_pos else 0.0
+    neg_abs_total = float((-dollars[dollars < -zero_tol]).sum()) if n_neg else 0.0
+
+    pos = port.loc[port["uplift_dollars"] > zero_tol]
+    neg = port.loc[port["uplift_dollars"] < -zero_tol]
+    top_pos = pos.nlargest(5, "uplift_dollars") if len(pos) else pos
+    top_neg = neg.nsmallest(5, "uplift_dollars") if len(neg) else neg
+
+    def _weeks(frame: pd.DataFrame) -> list[dict[str, Any]]:
+        out = []
+        for row in frame.itertuples(index=False):
+            out.append(
+                {
+                    "trade_date": str(_as_date(row.trade_date)),
+                    "uplift": float(row.uplift),
+                    "dollar_contribution": float(row.uplift_dollars),
+                }
+            )
+        return out
+
+    top_pos_sum = float(top_pos["uplift_dollars"].sum()) if len(top_pos) else 0.0
+    top_neg_abs = float((-top_neg["uplift_dollars"]).sum()) if len(top_neg) else 0.0
+    return {
+        "n_dates": n,
+        "mean": float(np.mean(uplift)),
+        "median": float(np.median(uplift)),
+        "std": float(np.std(uplift, ddof=1)) if n > 1 else None,
+        "frac_positive": n_pos / n,
+        "frac_zero": n_zero / n,
+        "frac_negative": n_neg / n,
+        "n_positive": n_pos,
+        "n_zero": n_zero,
+        "n_negative": n_neg,
+        "total_positive_dollar_contributions": pos_total,
+        "total_absolute_negative_dollar_contributions": neg_abs_total,
+        "five_largest_positive_weeks": _weeks(top_pos),
+        "five_largest_negative_weeks": _weeks(top_neg),
+        "top5_positive_share_of_positive_contributions": (
+            top_pos_sum / pos_total if pos_total > 0 else None
+        ),
+        "top5_negative_share_of_absolute_negative_contributions": (
+            top_neg_abs / neg_abs_total if neg_abs_total > 0 else None
+        ),
+        "note": (
+            "Concentration is versus total positive weekly dollar contributions "
+            "and total absolute negative weekly dollar contributions separately. "
+            "Not versus the small net improvement. "
+            "Winner-profit retention is retention of baseline winners, not "
+            "concentration of the filter's incremental improvement."
+        ),
+    }
 
 
 def _hac_bundle(series: np.ndarray, name: str) -> dict[str, Any]:
@@ -718,139 +897,242 @@ def build_interpretation(
     exclusion: dict[str, Any],
     inference: dict[str, Any],
     win_diag: dict[str, Any],
+    weighting: dict[str, Any],
 ) -> dict[str, Any]:
-    """Answer decision questions and pick at most one next experiment."""
-    # Use M1 as primary narrative; cite both.
+    """Record observed facts. Do not issue an automatic strategy decision."""
     base = win_diag.get("M1", {}).get("unfiltered_baseline", {})
-    gross_pos = (base.get("mean_g") is not None) and (base["mean_g"] > 0)
-
-    answers = {
-        "baseline_positive_gross_midpoint": {
-            "answer": bool(gross_pos),
-            "detail": {
-                m: win_diag.get(m, {}).get("unfiltered_baseline")
-                for m in FOLLOWUP_MEASUREMENTS
-            },
-        },
-        "spread_variation_meaningful": {},
-        "savings_offset_by_gross": {},
-        "exclusion_improves_total_profit": {},
-        "consistency_vs_concentration": {},
-        "unresolved": [],
+    facts: dict[str, Any] = {
+        "cost_savings_are_intended_mechanism": (
+            "Lower execution cost can improve net economics without predicting "
+            "a better gross payoff. A cost contribution is not evidence against usefulness."
+        ),
+        "pooled_baseline": base,
+        "weighting": weighting,
+        "cost_contribution": {},
+        "gross_payoff_offset": {},
+        "whole_book_improvement": {},
+        "uncertainty_and_winner_sacrifice": {},
+        "limits_on_inference": [
+            "An insignificant gross-return difference does not establish equivalence.",
+            "An insignificant uplift does not establish no benefit.",
+            "An interval that includes zero does not establish a zero effect.",
+            "No automatic next-experiment recommendation is issued.",
+            "Final strategy decision awaits review.",
+        ],
+        "unresolved": [
+            "Fees remain unmodeled.",
+            "Quote-based full-cross results do not establish achievable fills or dependable income.",
+            "Post-hoc relative to D1 and the within-date follow-up; not independent confirmation.",
+            "Evaluation-period outcomes remain closed.",
+            "Broader threshold search remains unauthorized. Historical D1 STOP_NO_THRESHOLDS is preserved.",
+        ],
     }
-
     for m in FOLLOWUP_MEASUREMENTS:
         d = decomp[m]
-        saving = d.get("mean_spread_saving")
-        d_gross = d.get("mean_d_gross")
-        d_net = d.get("mean_d_net")
-        a_gap = d.get("mean_a_U_minus_L")
-        # Compare saving to |d_gross| and to baseline return variability
-        std_r = dispersion[m].get("L", {}).get("std_r")
-        answers["spread_variation_meaningful"][m] = {
-            "mean_U_minus_L_H_over_C": a_gap,
-            "mean_spread_saving": saving,
-            "vs_abs_mean_d_gross": None
-            if d_gross is None
-            else (abs(saving) / max(abs(d_gross), 1e-12)),
-            "comment": (
-                "Spread-drag gap is the mechanical upper bound on net L−U from costs alone."
-            ),
-        }
-        answers["savings_offset_by_gross"][m] = {
-            "mean_d_gross": d_gross,
-            "mean_spread_saving": saving,
-            "mean_d_net": d_net,
-            "gross_offsets_savings": bool(
-                d_gross is not None and saving is not None and d_gross < 0 and abs(d_gross) > 0.5 * abs(saving)
-            ),
-        }
         excl = exclusion[m]
         uplift_inf = inference["contrasts"][f"{m}_mean_uplift"]
-        answers["exclusion_improves_total_profit"][m] = {
+        facts["cost_contribution"][m] = {
+            "date_weighted_mean_spread_saving_pp": None
+            if d.get("mean_spread_saving") is None
+            else 100.0 * float(d["mean_spread_saving"]),
+            "date_weighted_mean_a_U_minus_L_pp": None
+            if d.get("mean_a_U_minus_L") is None
+            else 100.0 * float(d["mean_a_U_minus_L"]),
+            "comment": (
+                "This is the observed within-date cost contribution of L versus U "
+                "on the full-cross capital basis (percentage points)."
+            ),
+        }
+        facts["gross_payoff_offset"][m] = {
+            "date_weighted_mean_d_gross_pp": None
+            if d.get("mean_d_gross") is None
+            else 100.0 * float(d["mean_d_gross"]),
+            "date_weighted_mean_d_net_pp": None
+            if d.get("mean_d_net") is None
+            else 100.0 * float(d["mean_d_net"]),
+            "comment": (
+                "Gross L−U is an observational payoff difference, not a test of "
+                "equivalence. Identity: d_net = d_gross + spread_saving."
+            ),
+        }
+        facts["whole_book_improvement"][m] = {
+            "total_pnl_baseline": excl.get("total_pnl_baseline"),
+            "total_pnl_filtered": excl.get("total_pnl_filtered"),
             "total_pnl_improvement": excl.get("total_pnl_improvement"),
-            "mean_uplift": excl.get("mean_uplift"),
+            "mean_uplift_pp": None
+            if excl.get("mean_uplift") is None
+            else 100.0 * float(excl["mean_uplift"]),
+            "half_periods": excl.get("half_periods"),
+            "comment": (
+                "Historical whole-book improvement on original B with rejected "
+                "stakes left in cash. Point improvement is not a significance claim."
+            ),
+        }
+        facts["uncertainty_and_winner_sacrifice"][m] = {
+            "hac_mean_uplift": {
+                "n": uplift_inf.get("n"),
+                "mean": uplift_inf.get("mean"),
+                "se_hac": uplift_inf.get("hac", {}).get("se_hac"),
+                "p_raw": uplift_inf.get("hac", {}).get("p_raw"),
+                "p_adjusted": uplift_inf.get("p_adjusted"),
+                "ci_ordinary_95": uplift_inf.get("hac", {}).get("ci_ordinary"),
+                "ci_adjusted_98_75": uplift_inf.get("hac", {}).get("ci_adjusted"),
+                "interval_includes_zero": True,
+            },
             "winning_profit_retention": excl.get("winning_profit_retention"),
             "top5_profit_retention": excl.get("top5_profit_retention"),
             "top10_profit_retention": excl.get("top10_profit_retention"),
-            "hac_mean_uplift_sig_adj": uplift_inf.get("stat_sig_adj"),
-            "hac_p_adj": uplift_inf.get("p_adjusted"),
-        }
-
-    # Concentration: share of uplift from top weeks
-    conc = {}
-    for m in FOLLOWUP_MEASUREMENTS:
-        # Use exclusion summary totals vs weekly variability already in port via inference n
-        conc[m] = {
-            "note": "See date_portfolio uplift distribution and top-winner retention in exports.",
-            "winner_profit_retention": exclusion[m].get("winning_profit_retention"),
-            "peak_to_trough_change": {
-                "baseline": exclusion[m].get("peak_to_trough_baseline"),
-                "filtered": exclusion[m].get("peak_to_trough_filtered"),
+            "weekly_concentration": {
+                "top5_positive_share_of_positive_contributions": excl.get(
+                    "weekly_uplift", {}
+                ).get("top5_positive_share_of_positive_contributions"),
+                "top5_negative_share_of_absolute_negative_contributions": excl.get(
+                    "weekly_uplift", {}
+                ).get("top5_negative_share_of_absolute_negative_contributions"),
             },
-        }
-    answers["consistency_vs_concentration"] = conc
-    answers["unresolved"] = [
-        "Fees remain unmodeled.",
-        "Quote-based full-cross results do not establish achievable fills.",
-        "Post-hoc relative to D1 / prior within-date study; not independent confirmation.",
-        "Broader threshold search and evaluation-period validation remain unauthorized.",
-    ]
-
-    # Recommend one next action from the menu based on patterns
-    # Heuristic (documented): look at whether savings are large vs gross offset,
-    # and whether exclusion improves total P&L with acceptable retention and sig.
-    m1_save = decomp["M1"].get("mean_spread_saving") or 0.0
-    m1_gross = decomp["M1"].get("mean_d_gross") or 0.0
-    m1_imp = exclusion["M1"].get("total_pnl_improvement") or 0.0
-    m1_ret = exclusion["M1"].get("winning_profit_retention")
-    m1_sig = inference["contrasts"]["M1_mean_uplift"].get("stat_sig_adj", False)
-    m2_sig = inference["contrasts"]["M2_mean_uplift"].get("stat_sig_adj", False)
-
-    if abs(m1_save) < 0.02 and abs(decomp["M2"].get("mean_spread_saving") or 0.0) < 0.02:
-        recommendation = {
-            "choice": "limited_cost_dispersion",
-            "action": (
-                "Limited cost dispersion: explain the limited opportunity for "
-                "additional spread filtering."
+            "comment": (
+                "Winning-profit retention measures how much baseline winning "
+                "profit is kept. It is not a statement about concentration of "
+                "the filter's incremental improvement. Weekly concentration is "
+                "reported against total positive and total absolute negative "
+                "weekly contributions separately."
             ),
         }
-    elif m1_gross < 0 and abs(m1_gross) >= 0.5 * abs(m1_save):
-        recommendation = {
-            "choice": "savings_offset_by_weaker_gross",
-            "action": (
-                "Savings offset by weaker gross payoff: propose a bounded investigation "
-                "of payoff relative to premium; acknowledge that existing M3 was already tested."
-            ),
-        }
-    elif (m1_imp > 0 or (exclusion["M2"].get("total_pnl_improvement") or 0) > 0) and (
-        m1_sig or m2_sig
-    ) and (m1_ret is not None and m1_ret >= 0.7):
-        recommendation = {
-            "choice": "favorable_exclusion_freeze_for_forward_validation",
-            "action": (
-                "Favorable exclusion economics with acceptable winner retention: "
-                "propose freezing a rule for separately authorized chronological/forward validation."
-            ),
-        }
-    else:
-        recommendation = {
-            "choice": "wide_uncertainty_or_inconclusive",
-            "action": (
-                "Wide uncertainty or concentrated/inconclusive results: identify what "
-                "additional independent evidence is needed, or recommend closing this "
-                "direction as inconclusive."
-            ),
-        }
-
+        ci = uplift_inf.get("hac", {}).get("ci_ordinary") or [None, None]
+        facts["uncertainty_and_winner_sacrifice"][m]["hac_mean_uplift"][
+            "interval_includes_zero"
+        ] = bool(ci[0] is not None and ci[0] <= 0 <= ci[1])
+    facts["decision_status"] = "awaiting_review"
+    facts["recommendation"] = None
     return {
-        "answers": answers,
-        "recommendation": recommendation,
+        "facts": facts,
+        "decision_status": "awaiting_review",
+        "recommendation": None,
         "disclaimer": (
             "Fees remain unmodeled; quote-based results do not establish achievable "
-            "fills or dependable income."
+            "fills or dependable income. No automatic close of this research direction."
         ),
     }
+
+
+def _weighting_bridge(
+    win_diag: dict[str, Any],
+    baseline_port: pd.DataFrame,
+) -> dict[str, Any]:
+    """Separate pooled trade means from date-weighted returns on original B."""
+    pooled = win_diag.get("M1", {}).get("unfiltered_baseline", {})
+    mean_r_pooled = pooled.get("mean_r")
+    mean_g_pooled = pooled.get("mean_g")
+    mean_a_pooled = pooled.get("mean_a")
+    mean_r_date = float(baseline_port["R_baseline"].mean()) if len(baseline_port) else None
+    mean_g_date = float(baseline_port["R_gross"].mean()) if len(baseline_port) else None
+    mean_a_date = float(baseline_port["R_drag"].mean()) if len(baseline_port) else None
+    total_pnl = float(baseline_port["pnl_baseline"].sum()) if len(baseline_port) else 0.0
+    n_dates = int(len(baseline_port))
+    identity_ok = bool(
+        ((baseline_port["R_gross"] - baseline_port["R_drag"] - baseline_port["R_baseline"]).abs().max()
+         <= ACCOUNTING_TOL)
+        if len(baseline_port)
+        else True
+    )
+    return {
+        "pooled_trade_weighted": {
+            "definition": (
+                "Equal weight per executed trade. mean(g), mean(a), mean(r) "
+                "over analysis-eligible executed trades. Not a return on B."
+            ),
+            "mean_g": mean_g_pooled,
+            "mean_a": mean_a_pooled,
+            "mean_r": mean_r_pooled,
+            "n_trades": pooled.get("n"),
+        },
+        "date_weighted_on_B": {
+            "definition": (
+                "Equal weight per development entry date. "
+                "R_t = sum_i p_i / B including cash (rejected stakes contribute 0). "
+                "G_t = sum_i (B/N) g_i / B; A_t = sum_i (B/N) a_i / B; "
+                "verified G_t - A_t = R_t."
+            ),
+            "mean_G": mean_g_date,
+            "mean_A": mean_a_date,
+            "mean_R": mean_r_date,
+            "n_dates": n_dates,
+            "total_pnl_dollars": total_pnl,
+            "gross_minus_drag_equals_net": identity_ok,
+            "coverage": "complete development calendar under fixed-budget convention",
+        },
+        "why_pooled_mean_can_differ_from_dollar_pnl": (
+            "Total dollar P&L equals B times the sum of date-level returns on B, "
+            "so its sign follows the date-equal-weighted mean of R_t. "
+            "The pooled trade mean weights each trade equally, so dates with larger N "
+            "receive more weight. When N varies, a slightly negative pooled trade mean "
+            "can coexist with positive total dollar P&L."
+        ),
+    }
+
+
+def reconcile_prior_core_pnl(exclusion: dict[str, Any]) -> dict[str, Any]:
+    """Compare core P&L to the reviewed 2026-09-11 evidence. Drawdown may differ."""
+    prior_path = Path(PRIOR_COST_DIAGNOSIS_EVIDENCE) / "cost_diagnosis_report.json"
+    out: dict[str, Any] = {
+        "prior_evidence": PRIOR_COST_DIAGNOSIS_EVIDENCE,
+        "prior_available": prior_path.exists(),
+        "drawdown_expected_to_change": (
+            "Prior peak omitted the initial $0. Corrected peak is max(0, cumulative P&L so far)."
+        ),
+        "measurements": {},
+    }
+    if not prior_path.exists():
+        out["note"] = "Prior evidence JSON not found; core reconciliation skipped."
+        return out
+    prior = json.loads(prior_path.read_text(encoding="utf-8"))
+    prior_excl = prior.get("exclusion", {})
+    for m in FOLLOWUP_MEASUREMENTS:
+        cur = exclusion[m]
+        old = prior_excl.get(m, {})
+        checks = {
+            "total_pnl_baseline": (
+                cur.get("total_pnl_baseline"),
+                old.get("total_pnl_baseline"),
+            ),
+            "total_pnl_filtered": (
+                cur.get("total_pnl_filtered"),
+                old.get("total_pnl_filtered"),
+            ),
+            "total_pnl_improvement": (
+                cur.get("total_pnl_improvement"),
+                old.get("total_pnl_improvement"),
+            ),
+            "n_excluded_u_trades": (
+                cur.get("n_excluded_u_trades"),
+                old.get("n_excluded_u_trades"),
+            ),
+            "winning_profit_retention": (
+                cur.get("winning_profit_retention"),
+                old.get("winning_profit_retention"),
+            ),
+        }
+        diffs = {}
+        ok = True
+        for key, (now, then) in checks.items():
+            if then is None or now is None:
+                ok = False
+                diffs[key] = {"now": now, "prior": then, "match": False}
+                continue
+            match = abs(float(now) - float(then)) <= CORE_PNL_TOL
+            ok = ok and match
+            diffs[key] = {"now": now, "prior": then, "match": match}
+        dd_now = cur.get("peak_to_trough_baseline")
+        dd_old = old.get("peak_to_trough_baseline")
+        out["measurements"][m] = {
+            "core_pnl_match": ok,
+            "checks": diffs,
+            "prior_peak_to_trough_baseline": dd_old,
+            "corrected_peak_to_trough_baseline": dd_now,
+            "prior_peak_to_trough_filtered": old.get("peak_to_trough_filtered"),
+            "corrected_peak_to_trough_filtered": cur.get("peak_to_trough_filtered"),
+        }
+    return out
 
 
 def _working_tree_status() -> str:
@@ -1005,6 +1287,8 @@ def run_cost_diagnosis(*, run_dir: Path | None = None) -> CostDiagnosisResult:
         )
 
     port_df = pd.concat(port_frames, ignore_index=True)
+    weighting = _weighting_bridge(win_diag, portfolios["M1"])
+    core_reconcile = reconcile_prior_core_pnl(exclusion_summaries)
 
     t_inf = time.perf_counter()
     inference = run_inference(paired_df, portfolios)
@@ -1016,6 +1300,7 @@ def run_cost_diagnosis(*, run_dir: Path | None = None) -> CostDiagnosisResult:
         exclusion=exclusion_summaries,
         inference=inference,
         win_diag=win_diag,
+        weighting=weighting,
     )
 
     provenance = _source_provenance()
@@ -1044,6 +1329,8 @@ def run_cost_diagnosis(*, run_dir: Path | None = None) -> CostDiagnosisResult:
             "dollar_tol": DOLLAR_TOL,
         },
         "reconciliation": reconciliation,
+        "core_pnl_reconciliation": core_reconcile,
+        "weighting": weighting,
         "cost_dispersion": dispersion,
         "decomposition": decomp_summaries,
         "exclusion": exclusion_summaries,
@@ -1101,8 +1388,16 @@ def _plot_decomposition(decomp: dict[str, Any], path: Path) -> None:
 def _plot_cumulative(port_df: pd.DataFrame, measurement: str, path: Path) -> None:
     sub = port_df.loc[port_df["measurement"] == measurement].sort_values("trade_date")
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(sub["trade_date"], sub["cum_pnl_baseline"], label="baseline")
-    ax.plot(sub["trade_date"], sub["cum_pnl_filtered"], label="exclude U")
+    ax.plot(
+        [sub["trade_date"].iloc[0], *sub["trade_date"]],
+        [0.0, *sub["cum_pnl_baseline"]],
+        label="baseline",
+    )
+    ax.plot(
+        [sub["trade_date"].iloc[0], *sub["trade_date"]],
+        [0.0, *sub["cum_pnl_filtered"]],
+        label="exclude U",
+    )
     ax.axhline(0, color="black", linewidth=0.8)
     ax.set_title(f"Cumulative fixed-budget $ P&L — {measurement}")
     ax.set_ylabel("Cumulative $")
@@ -1127,6 +1422,268 @@ def _plot_drag_by_group(trade_level: pd.DataFrame, measurement: str, path: Path)
     fig.tight_layout()
     fig.savefig(path, dpi=120)
     plt.close(fig)
+
+
+def _pp(value: Any) -> str:
+    if value is None:
+        return "NA"
+    return f"{100.0 * float(value):.2f} pp"
+
+
+def _usd(value: Any) -> str:
+    if value is None:
+        return "NA"
+    return f"${float(value):,.2f}"
+
+
+def _num(value: Any, digits: int = 4) -> str:
+    if value is None:
+        return "NA"
+    return f"{float(value):.{digits}f}"
+
+
+def _pct(value: Any) -> str:
+    if value is None:
+        return "NA"
+    return f"{100.0 * float(value):.1f}%"
+
+
+def render_readable_report(
+    result: CostDiagnosisResult,
+    *,
+    command: str,
+    evidence_dir: Path,
+) -> str:
+    """Numerical evidence reviewable without opening JSON."""
+    report = result.report
+    lines = [
+        "# Sprint 008 D1 cost diagnosis — corrected evidence report",
+        "",
+        f"- Evidence directory: `{evidence_dir}`",
+        f"- Command: `{command}`",
+        f"- Runtime (s): {_num(report.get('total_seconds'), 2)}",
+        f"- Code SHA: `{report.get('provenance', {}).get('code_sha')}`",
+        f"- Working tree: `{report.get('provenance', {}).get('working_tree')}`",
+        f"- Environment: `{json.dumps(report.get('environment'), default=str)}`",
+        f"- Historical D1 gate preserved: `{ORIGINAL_D1_GATE}`",
+        f"- Decision status: awaiting review (no automatic recommendation)",
+        f"- Post-hoc disclosure: {report.get('post_hoc_disclosure')}",
+        "",
+        "Return differences below are in **percentage points** (pp) unless labeled as dollars.",
+        "Cumulative totals cover the **complete development period** under the fixed-budget convention ($B per entry date; cash return 0).",
+        "",
+        "## Weighting",
+        "",
+        result.report.get("weighting", {}).get("why_pooled_mean_can_differ_from_dollar_pnl", ""),
+        "",
+    ]
+    w = report.get("weighting", {})
+    pooled = w.get("pooled_trade_weighted", {})
+    dated = w.get("date_weighted_on_B", {})
+    lines.extend(
+        [
+            "| Quantity | Pooled trade-weighted | Date-weighted return on original B (includes cash) |",
+            "|---|---:|---:|",
+            f"| Gross | {_pp(pooled.get('mean_g'))} | {_pp(dated.get('mean_G'))} |",
+            f"| Spread drag | {_pp(pooled.get('mean_a'))} | {_pp(dated.get('mean_A'))} |",
+            f"| Net | {_pp(pooled.get('mean_r'))} | {_pp(dated.get('mean_R'))} |",
+            f"| Sample | {pooled.get('n_trades')} trades | {dated.get('n_dates')} dates |",
+            "",
+            f"Date-level identity \(G_t - A_t = R_t\): **{dated.get('gross_minus_drag_equals_net')}**.",
+            f"Total baseline dollar P&L: {_usd(dated.get('total_pnl_dollars'))}.",
+            "",
+            "## Reconciliation",
+            "",
+            "Within-date L−U net means vs prior follow-up:",
+            "",
+        ]
+    )
+    for m, rec in result.reconciliation.get("measurements", {}).items():
+        lines.append(
+            f"- {m}: eligible {rec.get('n_eligible')}, mean d_net {_num(rec.get('mean_d_net'), 6)}, "
+            f"prior {_num(rec.get('prior_mean_d_net'), 6)}, match={rec.get('mean_match_prior')}"
+        )
+    lines.extend(["", "Core P&L vs reviewed cost-diagnosis evidence (drawdown expected to change):", ""])
+    core = report.get("core_pnl_reconciliation", {})
+    lines.append(f"- Prior evidence: `{core.get('prior_evidence')}`")
+    lines.append(f"- {core.get('drawdown_expected_to_change')}")
+    for m, rec in core.get("measurements", {}).items():
+        lines.append(f"- {m} core P&L match: **{rec.get('core_pnl_match')}**")
+        lines.append(
+            f"  - Corrected baseline drawdown {_usd(rec.get('corrected_peak_to_trough_baseline'))} "
+            f"(prior {_usd(rec.get('prior_peak_to_trough_baseline'))})"
+        )
+        lines.append(
+            f"  - Corrected filtered drawdown {_usd(rec.get('corrected_peak_to_trough_filtered'))} "
+            f"(prior {_usd(rec.get('prior_peak_to_trough_filtered'))})"
+        )
+    lines.extend(
+        [
+            "",
+            "Drawdown definition: running peak = maximum of 0 and cumulative P&L so far. "
+            "This is a drawdown of cumulative fixed-budget dollar P&L, not compounded equity "
+            "and not intraholding-period risk.",
+            "",
+            "## Decomposition (date-weighted L minus U)",
+            "",
+            "Identity: d_net = d_gross + spread_saving. Cost savings are an intended mechanism, "
+            "not evidence against usefulness.",
+            "",
+            "| | M1 | M2 |",
+            "|---|---:|---:|",
+        ]
+    )
+    d1 = result.decomposition_summary["M1"]
+    d2 = result.decomposition_summary["M2"]
+    for label, key in (
+        ("d_net", "mean_d_net"),
+        ("d_gross", "mean_d_gross"),
+        ("spread_saving", "mean_spread_saving"),
+    ):
+        lines.append(f"| {label} | {_pp(d1.get(key))} | {_pp(d2.get(key))} |")
+    lines.extend(
+        [
+            "",
+            "## Fixed U exclusion — full development",
+            "",
+            "| | M1 | M2 |",
+            "|---|---:|---:|",
+        ]
+    )
+    e1 = result.exclusion_summary["M1"]
+    e2 = result.exclusion_summary["M2"]
+    rows = [
+        ("Dates", "n_dates", "n"),
+        ("Baseline $ P&L", "total_pnl_baseline", "usd"),
+        ("Filtered $ P&L", "total_pnl_filtered", "usd"),
+        ("Improvement $", "total_pnl_improvement", "usd"),
+        ("Mean weekly uplift", "mean_uplift", "pp"),
+        ("Losses avoided $", "losses_avoided", "usd"),
+        ("Winning profits sacrificed $", "winning_profits_sacrificed", "usd"),
+        ("Winning-profit retention", "winning_profit_retention", "pct"),
+        ("Top-5 winner-profit retention", "top5_profit_retention", "pct"),
+        ("Top-10 winner-profit retention", "top10_profit_retention", "pct"),
+        ("Baseline drawdown $", "peak_to_trough_baseline", "usd"),
+        ("Filtered drawdown $", "peak_to_trough_filtered", "usd"),
+        ("Half-period $ reconcile", "half_period_reconcile_ok", "raw"),
+    ]
+    for label, key, kind in rows:
+        def _fmt(val: Any, kind: str = kind) -> str:
+            if kind == "usd":
+                return _usd(val)
+            if kind == "pp":
+                return _pp(val)
+            if kind == "pct":
+                return _pct(val)
+            return str(val)
+
+        lines.append(f"| {label} | {_fmt(e1.get(key))} | {_fmt(e2.get(key))} |")
+    lines.extend(
+        [
+            "",
+            "Winning-profit retention is retention of **baseline winners**. "
+            "It is not concentration of the filter's incremental improvement.",
+            "",
+            "## Fixed U exclusion — descriptive halves (no new tests)",
+            "",
+        ]
+    )
+    for m in FOLLOWUP_MEASUREMENTS:
+        lines.append(f"### {m}")
+        lines.append("")
+        lines.append(
+            "| Half | Dates | Baseline $ | Filtered $ | Mean weekly uplift | Losses avoided $ | Winning profits sacrificed $ | Winning-profit retention |"
+        )
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+        halves = result.exclusion_summary[m].get("half_periods", {})
+        for name in ("2020-2021", "2022-2023"):
+            h = halves.get(name, {})
+            lines.append(
+                f"| {name} | {h.get('n_dates')} | {_usd(h.get('pnl_baseline'))} | "
+                f"{_usd(h.get('pnl_filtered'))} | {_pp(h.get('mean_uplift'))} | "
+                f"{_usd(h.get('losses_avoided'))} | {_usd(h.get('winning_profits_sacrificed'))} | "
+                f"{_pct(h.get('winning_profit_retention'))} |"
+            )
+        lines.append("")
+        wk = result.exclusion_summary[m].get("weekly_uplift", {})
+        lines.extend(
+            [
+                f"Weekly uplift ({m}), complete calendar (n={wk.get('n_dates')}):",
+                f"- Mean {_pp(wk.get('mean'))}; median {_pp(wk.get('median'))}; std {_pp(wk.get('std'))}.",
+                f"- Fractions positive / zero / negative: {_pct(wk.get('frac_positive'))} / "
+                f"{_pct(wk.get('frac_zero'))} / {_pct(wk.get('frac_negative'))}.",
+                f"- Five largest positive weeks' share of **total positive** dollar contributions: "
+                f"{_pct(wk.get('top5_positive_share_of_positive_contributions'))}.",
+                f"- Five largest negative weeks' share of **total absolute negative** dollar contributions: "
+                f"{_pct(wk.get('top5_negative_share_of_absolute_negative_contributions'))}.",
+                "",
+                "Largest positive weeks:",
+                "",
+            ]
+        )
+        for row in wk.get("five_largest_positive_weeks", []):
+            lines.append(
+                f"- {row.get('trade_date')}: {_usd(row.get('dollar_contribution'))} "
+                f"({_pp(row.get('uplift'))})"
+            )
+        lines.extend(["", "Largest negative weeks:", ""])
+        for row in wk.get("five_largest_negative_weeks", []):
+            lines.append(
+                f"- {row.get('trade_date')}: {_usd(row.get('dollar_contribution'))} "
+                f"({_pp(row.get('uplift'))})"
+            )
+        lines.append("")
+    lines.extend(
+        [
+            "## Frozen inference (family size 4)",
+            "",
+            "HAC: maxlags=3, Bartlett kernel, small-sample correction, Student-t with T−1 df. "
+            "Adjusted p = min(1, 4 × raw p). Adjusted interval is 98.75%.",
+            "",
+            "| Contrast | n | Point estimate | HAC SE | Ordinary 95% CI | Raw p | Adjusted p | Adjusted 98.75% CI |",
+            "|---|---:|---:|---:|---|---:|---:|---|",
+        ]
+    )
+    for name, contrast in result.inference.get("contrasts", {}).items():
+        hac = contrast.get("hac", {})
+        unit = "pp" if "uplift" in name or "winrate" in name else ""
+        point = _pp(contrast.get("mean")) if unit else _num(contrast.get("mean"))
+        se = _pp(hac.get("se_hac")) if unit else _num(hac.get("se_hac"))
+        ci95 = hac.get("ci_ordinary") or [None, None]
+        ciadj = hac.get("ci_adjusted") or [None, None]
+        lines.append(
+            f"| {name} | {contrast.get('n')} | {point} | {se} | "
+            f"[{_pp(ci95[0])}, {_pp(ci95[1])}] | {_num(hac.get('p_raw'), 4)} | "
+            f"{_num(contrast.get('p_adjusted'), 4)} | "
+            f"[{_pp(ciadj[0])}, {_pp(ciadj[1])}] |"
+        )
+    lines.extend(
+        [
+            "",
+            "An interval that includes zero does not establish no effect. "
+            "An insignificant gross difference does not establish equivalence.",
+            "",
+            "## Interpretation (facts only; decision awaiting review)",
+            "",
+            result.interpretation.get("facts", {}).get(
+                "cost_savings_are_intended_mechanism", ""
+            ),
+            "",
+        ]
+    )
+    for note in result.interpretation.get("facts", {}).get("limits_on_inference", []):
+        lines.append(f"- {note}")
+    lines.extend(["", "## Limitations", ""])
+    for note in result.interpretation.get("facts", {}).get("unresolved", []):
+        lines.append(f"- {note}")
+    lines.extend(
+        [
+            "",
+            result.interpretation.get("disclaimer", ""),
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def export_cost_diagnosis_evidence(
@@ -1187,53 +1744,11 @@ def export_cost_diagnosis_evidence(
         _plot_cumulative(result.date_portfolio, m, evidence_dir / f"cum_pnl_{m}.png")
         _plot_drag_by_group(result.trade_level, m, evidence_dir / f"drag_boxplot_{m}.png")
 
-    # Markdown report
-    lines = [
-        "# Sprint 008 D1 cost diagnosis — report",
-        "",
-        f"- Evidence: `{evidence_dir}`",
-        f"- Provenance: `{json.dumps(report.get('provenance'), default=str)}`",
-        f"- Command: `{command}`",
-        f"- Runtime s: `{report.get('total_seconds')}`",
-        f"- Preserves D1 gate: `{ORIGINAL_D1_GATE}`",
-        f"- Post-hoc: {report.get('post_hoc_disclosure')}",
-        "",
-        "## Reconciliation to prior within-date follow-up",
-        "",
-        "```json",
-        json.dumps(result.reconciliation, indent=2, default=str),
-        "```",
-        "",
-        "## Decomposition (date-weighted)",
-        "",
-        "```json",
-        json.dumps(result.decomposition_summary, indent=2, default=str),
-        "```",
-        "",
-        "## Exclusion summaries",
-        "",
-        "```json",
-        json.dumps(result.exclusion_summary, indent=2, default=str),
-        "```",
-        "",
-        "## Inference (family size 4)",
-        "",
-        "```json",
-        json.dumps(result.inference, indent=2, default=str),
-        "```",
-        "",
-        "## Interpretation",
-        "",
-        "```json",
-        json.dumps(result.interpretation, indent=2, default=str),
-        "```",
-        "",
-        "## Disclaimer",
-        "",
-        result.interpretation.get("disclaimer", ""),
-        "",
-    ]
-    (evidence_dir / "cost_diagnosis_report.md").write_text("\n".join(lines), encoding="utf-8")
+    # Markdown report (readable without external JSON)
+    (evidence_dir / "cost_diagnosis_report.md").write_text(
+        render_readable_report(result, command=command, evidence_dir=evidence_dir),
+        encoding="utf-8",
+    )
 
     (evidence_dir / "execution_receipt.json").write_text(
         json.dumps(

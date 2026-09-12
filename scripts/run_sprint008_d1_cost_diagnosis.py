@@ -33,10 +33,11 @@ def main() -> None:
         flush=True,
     )
     print(
-        "recommendation",
-        json.dumps(result.interpretation.get("recommendation"), indent=2),
+        "core_pnl_reconciliation",
+        json.dumps(result.report.get("core_pnl_reconciliation"), indent=2, default=str),
         flush=True,
     )
+    print("decision_status", result.interpretation.get("decision_status"), flush=True)
     print("timings", json.dumps(result.stage_timings, indent=2), flush=True)
     export_cost_diagnosis_evidence(result=result, evidence_dir=evidence, command=command)
     print("exported", evidence, flush=True)
