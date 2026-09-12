@@ -1,6 +1,8 @@
 # Sprint 008 D1 — cost diagnosis and fixed U-exclusion follow-up
 
-**Status:** `PROTOCOL FROZEN — CORRECTED EVIDENCE AWAITING REVIEW`  
+**Status:** `PROTOCOL FROZEN — CORRECTED EVIDENCE AWAITING REVIEW` (historical protocol status after the 2026-09-12 correction)
+
+**Review annotation (2026-09-12):** Correction implementation and reporting accepted (commit `870d4b7`) as part of the D1 closeout. Original D1 findings and `STOP_NO_THRESHOLDS` are unchanged. This is not D2. Evidence directory, executing HEAD, and dirty-tree metadata below are the original run record.
 **Drafted / frozen:** 2026-09-11 (before examining new results)  
 **Correction executed:** 2026-09-12 — drawdown peak includes initial $0; descriptive half-period exclusion and weekly concentration; no automatic recommendation.  
 **Evidence:** [`sprint008_d1_cost_diagnosis_evidence.md`](sprint008_d1_cost_diagnosis_evidence.md) — `C:/MomentumCVG_env/runs/sprint008_d1_cost_diagnosis_20260912T211530Z/`  

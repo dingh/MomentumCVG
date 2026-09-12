@@ -10,7 +10,9 @@
 **Command:** `C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint008_d1_validation.py` (`PYTHONPATH` = repo root)  
 **Seed / bootstrap:** `20260907`; \(L=4\); 10,000 reps; Bonferroni quantiles \(0.05/6\), \(1-0.05/6\); family size 3  
 **Environment:** Python 3.13.7; numpy 2.x / pandas / scipy (venv `C:/MomentumCVG_env/venv`)  
-**Status:** **D1 execution complete — evidence awaiting review**
+**Status:** **D1 execution complete — evidence awaiting review** (historical run record, 2026-09-07)
+
+**Review annotation (2026-09-12):** Accepted. Original measurement findings are unchanged (M1/M2 `inconclusive`; M3 `unsupported`; `STOP_NO_THRESHOLDS` preserved). D1 is closed, including the reviewed follow-ups linked in the closeout section. This annotation does not rewrite the execution SHA, clean-tree metadata, or the results below.
 
 ---
 
@@ -130,3 +132,56 @@ Notebook (clean): `notebooks/sprint008/d1_measurement_validation.ipynb`
 ## Suggested review decision
 
 Accept the computed labels and **`STOP_NO_THRESHOLDS`** gate as faithful to the accepted D1 design, **or** authorize a versioned protocol amendment before any D2 work. Do not start threshold search while zero measurements are `supported`.
+
+---
+
+## D1 closeout (2026-09-12)
+
+**Disposition:** D1 is **closed and reviewed.** This section does not change the original measurement findings above.
+
+Follow-up evidence (exploratory; same development history; not independent confirmation):
+
+- Within-date lowest vs highest 20%: [`sprint008_d1_within_date_followup_evidence.md`](sprint008_d1_within_date_followup_evidence.md) — `C:/MomentumCVG_env/runs/sprint008_d1_within_date_20260908T195615Z/`
+- Corrected cost diagnosis and fixed U exclusions: [`sprint008_d1_cost_diagnosis_evidence.md`](sprint008_d1_cost_diagnosis_evidence.md) — `C:/MomentumCVG_env/runs/sprint008_d1_cost_diagnosis_20260912T211530Z/` (correction implementation accepted in commit `870d4b7`; prior run preserved at `sprint008_d1_cost_diagnosis_20260911T162501Z`)
+
+The follow-ups extended D1 through a **bounded amendment** that permitted exactly two fixed exclusions (drop the existing within-date highest-score group for M1, and separately for M2). They did **not** complete the originally planned D2 threshold-selection study or later-period evaluation.
+
+### Scope of the exclusion evidence
+
+Development dates **2020–2023** only. Frozen `42:8` long ATM straddles. Equal-dollar allocation \(B/N\) with original \(N\) and \(B=\$10{,}000\). Full-cross execution \(h=1\); modeled fees \(=0\). Rejected stakes remain cash.
+
+### What the corrected exclusion evidence shows
+
+Numbers below are from the corrected evidence report (209 dates; half-period dollar totals reconcile).
+
+Both fixed exclusions improved **historical portfolio P&L relative to the unfiltered baseline** (baseline \(+\$6{,}628.20\)):
+
+| Rule | Filtered P&L | Improvement vs baseline | Mean weekly uplift | Adj. \(p\) (family 4) | Ordinary 95% HAC interval |
+|---|---:|---:|---:|---:|---|
+| Exclude M1 U | \(\$20{,}823.08\) | \(\$14{,}194.88\) | 0.68 pp | 1.00 | [−0.74 pp, +2.10 pp] |
+| Exclude M2 U | \(\$25{,}088.18\) | \(\$18{,}459.98\) | 0.88 pp | 0.91 | [−0.55 pp, +2.32 pp] |
+
+Those mean weekly improvements remain **statistically inconclusive**. An interval that includes zero does not establish that the benefit is zero, and it does not establish a reliable future advantage.
+
+The historical improvement is **concentrated in 2022–2023**, particularly for M1:
+
+| Half | M1 mean weekly uplift | M2 mean weekly uplift |
+|---|---:|---:|
+| 2020–2021 (105 dates) | −0.09 pp (filtered P&L \(\$11{,}769.07\) vs baseline \(\$12{,}737.05\)) | +0.30 pp |
+| 2022–2023 (104 dates) | +1.46 pp (baseline \(-\$6{,}108.85\) → filtered \(\$9{,}054.01\)) | +1.47 pp |
+
+Filtering helps in roughly **64%** of weeks (M1 63.6% positive; M2 64.1% positive; neither has zero weeks) and **sacrifices some large winners**. Winning-profit retention is 83.8% (M1) and 84.0% (M2). Top-5 winner-profit retention is 80.0% (M1) and 51.0% (M2). Cost savings are a valid intended mechanism; winner retention and stability remain central trade-offs.
+
+Keep three claims separate:
+
+- **Relative improvement:** filtered minus baseline dollars on this development sample is positive for both rules.
+- **Positive historical P&L:** the unfiltered baseline itself finishes positive (\(+\$6{,}628.20\)) over the full development window under fixed-budget accounting. That is not the same as the relative improvement, and 2022–2023 baseline P&L is negative.
+- **Reliable future advantage:** not established. Adjusted intervals include zero; this is exploratory evidence from the same development history already used to form the rules.
+
+Focused regression tests recorded with the correction: **57 passed** (`tests/unit/test_sprint008_d0_input_readiness.py`, `test_sprint008_d1_measurement_validation.py`, `test_sprint008_d1_within_date_followup.py`, `test_sprint008_d1_cost_diagnosis.py`).
+
+Fees remain unmodeled. Quote-based results do not establish attainable fills or dependable income.
+
+### What this closeout does not do
+
+No D2 design or execution. Evaluation-period outcomes stay closed. No threshold search, measurement change, or short-side work. A possible later amendment — evaluate the **existing, unchanged** M1 and M2 exclusion rules once on `2024-01-01` through `2026-07-10` — is **proposed, pending design and acceptance**. The original D1 gate is unchanged. D3 remains the subsequent sprint closeout.

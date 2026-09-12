@@ -9,7 +9,9 @@
 **Command:** `C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint008_d1_within_date_followup.py` (`PYTHONPATH` = repo root)  
 **Official artifacts:** `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` (unchanged)  
 **Environment:** Python 3.13.7; numpy 2.4.1; pandas 3.0.0; scipy 1.17.1  
-**Status:** **Follow-up executed — evidence awaiting review** (exploratory; does not amend D1)
+**Status:** **Follow-up executed — evidence awaiting review** (historical run record, 2026-09-08)
+
+**Review annotation (2026-09-12):** Reviewed and accepted as D1 follow-up evidence. Findings below are unchanged and do not amend `STOP_NO_THRESHOLDS`. Executing SHA, dirty-tree note, and evidence directory are the original run record.
 
 **Post-hoc disclosure:** This within-date analysis was proposed **after** viewing the original pooled-quintile D1 results.
 

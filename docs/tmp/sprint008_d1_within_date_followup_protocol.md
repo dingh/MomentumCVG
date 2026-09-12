@@ -1,6 +1,8 @@
 # Sprint 008 D1 follow-up — within-date lowest vs highest 20%
 
-**Status:** `PROTOCOL FROZEN — FOLLOW-UP EXECUTED; EVIDENCE AWAITING REVIEW`  
+**Status:** `PROTOCOL FROZEN — FOLLOW-UP EXECUTED; EVIDENCE AWAITING REVIEW` (historical protocol status)
+
+**Review annotation (2026-09-12):** Reviewed and accepted as part of the D1 closeout. Does not amend original D1 labels or `STOP_NO_THRESHOLDS`. Does not authorize D2. Execution metadata below is unchanged.
 **Drafted / frozen:** 2026-09-08 (before examining follow-up results)  
 **Evidence:** [`sprint008_d1_within_date_followup_evidence.md`](sprint008_d1_within_date_followup_evidence.md) — `C:/MomentumCVG_env/runs/sprint008_d1_within_date_20260908T195615Z/`  
 **Authorization:** User request authorizing this exploratory follow-up; does **not** amend D1  

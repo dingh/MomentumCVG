@@ -8,6 +8,8 @@
 - Environment: `{"python": "3.13.7", "numpy": "2.4.1", "pandas": "3.0.0", "scipy": "1.17.1", "matplotlib": "3.10.8"}`
 - Historical D1 gate preserved: `STOP_NO_THRESHOLDS`
 - Decision status: awaiting review (no automatic recommendation)
+
+**Review annotation (2026-09-12):** Reporting and implementation accepted in the D1 documentation closeout (commit `870d4b7`). This annotation does not change the run record below: HEAD `e1248f0`, dirty tree, evidence directory, or the numerical results. Original D1 gate remains `STOP_NO_THRESHOLDS`. Strategy decision for any later evaluation remains pending a separately accepted D2 design.
 - Post-hoc disclosure: Designed after seeing D1 and within-date follow-up results; exploratory, not independent confirmation.
 
 **Status:** corrected evidence awaiting review. Prior artifacts preserved at `C:/MomentumCVG_env/runs/sprint008_d1_cost_diagnosis_20260911T162501Z/`. This rerun does not close the research direction and does not start another experiment. Historical D1 `STOP_NO_THRESHOLDS` is unchanged.

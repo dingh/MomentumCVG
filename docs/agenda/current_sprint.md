@@ -2,20 +2,20 @@
 
 **Updated:** 2026-09-12
 
-**Status:** `D1 STOP_NO_THRESHOLDS PRESERVED + COST-DIAGNOSIS CORRECTED — EVIDENCE AWAITING REVIEW`
+**Status:** `D0 ACCEPTED; D1 CLOSED — STOP_NO_THRESHOLDS PRESERVED; D2–D3 PENDING`
 
-**Mode:** **Build/Audit.** Sprint-level plan accepted. **D0 accepted.** Historical D1 gate **`STOP_NO_THRESHOLDS` preserved.** Cost-diagnosis / fixed U-exclusion follow-up executed (exploratory bounded amendment). Broader D2 threshold search **not** authorized.
+**Mode:** **Build/Audit.** Sprint-level plan accepted. **D0 accepted.** Original D1, the within-date comparison, and the corrected cost-diagnosis / fixed-exclusion follow-up are **complete and reviewed.** Findings unchanged: M1/M2 `inconclusive`, M3 `unsupported`, gate **`STOP_NO_THRESHOLDS`**. The follow-ups were a bounded D1 amendment (two fixed exclusions). They did **not** complete planned D2 threshold selection or later-period evaluation. D2 and D3 remain incomplete.
 
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md) — accepted detailed scope; canonical path; do not duplicate under `docs/tmp/`.
 
 **D0 design:** [`docs/tmp/sprint008_d0_design.md`](../tmp/sprint008_d0_design.md) — `ACCEPTED` (+ crossed-quote amendment v1)  
 **D0 evidence:** [`docs/tmp/sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md) — **accepted** `READY_WITH_NARROW_ENABLING_CHANGE`; `C:/MomentumCVG_env/runs/sprint008_d0_20260907T204449Z/` (SHA `af24f50`)  
 **D1 design:** [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) — `ACCEPTED`  
-**D1 evidence:** [`docs/tmp/sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md) — gate `STOP_NO_THRESHOLDS`; `C:/MomentumCVG_env/runs/sprint008_d1_20260907T223037Z/` (exec SHA `72629a0`, clean tree)  
-**D1 within-date follow-up protocol:** [`docs/tmp/sprint008_d1_within_date_followup_protocol.md`](../tmp/sprint008_d1_within_date_followup_protocol.md) — frozen before results  
-**D1 within-date follow-up evidence:** [`docs/tmp/sprint008_d1_within_date_followup_evidence.md`](../tmp/sprint008_d1_within_date_followup_evidence.md) — `C:/MomentumCVG_env/runs/sprint008_d1_within_date_20260908T195615Z/` (HEAD `c23c364`, dirty tree at run)  
-**D1 cost-diagnosis protocol:** [`docs/tmp/sprint008_d1_cost_diagnosis_protocol.md`](../tmp/sprint008_d1_cost_diagnosis_protocol.md) — bounded amendment (two fixed U-exclusions)  
-**D1 cost-diagnosis evidence:** [`docs/tmp/sprint008_d1_cost_diagnosis_evidence.md`](../tmp/sprint008_d1_cost_diagnosis_evidence.md) — corrected `C:/MomentumCVG_env/runs/sprint008_d1_cost_diagnosis_20260912T211530Z/` (HEAD `e1248f0`, dirty at run). Prior run preserved: `sprint008_d1_cost_diagnosis_20260911T162501Z`.
+**D1 evidence:** [`docs/tmp/sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md) — **reviewed / D1 closed** 2026-09-12; gate `STOP_NO_THRESHOLDS` unchanged; `C:/MomentumCVG_env/runs/sprint008_d1_20260907T223037Z/` (exec SHA `72629a0`, clean tree)
+**D1 within-date follow-up protocol:** [`docs/tmp/sprint008_d1_within_date_followup_protocol.md`](../tmp/sprint008_d1_within_date_followup_protocol.md) — frozen; **reviewed** 2026-09-12
+**D1 within-date follow-up evidence:** [`docs/tmp/sprint008_d1_within_date_followup_evidence.md`](../tmp/sprint008_d1_within_date_followup_evidence.md) — **reviewed** 2026-09-12; `C:/MomentumCVG_env/runs/sprint008_d1_within_date_20260908T195615Z/` (HEAD `c23c364`, dirty tree at run)
+**D1 cost-diagnosis protocol:** [`docs/tmp/sprint008_d1_cost_diagnosis_protocol.md`](../tmp/sprint008_d1_cost_diagnosis_protocol.md) — bounded amendment (two fixed U-exclusions); **reviewed** 2026-09-12
+**D1 cost-diagnosis evidence:** [`docs/tmp/sprint008_d1_cost_diagnosis_evidence.md`](../tmp/sprint008_d1_cost_diagnosis_evidence.md) — **reviewed** (correction accepted, commit `870d4b7`); `C:/MomentumCVG_env/runs/sprint008_d1_cost_diagnosis_20260912T211530Z/` (HEAD `e1248f0`, dirty at run). Prior run preserved: `sprint008_d1_cost_diagnosis_20260911T162501Z`.
 
 **Previous:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence; not edited by this sprint.
@@ -59,18 +59,18 @@ Full protocol: [`sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md).
 | ID | Deliverable | Status |
 |---|---|---|
 | **D0** | Freeze research protocol details as needed and confirm input readiness | **Accepted** (`READY_WITH_NARROW_ENABLING_CHANGE`) |
-| **D1** | Validate measurements; record `supported` / `unsupported` / `inconclusive` gate | **Execution complete** (`STOP_NO_THRESHOLDS` **preserved**) |
-| **D1-FU** | Within-date lowest vs highest 20% (M1/M2); exploratory | **Executed** (prior) |
-| **D1-CD** | Cost diagnosis + fixed U-exclusion (M1, M2); bounded amendment | **Corrected — evidence awaiting review** |
-| **D2** | Conditional threshold study, only if D1 supports it | Pending (**not** authorized; historical stop preserved) |
-| **D3** | Closeout: conclusions, limitations, implications for later work | Pending |
+| **D1** | Validate measurements; record `supported` / `unsupported` / `inconclusive` gate | **Closed / reviewed** (`STOP_NO_THRESHOLDS` **preserved**; M1/M2 inconclusive, M3 unsupported) |
+| **D1-FU** | Within-date lowest vs highest 20% (M1/M2); exploratory | **Complete and reviewed** (does not amend the gate) |
+| **D1-CD** | Cost diagnosis + fixed U-exclusion (M1, M2); bounded amendment | **Complete and reviewed** (correction `870d4b7` accepted; not D2) |
+| **D2** | Conditional threshold study, only if D1 supports it | **Incomplete.** Original gate does not authorize threshold search. A possible later amendment (existing M1/M2 exclusions, eval window only) is **proposed, pending design and acceptance** |
+| **D3** | Closeout: conclusions, limitations, implications for later work | **Incomplete** (subsequent sprint closeout) |
 
 D0: [`sprint008_d0_design.md`](../tmp/sprint008_d0_design.md), [`sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md).  
 D1: [`sprint008_d1_design.md`](../tmp/sprint008_d1_design.md), [`sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md).  
 D1-FU: [`sprint008_d1_within_date_followup_protocol.md`](../tmp/sprint008_d1_within_date_followup_protocol.md), [`sprint008_d1_within_date_followup_evidence.md`](../tmp/sprint008_d1_within_date_followup_evidence.md).  
 D1-CD: [`sprint008_d1_cost_diagnosis_protocol.md`](../tmp/sprint008_d1_cost_diagnosis_protocol.md), [`sprint008_d1_cost_diagnosis_evidence.md`](../tmp/sprint008_d1_cost_diagnosis_evidence.md).
 
-Do not start D2 or select thresholds until D1 evidence is reviewed (current computed gate: stop). Historical D1 stop remains binding unless explicitly amended.
+D1 is closed. The follow-ups extended D1 through a bounded amendment that permitted exactly two fixed exclusions. They did not complete the originally planned D2 threshold-selection and later-period evaluation. Historical `STOP_NO_THRESHOLDS` remains binding unless a later design is accepted.
 
 ---
 
@@ -79,7 +79,7 @@ Do not start D2 or select thresholds until D1 evidence is reviewed (current comp
 Sprint 008 is complete when:
 
 - [x] D0 confirms protocol freeze / input readiness (or records a specific blocker).
-- [ ] D1 records an explicit measurement gate decision.
+- [x] D1 records an explicit measurement gate decision (`STOP_NO_THRESHOLDS`; follow-ups reviewed; not a D2 completion).
 - [ ] D2 runs the conditional threshold study if justified, or records a stop without threshold search.
 - [ ] D3 closes with a defensible answer to the central question.
 - [ ] Equal-dollar baseline, within-\(h\) quantity freeze, unused-cash treatment, and winning-profit retention metrics are honored.
@@ -110,13 +110,11 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 **D0 status:** **accepted** — `READY_WITH_NARROW_ENABLING_CHANGE` under `sprint008_d0_crossed_quote_v1`.
 
-**D1 status:** **complete** with gate **`STOP_NO_THRESHOLDS`** (preserved). Labels: M1/M2 `inconclusive`, M3 `unsupported`. Evidence `sprint008_d1_20260907T223037Z` (exec SHA `72629a0`).
+**D1 status:** **closed and reviewed** (2026-09-12). Labels unchanged: M1/M2 `inconclusive`, M3 `unsupported`. Gate **`STOP_NO_THRESHOLDS` preserved.** Original evidence `sprint008_d1_20260907T223037Z` (exec SHA `72629a0`, clean tree). Within-date follow-up and corrected cost-diagnosis follow-up are accepted as D1 extensions, not as a change to those labels.
 
-**D1 within-date follow-up:** **executed.** Exploratory only; does not amend D1 or authorize D2. Evidence `sprint008_d1_within_date_20260908T195615Z`.
+**Proposed next step (not authorized):** a possible D2 amendment would evaluate the **existing, unchanged M1 and M2 exclusion rules** once on `2024-01-01` through `2026-07-10`. That amendment is **proposed, pending design and acceptance**. It is not designed or executed here. The original D1 gate is unchanged. Do not open evaluation outcomes, search thresholds, change measurements, or begin short-side work until that design is accepted.
 
-**D1 cost-diagnosis follow-up:** **corrected — evidence awaiting review.** Drawdown definition includes the initial zero; published drawdown dollars on this path are unchanged because a later peak binds. Core P&L reconciled to `sprint008_d1_cost_diagnosis_20260911T162501Z`. Corrected evidence `sprint008_d1_cost_diagnosis_20260912T211530Z`. No automatic recommendation. Does not authorize broader D2.
-
-Do not start D2 or select thresholds unless evidence review amends the original D1 gate.
+**D3** remains the subsequent sprint closeout.
 
 ---
 
@@ -124,7 +122,8 @@ Do not start D2 or select thresholds unless evidence review amends the original 
 
 | Date | Event |
 |------|-------|
-| 2026-09-12 | D1 cost-diagnosis **corrected** (drawdown peak includes $0; half-period exclusion and weekly concentration reported; no automatic recommendation). Evidence `sprint008_d1_cost_diagnosis_20260912T211530Z`. Core P&L unchanged vs prior run. Awaiting review. |
+| 2026-09-12 | D1 **documentation closeout.** Original D1, within-date follow-up, and corrected cost-diagnosis (`870d4b7`) reviewed. Findings unchanged: M1/M2 inconclusive, M3 unsupported, `STOP_NO_THRESHOLDS`. Follow-ups did not complete D2. Proposed eval-window amendment recorded as pending design only. |
+| 2026-09-12 | D1 cost-diagnosis **corrected** (drawdown peak includes $0; half-period exclusion and weekly concentration reported; no automatic recommendation). Evidence `sprint008_d1_cost_diagnosis_20260912T211530Z`. Core P&L unchanged vs prior run. |
 | 2026-09-11 | D1 cost-diagnosis / fixed U-exclusion **executed**; evidence `sprint008_d1_cost_diagnosis_20260911T162501Z`; HEAD `db0e859` (dirty). M1 net L−U mostly mechanical spread; U-exclusion point uplift not HAC-significant. Historical `STOP_NO_THRESHOLDS` preserved. |
 | 2026-09-08 | D1 within-date L vs U follow-up **executed** (M1/M2); evidence `sprint008_d1_within_date_20260908T195615Z`; HEAD `c23c364` (dirty). Point mean \(d_t\) positive; not adj.-significant. Original D1 `STOP_NO_THRESHOLDS` preserved. |
 | 2026-09-07 | D1 **executed**; evidence `sprint008_d1_20260907T223037Z`; SHA `72629a0` (clean); labels M1/M2 inconclusive, M3 unsupported; gate `STOP_NO_THRESHOLDS`. Evidence awaiting review. |
