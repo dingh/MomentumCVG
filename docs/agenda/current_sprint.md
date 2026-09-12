@@ -16,7 +16,7 @@
 **D1 within-date follow-up evidence:** [`docs/tmp/sprint008_d1_within_date_followup_evidence.md`](../tmp/sprint008_d1_within_date_followup_evidence.md) — **reviewed** 2026-09-12; `C:/MomentumCVG_env/runs/sprint008_d1_within_date_20260908T195615Z/` (HEAD `c23c364`, dirty tree at run)
 **D1 cost-diagnosis protocol:** [`docs/tmp/sprint008_d1_cost_diagnosis_protocol.md`](../tmp/sprint008_d1_cost_diagnosis_protocol.md) — bounded amendment (two fixed U-exclusions); **reviewed** 2026-09-12
 **D1 cost-diagnosis evidence:** [`docs/tmp/sprint008_d1_cost_diagnosis_evidence.md`](../tmp/sprint008_d1_cost_diagnosis_evidence.md) — **reviewed** (correction accepted, commit `870d4b7`); `C:/MomentumCVG_env/runs/sprint008_d1_cost_diagnosis_20260912T211530Z/` (HEAD `e1248f0`, dirty at run). Prior run preserved: `sprint008_d1_cost_diagnosis_20260911T162501Z`.
-**D2 design:** [`docs/tmp/sprint008_d2_design.md`](../tmp/sprint008_d2_design.md) — `DRAFT — AWAITING REVIEW` (bounded amendment; not accepted)
+**D2 design:** [`docs/tmp/sprint008_d2_design.md`](../tmp/sprint008_d2_design.md) — `DRAFT — AWAITING REVIEW` (revised in place after `269fde0`; not accepted)
 
 **Previous:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence; not edited by this sprint.
@@ -124,6 +124,7 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 | Date | Event |
 |------|-------|
+| 2026-09-12 | D2 design **revised in place** after review of `269fde0` (evaluation-window portfolio interface; authoritative calendar). Still `DRAFT — AWAITING REVIEW`. Not implemented. |
 | 2026-09-12 | D2 design **drafted** (`sprint008_d2_design.md`) — awaiting review. Bounded amendment only; D1 gate unchanged; not implemented. |
 | 2026-09-12 | D1 **documentation closeout.** Original D1, within-date follow-up, and corrected cost-diagnosis (`870d4b7`) reviewed. Findings unchanged: M1/M2 inconclusive, M3 unsupported, `STOP_NO_THRESHOLDS`. Follow-ups did not complete D2. Proposed eval-window amendment recorded as pending design only. |
 | 2026-09-12 | D1 cost-diagnosis **corrected** (drawdown peak includes $0; half-period exclusion and weekly concentration reported; no automatic recommendation). Evidence `sprint008_d1_cost_diagnosis_20260912T211530Z`. Core P&L unchanged vs prior run. |

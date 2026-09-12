@@ -12,7 +12,7 @@
 **D1 design:** [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) — `ACCEPTED`  
 **D1 evidence:** [`docs/tmp/sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md) — **reviewed / D1 closed** 2026-09-12; `C:/MomentumCVG_env/runs/sprint008_d1_20260907T223037Z/` (SHA `72629a0`, clean tree)
 **D1 follow-ups (reviewed):** within-date [`sprint008_d1_within_date_followup_evidence.md`](../tmp/sprint008_d1_within_date_followup_evidence.md); corrected cost diagnosis [`sprint008_d1_cost_diagnosis_evidence.md`](../tmp/sprint008_d1_cost_diagnosis_evidence.md) (`870d4b7` accepted)
-**D2 design (draft):** [`docs/tmp/sprint008_d2_design.md`](../tmp/sprint008_d2_design.md) — `DRAFT — AWAITING REVIEW`. Not accepted. Does not yet replace §10 D2.
+**D2 design (draft):** [`docs/tmp/sprint008_d2_design.md`](../tmp/sprint008_d2_design.md) — `DRAFT — AWAITING REVIEW` (revised in place after `269fde0`). Not accepted. Does not yet replace §10 D2.
 **Canonical path:** `docs/agenda/sprint8_long_filter_plan.md` — do not duplicate under `docs/tmp/`.  
 **Purpose:** Accepted sprint-level research protocol for a long-side-only measurement and conditional-threshold study. This plan freezes questions, gates, inference boundaries, and deliverable sequence. It deliberately defers deliverable-specific formulas, notebooks, schemas, and code footprints until each deliverable is designed and accepted.
 
