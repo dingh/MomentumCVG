@@ -3,7 +3,7 @@
 **Status:** `ACCEPTED`  
 **Accepted:** 2026-09-06  
 **Updated:** 2026-09-12
-**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; **D0 accepted**; **D1 closed and reviewed** (`STOP_NO_THRESHOLDS` preserved); D2–D3 pending
+**Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md) — Sprint 008 **Build/Audit**; **D0 accepted**; **D1 closed**; **D2 design draft awaiting review** (`STOP_NO_THRESHOLDS` preserved)
 **Prior closeouts:** [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 **D2B H/M precedent:** [`docs/tmp/sprint007_d2b_evidence_review.md`](../tmp/sprint007_d2b_evidence_review.md); `src/backtest/sprint007_d2b_package_tradability.py`  
@@ -12,6 +12,7 @@
 **D1 design:** [`docs/tmp/sprint008_d1_design.md`](../tmp/sprint008_d1_design.md) — `ACCEPTED`  
 **D1 evidence:** [`docs/tmp/sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md) — **reviewed / D1 closed** 2026-09-12; `C:/MomentumCVG_env/runs/sprint008_d1_20260907T223037Z/` (SHA `72629a0`, clean tree)
 **D1 follow-ups (reviewed):** within-date [`sprint008_d1_within_date_followup_evidence.md`](../tmp/sprint008_d1_within_date_followup_evidence.md); corrected cost diagnosis [`sprint008_d1_cost_diagnosis_evidence.md`](../tmp/sprint008_d1_cost_diagnosis_evidence.md) (`870d4b7` accepted)
+**D2 design (draft):** [`docs/tmp/sprint008_d2_design.md`](../tmp/sprint008_d2_design.md) — `DRAFT — AWAITING REVIEW`. Not accepted. Does not yet replace §10 D2.
 **Canonical path:** `docs/agenda/sprint8_long_filter_plan.md` — do not duplicate under `docs/tmp/`.  
 **Purpose:** Accepted sprint-level research protocol for a long-side-only measurement and conditional-threshold study. This plan freezes questions, gates, inference boundaries, and deliverable sequence. It deliberately defers deliverable-specific formulas, notebooks, schemas, and code footprints until each deliverable is designed and accepted.
 
@@ -29,7 +30,7 @@
 | **Method** | Define measurements → validate measurement–profitability relationship (required gate) → only then test simple thresholds |
 | **Not the goal** | Force profitability; rescue Sprint 006; retune signal windows; redesign short structures; claim fill attainability |
 | **Outcomes allowed** | Supported / unsupported / inconclusive measurement; effective / ineffective threshold — all valid completions |
-| **Approval boundary** | Plan **accepted**. D0 **accepted**. D1 **closed and reviewed** (`STOP_NO_THRESHOLDS` preserved). Follow-ups reviewed; they are not D2. D2–D3 pending. |
+| **Approval boundary** | Plan **accepted**. D0 **accepted**. D1 **closed** (`STOP_NO_THRESHOLDS` preserved). D2 amendment **drafted, awaiting review**, not accepted. D3 pending. |
 
 ---
 
@@ -390,6 +391,8 @@ Detailed methods freeze in one-page designs immediately before each deliverable.
 
 **Required answer:** Effective / ineffective / inconclusive under primary \(h=1\), with evaluation-period evidence and sensitivity disclosure. Skip with stop record if D1 gate fails.
 
+**Draft amendment (not accepted):** [`docs/tmp/sprint008_d2_design.md`](../tmp/sprint008_d2_design.md) proposes replacing threshold selection with one frozen retrospective validation of the existing M1 and M2 exclude-U rules. Status `DRAFT — AWAITING REVIEW`. Until accepted, this section remains the plan text and `STOP_NO_THRESHOLDS` stands.
+
 ### D3 — Closeout
 
 **Question:** What is the defensible answer to the central question, and what does it imply for subsequent work?
@@ -440,7 +443,7 @@ Sprint 008 is complete when:
 
 - [x] The research protocol (candidate population, equal-dollar baseline, scenarios, chronological firewall) is frozen and input-ready (D0).
 - [x] Measurements are validated with an explicit `supported` / `unsupported` / `inconclusive` gate decision (D1 closed 2026-09-12; follow-ups reviewed; gate unchanged).
-- [ ] If supported, a conditional threshold study is executed with frozen selection and later-period evaluation (D2); otherwise D2 records a stop without threshold search.
+- [ ] D2 is accepted and executed, or a stop is recorded without threshold search. Design draft is awaiting review ([`sprint008_d2_design.md`](../tmp/sprint008_d2_design.md)); not accepted. Does not yet replace the original D2 definition.
 - [ ] Closeout answers the central question defensibly, including limitations and implications (D3).
 - [ ] Sprint 006/007 accepted results remain unreinterpreted.
 - [ ] No signal-window, structure, short-side, or execution-policy winner is selected from this sprint.
@@ -459,7 +462,7 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 3. ~~D0 design~~ **Accepted**; ~~implementation/execution~~ **complete**; ~~evidence~~ **accepted** ([`sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md)).
 4. ~~D1 design~~ **Accepted**; ~~implementation/execution~~ **complete**; ~~evidence~~ **reviewed** 2026-09-12 ([`sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md)). Within-date and corrected cost-diagnosis follow-ups reviewed. They extended D1 by a bounded amendment (two fixed exclusions) and did **not** complete planned D2 threshold selection or later-period evaluation. Gate remains `STOP_NO_THRESHOLDS`.
 5. For each deliverable thereafter: inspect → one-page design → wait for acceptance → implement/execute → evidence review → next design.
-6. Do not start threshold work or open evaluation outcomes unless a later D2 design is accepted. Current gate: stop. A possible amendment — evaluate the existing unchanged M1 and M2 exclusion rules once on `2024-01-01` through `2026-07-10` — is **proposed, pending design and acceptance** only.
+6. Do not implement D2 or open evaluation outcomes until the draft amendment is accepted. Current gate: stop. Draft: [`sprint008_d2_design.md`](../tmp/sprint008_d2_design.md) (`DRAFT — AWAITING REVIEW`).
 
 Pause and rescope if proposed work:
 
@@ -479,6 +482,6 @@ Original evidence: [`docs/tmp/sprint008_d1_evidence_review.md`](../tmp/sprint008
 
 Follow-ups reviewed and do not complete D2: within-date comparison; corrected cost diagnosis (commit `870d4b7` accepted).
 
-**Proposed, pending design and acceptance — not started:** a possible D2 amendment would evaluate the existing, unchanged M1 and M2 exclusion rules once on `2024-01-01` through `2026-07-10`. The original D1 gate remains unchanged. Do not design or execute that amendment, open evaluation outcomes, search thresholds, change measurements, or begin short-side work in this closeout.
+**D2 design in progress / awaiting review.** Draft: [`docs/tmp/sprint008_d2_design.md`](../tmp/sprint008_d2_design.md). Bounded amendment only; D1 remains closed; `STOP_NO_THRESHOLDS` unchanged. Do not implement, open evaluation outcomes, search thresholds, or change sizing, signals, or the short side until the draft is accepted.
 
 **D3** remains the subsequent sprint closeout.
