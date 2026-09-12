@@ -1,9 +1,10 @@
 # Sprint 008 D2 — frozen-rule retrospective validation
 
-**Status:** `DRAFT — AWAITING REVIEW`  
-**Drafted:** 2026-09-12  
-**Revised:** 2026-09-12, after review of `269fde0`. Still not accepted.
-**Authorization:** Planning and documentation only. Not accepted. Do not implement or execute until review accepts this amendment.  
+**Status:** `ACCEPTED`
+**Drafted:** 2026-09-12
+**Revised:** 2026-09-12, after review of `269fde0`
+**Accepted:** 2026-09-12, reviewed commit `c2ba972`
+**Authorization:** Accepted amendment. Implementation and one official evaluation run are authorized. Do not start D3 in the same step.
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](../agenda/sprint8_long_filter_plan.md)  
 **D1 closeout:** [`sprint008_d1_evidence_review.md`](sprint008_d1_evidence_review.md) — reviewed in commit `48174db`  
@@ -21,7 +22,7 @@
 
 ## 1. Explicit amendment
 
-This design is a **bounded amendment**. If accepted, it **replaces** the originally planned D2 threshold-selection study (cutoff grid on a `supported` measurement, then later-period evaluation) with **one frozen retrospective validation**.
+This design is a **bounded amendment**. **Accepted 2026-09-12** (reviewed commit `c2ba972`). It **replaces** the originally planned D2 threshold-selection study with **one frozen retrospective validation** of the unchanged M1 and M2 exclude-U rules on `2024-01-01` through `2026-07-10`. It does not change historical D1 findings or `STOP_NO_THRESHOLDS`.
 
 | Preserved | Not done by this amendment |
 |---|---|

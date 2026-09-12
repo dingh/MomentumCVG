@@ -472,104 +472,227 @@ def pooled_win_diagnostics(trade_level: pd.DataFrame, measurement: str) -> dict[
     return out
 
 
+def _zero_cash_date_row(measurement: str, trade_date: date) -> dict[str, Any]:
+    """Verified N=0 date: original budget stays cash. Not a missing-data fill."""
+    return {
+        "measurement": measurement,
+        "trade_date": trade_date,
+        "exclude_u_applied": False,
+        "n_in_N": 0,
+        "n_executed": 0,
+        "n_retained": 0,
+        "n_excluded_u": 0,
+        "R_baseline": 0.0,
+        "R_filtered": 0.0,
+        "R_gross": 0.0,
+        "R_drag": 0.0,
+        "uplift": 0.0,
+        "pnl_baseline": 0.0,
+        "pnl_filtered": 0.0,
+        "pnl_gross": 0.0,
+        "pnl_drag": 0.0,
+        "pnl_u": 0.0,
+        "uplift_dollars": 0.0,
+        "invested_frac_baseline": 0.0,
+        "invested_frac_filtered": 0.0,
+        "cash_frac_filtered": 1.0,
+    }
+
+
+def _exclusion_date_row(
+    day: pd.DataFrame,
+    trade_date: date,
+    measurement: str,
+    eligible_dates: set[date],
+) -> dict[str, Any]:
+    """One entry date of baseline vs exclude-U. Accounting unchanged from D1."""
+    label = f"group_{measurement}"
+    executed = day.loc[
+        (day["in_N"] == True)  # noqa: E712
+        & (day["analysis_eligible"] == True)  # noqa: E712
+        & (day["assoc_valid"] == True)  # noqa: E712
+    ].copy()
+    # Cash holds (crossed) contribute 0
+    n_in_n = int((day["in_N"] == True).sum())  # noqa: E712
+    stake = BUDGET_B / n_in_n if n_in_n else 0.0
+
+    p_all = executed["p"].to_numpy(dtype=float)
+    r_base = float(np.nansum(p_all) / BUDGET_B)
+
+    exclude_u = trade_date in eligible_dates
+    if exclude_u:
+        u_mask = executed[label] == "U"
+        retained = executed.loc[~u_mask]
+        u_trades = executed.loc[u_mask]
+    else:
+        retained = executed
+        u_trades = executed.iloc[0:0]
+
+    p_ret = retained["p"].to_numpy(dtype=float)
+    p_u = u_trades["p"].to_numpy(dtype=float) if len(u_trades) else np.array([])
+    r_filt = float(np.nansum(p_ret) / BUDGET_B)
+    uplift = r_filt - r_base
+    # Identity: uplift = -sum_U(p)/B
+    if len(p_u):
+        expected = float(-np.nansum(p_u) / BUDGET_B)
+        if abs(uplift - expected) > ACCOUNTING_TOL:
+            raise CostDiagnosisError(
+                f"{measurement} {trade_date}: uplift identity failed ({uplift} vs {expected})"
+            )
+
+    invested_base = float(len(executed) * stake)
+    invested_filt = float(len(retained) * stake)
+    # Date-level gross and spread contributions on the same stake and B.
+    # p_g = (B/N)*g, p_a = (B/N)*a; cash names contribute 0.
+    if len(executed):
+        stake_x = pd.to_numeric(executed["stake_dollars"], errors="coerce")
+        pnl_gross = float((stake_x * pd.to_numeric(executed["g"], errors="coerce")).sum())
+        pnl_drag = float((stake_x * pd.to_numeric(executed["a"], errors="coerce")).sum())
+    else:
+        pnl_gross = 0.0
+        pnl_drag = 0.0
+    r_gross = pnl_gross / BUDGET_B
+    r_drag = pnl_drag / BUDGET_B
+    if abs((r_gross - r_drag) - r_base) > ACCOUNTING_TOL:
+        raise CostDiagnosisError(
+            f"{measurement} {trade_date}: date gross-drag identity failed "
+            f"({r_gross} - {r_drag} vs {r_base})"
+        )
+    return {
+        "measurement": measurement,
+        "trade_date": trade_date,
+        "exclude_u_applied": bool(exclude_u),
+        "n_in_N": n_in_n,
+        "n_executed": int(len(executed)),
+        "n_retained": int(len(retained)),
+        "n_excluded_u": int(len(u_trades)),
+        "R_baseline": r_base,
+        "R_filtered": r_filt,
+        "R_gross": r_gross,
+        "R_drag": r_drag,
+        "uplift": uplift,
+        "pnl_baseline": float(np.nansum(p_all)),
+        "pnl_filtered": float(np.nansum(p_ret)),
+        "pnl_gross": pnl_gross,
+        "pnl_drag": pnl_drag,
+        "pnl_u": float(np.nansum(p_u)) if len(p_u) else 0.0,
+        "uplift_dollars": float(-np.nansum(p_u)) if len(p_u) else 0.0,
+        "invested_frac_baseline": invested_base / BUDGET_B,
+        "invested_frac_filtered": invested_filt / BUDGET_B,
+        "cash_frac_filtered": 1.0 - invested_filt / BUDGET_B,
+    }
+
+
 def build_portfolio_comparison(
     trade_level: pd.DataFrame,
     paired: pd.DataFrame,
     measurement: str,
+    *,
+    window_start: date = DEV_START,
+    window_end: date = DEV_END,
+    entry_calendar: pd.DataFrame | None = None,
+    reporting_periods: dict[str, tuple[date, date]] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Baseline vs exclude-U on full development calendar; one row per entry date."""
-    label = f"group_{measurement}"
+    """Baseline vs exclude-U; one row per entry date in the requested window.
+
+    Defaults reproduce the D1 development loop and half-period reconciliation.
+    Pass ``entry_calendar`` to retain verified zero-long dates that have no
+    trade rows. Those dates are not inferred from a missing panel row.
+    """
     work = trade_level.copy()
     work["trade_date"] = work["trade_date"].map(_as_date)
     eligible_dates = set(
         paired.loc[paired["measurement"] == measurement, "trade_date"].map(_as_date)
-    )
+    ) if not paired.empty and "measurement" in paired.columns else set()
     rows: list[dict[str, Any]] = []
+    use_calendar = entry_calendar is not None
 
-    for trade_date, day in work.groupby("trade_date", sort=True):
-        td = _as_date(trade_date)
-        if not is_development_date(td):
-            continue
-        executed = day.loc[
-            (day["in_N"] == True)  # noqa: E712
-            & (day["analysis_eligible"] == True)  # noqa: E712
-            & (day["assoc_valid"] == True)  # noqa: E712
-        ].copy()
-        # Cash holds (crossed) contribute 0
-        n_in_n = int((day["in_N"] == True).sum())  # noqa: E712
-        stake = BUDGET_B / n_in_n if n_in_n else 0.0
-
-        p_all = executed["p"].to_numpy(dtype=float)
-        r_base = float(np.nansum(p_all) / BUDGET_B)
-
-        exclude_u = td in eligible_dates
-        if exclude_u:
-            u_mask = executed[label] == "U"
-            retained = executed.loc[~u_mask]
-            u_trades = executed.loc[u_mask]
-        else:
-            retained = executed
-            u_trades = executed.iloc[0:0]
-
-        p_ret = retained["p"].to_numpy(dtype=float)
-        p_u = u_trades["p"].to_numpy(dtype=float) if len(u_trades) else np.array([])
-        r_filt = float(np.nansum(p_ret) / BUDGET_B)
-        uplift = r_filt - r_base
-        # Identity: uplift = -sum_U(p)/B
-        if len(p_u):
-            expected = float(-np.nansum(p_u) / BUDGET_B)
-            if abs(uplift - expected) > ACCOUNTING_TOL:
-                raise CostDiagnosisError(
-                    f"{measurement} {td}: uplift identity failed ({uplift} vs {expected})"
-                )
-
-        invested_base = float(len(executed) * stake)
-        invested_filt = float(len(retained) * stake)
-        # Date-level gross and spread contributions on the same stake and B.
-        # p_g = (B/N)*g, p_a = (B/N)*a; cash names contribute 0.
-        if len(executed):
-            stake_x = pd.to_numeric(executed["stake_dollars"], errors="coerce")
-            pnl_gross = float((stake_x * pd.to_numeric(executed["g"], errors="coerce")).sum())
-            pnl_drag = float((stake_x * pd.to_numeric(executed["a"], errors="coerce")).sum())
-        else:
-            pnl_gross = 0.0
-            pnl_drag = 0.0
-        r_gross = pnl_gross / BUDGET_B
-        r_drag = pnl_drag / BUDGET_B
-        if abs((r_gross - r_drag) - r_base) > ACCOUNTING_TOL:
+    if not use_calendar:
+        for trade_date, day in work.groupby("trade_date", sort=True):
+            td = _as_date(trade_date)
+            if td < window_start or td > window_end:
+                continue
+            rows.append(_exclusion_date_row(day, td, measurement, eligible_dates))
+    else:
+        cal = entry_calendar.copy()
+        required = {"trade_date", "n_in_N", "long_book_class"}
+        missing = required - set(cal.columns)
+        if missing:
             raise CostDiagnosisError(
-                f"{measurement} {td}: date gross-drag identity failed "
-                f"({r_gross} - {r_drag} vs {r_base})"
+                f"entry_calendar missing columns: {sorted(missing)}"
             )
-        rows.append(
-            {
-                "measurement": measurement,
-                "trade_date": td,
-                "exclude_u_applied": bool(exclude_u),
-                "n_in_N": n_in_n,
-                "n_executed": int(len(executed)),
-                "n_retained": int(len(retained)),
-                "n_excluded_u": int(len(u_trades)),
-                "R_baseline": r_base,
-                "R_filtered": r_filt,
-                "R_gross": r_gross,
-                "R_drag": r_drag,
-                "uplift": uplift,
-                "pnl_baseline": float(np.nansum(p_all)),
-                "pnl_filtered": float(np.nansum(p_ret)),
-                "pnl_gross": pnl_gross,
-                "pnl_drag": pnl_drag,
-                "pnl_u": float(np.nansum(p_u)) if len(p_u) else 0.0,
-                "uplift_dollars": float(-np.nansum(p_u)) if len(p_u) else 0.0,
-                "invested_frac_baseline": invested_base / BUDGET_B,
-                "invested_frac_filtered": invested_filt / BUDGET_B,
-                "cash_frac_filtered": 1.0 - invested_filt / BUDGET_B,
-            }
-        )
+        cal["trade_date"] = cal["trade_date"].map(_as_date)
+        if cal["trade_date"].duplicated().any():
+            raise CostDiagnosisError("entry_calendar has duplicate trade_date")
+        allowed = {"verified_zero_long", "has_long_candidates"}
+        classes = set(cal["long_book_class"].astype(str))
+        if not classes.issubset(allowed):
+            raise CostDiagnosisError(
+                f"entry_calendar has unknown long_book_class: {sorted(classes - allowed)}"
+            )
+        cal = cal.sort_values("trade_date").reset_index(drop=True)
+        cal_in_window = cal.loc[
+            (cal["trade_date"] >= window_start) & (cal["trade_date"] <= window_end)
+        ]
+        cal_dates = set(cal_in_window["trade_date"].tolist())
+        panel_in_window = {
+            _as_date(d)
+            for d in work["trade_date"].unique()
+            if window_start <= _as_date(d) <= window_end
+        }
+        extra = sorted(panel_in_window - cal_dates)
+        if extra:
+            raise CostDiagnosisError(
+                f"{measurement}: in-window panel dates missing from entry_calendar: "
+                f"{extra[:10]}"
+            )
+        day_map = {td: day for td, day in work.groupby("trade_date", sort=True)}
+        empty_day = work.iloc[0:0]
+        for rec in cal_in_window.itertuples(index=False):
+            td = _as_date(rec.trade_date)
+            cls = str(rec.long_book_class)
+            n_cal = int(rec.n_in_N)
+            day = day_map.get(td, empty_day)
+            if cls == "verified_zero_long":
+                if n_cal != 0:
+                    raise CostDiagnosisError(
+                        f"{measurement} {td}: verified_zero_long requires n_in_N=0"
+                    )
+                if not day.empty:
+                    in_n = day["in_N"] == True if "in_N" in day.columns else False  # noqa: E712
+                    structure_ok = (
+                        day["structure_ok"] == True  # noqa: E712
+                        if "structure_ok" in day.columns
+                        else False
+                    )
+                    if bool(np.any(in_n) or np.any(structure_ok)):
+                        raise CostDiagnosisError(
+                            f"{measurement} {td}: verified_zero_long has structure_ok "
+                            "or in_N panel rows"
+                        )
+                rows.append(_zero_cash_date_row(measurement, td))
+                continue
+            if n_cal <= 0:
+                raise CostDiagnosisError(
+                    f"{measurement} {td}: has_long_candidates requires n_in_N>0"
+                )
+            if day.empty:
+                raise CostDiagnosisError(
+                    f"{measurement} {td}: has_long_candidates but no panel rows"
+                )
+            n_panel = int((day["in_N"] == True).sum())  # noqa: E712
+            if n_panel != n_cal:
+                raise CostDiagnosisError(
+                    f"{measurement} {td}: panel in_N count {n_panel} != calendar {n_cal}"
+                )
+            rows.append(_exclusion_date_row(day, td, measurement, eligible_dates))
 
+    wdates = work["trade_date"].map(_as_date)
+    work = work.loc[(wdates >= window_start) & (wdates <= window_end)].copy()
     port = pd.DataFrame(rows).sort_values("trade_date").reset_index(drop=True)
+    label = f"group_{measurement}"
 
-    # Retention metrics over full development (pooled dollars)
+    # Retention metrics over the requested window (pooled dollars)
     executed_all = work.loc[
         (work["in_N"] == True)  # noqa: E712
         & (work["analysis_eligible"] == True)  # noqa: E712
@@ -682,35 +805,58 @@ def build_portfolio_comparison(
             "Peak-to-trough of cumulative fixed-budget dollar P&L. "
             "Running peak is max(0, cumulative P&L so far). "
             "Not compounded account equity and not intraholding-period risk. "
-            "Complete development period under the fixed-budget convention."
+            + (
+                "Complete requested window under the fixed-budget convention."
+                if reporting_periods is not None
+                else "Complete development period under the fixed-budget convention."
+            )
         ),
-        "half_periods": {
-            "2020-2021": exclusion_window_metrics(
-                port, executed_all, DEV_A_START, DEV_A_END
-            ),
-            "2022-2023": exclusion_window_metrics(
-                port, executed_all, DEV_B_START, DEV_B_END
-            ),
-        },
         "weekly_uplift": weekly_uplift_distribution(port),
     }
-    h1 = summary["half_periods"]["2020-2021"]
-    h2 = summary["half_periods"]["2022-2023"]
     full_map = {
         "pnl_baseline": summary["total_pnl_baseline"],
         "pnl_filtered": summary["total_pnl_filtered"],
         "losses_avoided": summary["losses_avoided"],
         "winning_profits_sacrificed": summary["winning_profits_sacrificed"],
     }
-    half_ok = True
-    for key, full in full_map.items():
-        if abs((h1[key] + h2[key]) - full) > 0.05:
-            half_ok = False
-            raise CostDiagnosisError(
-                f"{measurement}: half-period {key} does not reconcile "
-                f"({h1[key]} + {h2[key]} vs {full})"
+    if reporting_periods is None:
+        summary["half_periods"] = {
+            "2020-2021": exclusion_window_metrics(
+                port, executed_all, DEV_A_START, DEV_A_END
+            ),
+            "2022-2023": exclusion_window_metrics(
+                port, executed_all, DEV_B_START, DEV_B_END
+            ),
+        }
+        h1 = summary["half_periods"]["2020-2021"]
+        h2 = summary["half_periods"]["2022-2023"]
+        half_ok = True
+        for key, full in full_map.items():
+            if abs((h1[key] + h2[key]) - full) > 0.05:
+                half_ok = False
+                raise CostDiagnosisError(
+                    f"{measurement}: half-period {key} does not reconcile "
+                    f"({h1[key]} + {h2[key]} vs {full})"
+                )
+        summary["half_period_reconcile_ok"] = half_ok
+    else:
+        period_metrics: dict[str, Any] = {}
+        for name, bounds in reporting_periods.items():
+            start, end = bounds
+            period_metrics[name] = exclusion_window_metrics(
+                port, executed_all, start, end
             )
-    summary["half_period_reconcile_ok"] = half_ok
+        period_ok = True
+        for key, full in full_map.items():
+            parts = float(sum(period_metrics[name][key] for name in period_metrics))
+            if abs(parts - full) > 0.05:
+                period_ok = False
+                raise CostDiagnosisError(
+                    f"{measurement}: reporting-period {key} does not reconcile "
+                    f"({parts} vs {full})"
+                )
+        summary["reporting_periods"] = period_metrics
+        summary["period_reconcile_ok"] = period_ok
     port["cum_pnl_baseline"] = cum_base
     port["cum_pnl_filtered"] = cum_filt
     return port, summary

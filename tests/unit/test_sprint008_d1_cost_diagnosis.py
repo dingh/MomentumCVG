@@ -239,6 +239,31 @@ def test_drawdown_after_recovery() -> None:
     )
 
 
+def test_default_path_excludes_evaluation_dates_and_keeps_half_periods() -> None:
+    rows = []
+    for d in (date(2020, 6, 1), date(2024, 1, 8)):
+        for i, t in enumerate(list("ABCDE"), start=1):
+            rows.append(_row(trade_date=d, ticker=t, M=1.0, H=0.1 * i, X=1.0, M1=0.1 * i))
+    panel = pd.DataFrame(rows)
+    econ = attach_decomposition_columns(attach_scenario_economics(panel, 1.0))
+    econ["group_M1"] = pd.NA
+    for d in (date(2020, 6, 1), date(2024, 1, 8)):
+        day = econ.loc[econ["trade_date"] == d]
+        sel = select_groups_with_middle(day, "M1")
+        econ.loc[sel["high"].index, "group_M1"] = "U"
+    paired = pd.DataFrame(
+        [
+            {"measurement": "M1", "trade_date": date(2020, 6, 1)},
+            {"measurement": "M1", "trade_date": date(2024, 1, 8)},
+        ]
+    )
+    port, summary = build_portfolio_comparison(econ, paired, "M1")
+    assert list(port["trade_date"]) == [date(2020, 6, 1)]
+    assert "half_periods" in summary
+    assert summary["half_period_reconcile_ok"] is True
+    assert "reporting_periods" not in summary
+
+
 def test_half_period_dollar_totals_reconcile() -> None:
     rows = []
     for d, x_high in ((date(2020, 6, 1), 0.2), (date(2022, 6, 6), 1.8)):
