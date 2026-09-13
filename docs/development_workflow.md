@@ -92,7 +92,7 @@ python scripts/run_surface_search.py --mode full_sample --start-date 2020-01-01 
 
 ## Sprint roadmap (004–008)
 
-Aligned with [agenda/current_sprint.md](agenda/current_sprint.md). Sprints 000–003 closed; see [sprint_memos/](sprint_memos/).
+**Stale table.** Rows for Sprints 006–008 below are the 2026-08-09 planning sketch. They are not current status. Authority for the active sprint is [agenda/current_sprint.md](agenda/current_sprint.md). Closed-sprint conclusions live in [sprint_memos/](sprint_memos/). Do not treat this table as a roadmap to execute.
 
 | Sprint | Status | Theme | Delivers | Explicitly not |
 |--------|--------|-------|----------|----------------|

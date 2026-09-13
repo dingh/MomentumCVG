@@ -2,7 +2,7 @@
 
 Registry of **confirmed bugs not yet fixed**. Remove an entry when fixed and covered by tests.
 
-Agents: read this file when touching the listed modules. See also [agenda/current_sprint.md](agenda/current_sprint.md) § Known bugs.
+Agents: read this file when touching the listed modules. Sprint scope is [agenda/current_sprint.md](agenda/current_sprint.md). KB-001 stays open; the Sprint 009 draft does not fix it.
 
 ---
 

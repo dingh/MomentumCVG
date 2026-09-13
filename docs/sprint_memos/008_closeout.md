@@ -1,7 +1,8 @@
 # Sprint 008 — closeout
 
-**Status:** `D3 SUBMITTED — AWAITING FINAL REVIEW`  
+**Status:** `CLOSED — D3 ACCEPTED`  
 **Submitted:** 2026-09-12  
+**Accepted through:** `61cbf30`  
 **D2 reviewed through:** `c9b0a6a`  
 **Design of record for D2:** [`docs/tmp/sprint008_d2_design.md`](../tmp/sprint008_d2_design.md) — accepted, reviewed commit `c2ba972`
 
@@ -24,7 +25,7 @@ This closeout uses committed evidence only. No experiment was rerun.
 | **D2 amendment** | Replaced threshold search with one retrospective evaluation of the unchanged M1 and M2 exclude-U rules |
 | **D2 labels** | M1 `relative_benefit`; M2 `inconclusive` |
 | **Income-generating strategy** | **Not established** |
-| **This memo** | Submitted for final review. Not yet reviewer-accepted |
+| **This memo** | Accepted through `61cbf30`. Findings below are unchanged. |
 
 ---
 
