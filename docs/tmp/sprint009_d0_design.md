@@ -1,8 +1,8 @@
 # Sprint 009 D0 — Matched body/wing readiness
 
-**Status:** `DRAFT — AWAITING REVIEW`  
+**Status:** `ACCEPTED` at `5329726`  
 **Updated:** 2026-09-13  
-**Implementation:** **NOT STARTED.** This document does not mark D0 `READY` or complete.  
+**Implementation:** **IN PROGRESS.** This document does not mark D0 `READY` or complete. Official readiness evidence is not yet attached.  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](../agenda/sprint9_short_body_wing_plan.md) — scope accepted for D0 planning; D1–D5 unchanged  
 **Official run (read-only):** `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z`  
@@ -20,7 +20,7 @@ The official cross and mid artifacts appear to carry the fields this design requ
 
 ## Authorization
 
-This design is awaiting review. It does not authorize implementation, an official readiness run, or D1. Do not create helper, runner, test, or evidence files until that authorization is given separately.
+This design was accepted at `5329726`. Implementation of the approved helper, runner, tests, and documentation is in progress. Official inputs stay read-only. D1 has not started. This acceptance does not mark D0 `READY`.
 
 ---
 
@@ -348,6 +348,6 @@ Synthetic cases, not official extracts:
 
 Review can accept, amend, or reject the projection list, the asymmetric-wing check, the primary-window anchor, and the calendar classes.
 
-Acceptance of this design still does not start implementation. An implementation run, if later authorized, returns `READY` or `BLOCKED`. This file must not be edited to say `READY` before that evidence exists.
+This design is accepted. The authorized implementation run returns `READY` or `BLOCKED`. This file must not be edited to say `READY` before that evidence exists and is reviewed.
 
 D1–D5 stay as written in the sprint plan. This design does not change their formulas, windows, or freeze rule.

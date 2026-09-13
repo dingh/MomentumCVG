@@ -1,16 +1,16 @@
 # Sprint 009 — Short-body economics, execution costs, protection, and conditional entry filtering
 
-**Status:** `SCOPE ACCEPTED FOR D0 PLANNING`  
-**Revised from:** `7132225` (D0 design linked; D0 implementation not started)  
+**Status:** `SCOPE ACCEPTED; D0 DESIGN ACCEPTED; D0 IMPLEMENTATION IN PROGRESS`  
+**Revised from:** `5329726` (D0 design accepted; implementation in progress; not a `READY` verdict)  
 **Updated:** 2026-09-13  
-**D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — `DRAFT — AWAITING REVIEW`. Not a `READY` verdict.  
-**Mode:** Audit. Planning only. Implementation has not started.  
+**D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`. Not a `READY` verdict.  
+**Mode:** Build, restricted to the approved D0 helper, runner, tests, and documentation. D1 has not started.  
 **Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md)  
 **Canonical path:** `docs/agenda/sprint9_short_body_wing_plan.md` — do not duplicate under `docs/tmp/`.  
 **Prior closeouts:** [`docs/sprint_memos/008_closeout.md`](../sprint_memos/008_closeout.md) (accepted through `61cbf30`), [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 
-This document is the accepted sprint-level research protocol for D0 planning. It does not authorize D0 implementation, a backtest, or a new economic run. The D0 design remains a separate draft. Deliverable-specific runners and evidence files are created only after that step is authorized. Do not add empty implementation or evidence files now.
+This document is the accepted sprint-level research protocol. The D0 design at `5329726` is accepted and its implementation is in progress. It does not authorize D1, a new economic comparison, or a `READY` verdict. Official inputs stay read-only.
 
 ---
 
@@ -35,7 +35,7 @@ An inconclusive measurement, a decision not to freeze a rule, or a skipped D4 is
 | Source | Role |
 |---|---|
 | [`docs/agenda/current_sprint.md`](current_sprint.md) | Active sprint status |
-| This plan | Accepted scope for D0 planning. D0 design is a separate draft |
+| This plan | Accepted sprint scope. D0 design is accepted; D1 has not started |
 | [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) and official run `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` | Frozen selection, structures, and the reference cross book |
 | [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md) | Accepted cross economics. Not revised here |
 | [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md) | `EXECUTION_CALIBRATION_REQUIRED` remains. This sprint does not implement the observer and does not cancel that handoff |
@@ -165,7 +165,7 @@ No deliverable selects a signal window, a new wing, a size, or a live fill.
 
 ## 7. D0 — Can we trust the body/wing comparison?
 
-**Design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — `DRAFT — AWAITING REVIEW`. Implementation not started. The question, population, and calendar rules below are unchanged. That design specifies the column projection and checks. It does not replace D1–D5.
+**Design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`. Implementation in progress. The question, population, and calendar rules below are unchanged. That design specifies the column projection and checks. It does not replace D1–D5.
 
 **Question.** Can the accepted artifacts support a matched body/wing dataset that reproduces every selected short iron fly and correctly accounts for every trading date?
 
@@ -485,7 +485,7 @@ These start only after plan acceptance and a separate authorization for that inc
 
 If D4 is skipped, the remaining path is the descriptive companion plus the closeout. No increment reruns `SurfaceRunner` or retunes `42:8`.
 
-Separate one-page designs are written when an increment is authorized, following the existing workflow. This plan is the review package. Do not create those designs, runners, or evidence directories now.
+Separate one-page designs are written when an increment is authorized, following the existing workflow. D0 implementation is in progress under the accepted design. Do not create D1–D5 designs, runners, or evidence directories until those increments are authorized.
 
 ---
 
@@ -516,7 +516,7 @@ The reviewer should accept, reject, or amend these before any implementation:
 5. The freeze predicates, including the 80% winning-profit floor and the 8-of-10 largest-winner count, applied on each candidate’s matching expression. If both qualify, the tie-break is the larger adjusted lower bound on mean date-level dollar uplift. A difference under \$1 freezes neither. Exposure-scaled bounds are not used to rank candidates. These are proposed gates, not results.
 6. Exposure benchmarks: M2 uses official iron-fly capital at risk; M1 uses \(\sum Q S_0\) and is labeled notional, not margin. Filtered quantities stay unscaled. D4 tests exactly those two contrasts for the frozen pair.
 7. Later-period attribution and protection summaries wait until a freeze or a skip, and cannot select a structure or authorize uncovered trading.
-8. Sequential authorization: accepting this plan does not start D0.
+8. Sequential authorization: D0 design acceptance at `5329726` authorized D0 implementation only. It does not start D1.
 9. D5 cannot close Sprint 007’s execution-calibration requirement or declare production readiness.
 
 ---
