@@ -1,8 +1,9 @@
 # Sprint 009 — Short-body economics, execution costs, protection, and conditional entry filtering
 
-**Status:** `DRAFT — AWAITING REVIEW`  
-**Revised from:** `5a14348` (tie-break correction only; not accepted)  
+**Status:** `SCOPE ACCEPTED FOR D0 PLANNING`  
+**Revised from:** `7132225` (D0 design linked; D0 implementation not started)  
 **Updated:** 2026-09-13  
+**D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — `DRAFT — AWAITING REVIEW`. Not a `READY` verdict.  
 **Mode:** Audit. Planning only. Implementation has not started.  
 **Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md)  
 **Canonical path:** `docs/agenda/sprint9_short_body_wing_plan.md` — do not duplicate under `docs/tmp/`.  
@@ -164,7 +165,9 @@ No deliverable selects a signal window, a new wing, a size, or a live fill.
 
 ## 7. D0 — Can we trust the body/wing comparison?
 
-**Question.** Can accepted artifacts support a matched trade-level body/wing dataset that reproduces the official short iron fly?
+**Design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — `DRAFT — AWAITING REVIEW`. Implementation not started. The question, population, and calendar rules below are unchanged. That design specifies the column projection and checks. It does not replace D1–D5.
+
+**Question.** Can the accepted artifacts support a matched body/wing dataset that reproduces every selected short iron fly and correctly accounts for every trading date?
 
 **Inputs.** Official run `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` and `run_receipt.json`. Expected files already used in Sprint 007, plus the official funnel summary: `trade_log_cross`, `trade_log_mid`, `leg_log_cross`, `leg_log_mid`, `date_status_*`, `funnel_summary_*`, `decision_report.json`. Read-only. Sprint 007 D0 confirmed paired leg identity, quote identity, and settlement identity between fills. D0 here confirms those properties still hold for the short iron-fly subset, that body plus wings add to the official short book, and that the short-side calendar in §4.5 classifies every authoritative date.
 

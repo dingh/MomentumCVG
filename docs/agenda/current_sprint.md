@@ -2,11 +2,12 @@
 
 **Updated:** 2026-09-13
 
-**Status:** `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`
+**Status:** `D0 DESIGN DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`
 
-**Mode:** **Audit.** Planning only. Do not begin D0, run new economic analyses, or treat this draft as accepted.
+**Mode:** **Audit.** Sprint scope is accepted for D0 planning. Do not implement D0 or run new economic analyses. Do not mark D0 `READY`.
 
-**Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.md) — canonical draft; do not duplicate under `docs/tmp/`.
+**Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.md) — scope accepted for D0 planning; do not duplicate under `docs/tmp/`.
+**D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — `DRAFT — AWAITING REVIEW`. Implementation not started.
 
 **Previous:** Sprint 008 — [`CLOSED — D3 ACCEPTED`](../sprint_memos/008_closeout.md) through `61cbf30`. Findings unchanged: not an income-generating long filter; historical `STOP_NO_THRESHOLDS` preserved.  
 **Prior diagnosis:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md). This draft does not implement that execution-observation handoff and does not cancel it.  
@@ -57,14 +58,14 @@ Full protocol: [`sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.
 
 | ID | Question | Status |
 |---|---|---|
-| **D0** | Can we trust the body/wing comparison, including the short-side calendar? | **Not started** |
+| **D0** | Can the accepted artifacts support a matched body/wing dataset that reproduces every selected short iron fly and correctly accounts for every trading date? | **Design drafted** ([`sprint009_d0_design.md`](../tmp/sprint009_d0_design.md)). Implementation **not started**. Not `READY` |
 | **D1** | Where does the short book lose economic margin? | **Not started** |
 | **D2** | What protection do the wings provide? | **Not started** |
 | **D3** | Can entry measurements identify unattractive trades? | **Not started** |
 | **D4** | Does the frozen rule improve later-period economics? | **Not started.** Skipped if D3 does not freeze a rule |
 | **D5** | What does the evidence justify? | **Not started** |
 
-No design, runner, or evidence file exists yet. Do not create empty ones before the relevant step is authorized.
+D0 design is drafted and awaiting review. Do not create the helper, runner, tests, or evidence directory until implementation is separately authorized. D1–D5 have no design files yet.
 
 ---
 
@@ -103,11 +104,13 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 
 ## 6. Authorization and next action
 
-**Plan status:** draft, awaiting review. Not accepted.
+**Plan status:** sprint scope accepted for D0 planning. D1–D5 are not started and are not redesigned here.
 
-**Implementation:** not started. Do not begin D0.
+**D0 design:** [`sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — `DRAFT — AWAITING REVIEW`.
 
-**Next action:** review [`sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.md), especially the kickoff decisions in that plan’s §16. Acceptance of this draft, if given later, still does not start code.
+**Implementation:** not started. Do not begin D0. Do not mark D0 `READY`.
+
+**Next action:** review the D0 design. Accepting that design still does not start code.
 
 ---
 
@@ -115,6 +118,7 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 
 | Date | Event |
 |------|-------|
+| 2026-09-13 | Sprint scope **accepted for D0 planning**. D0 design drafted ([`sprint009_d0_design.md`](../tmp/sprint009_d0_design.md)), `DRAFT — AWAITING REVIEW`. Implementation not started. |
 | 2026-09-13 | Sprint 009 draft **corrected** from `5a14348`. Tie-break is dollar uplift, not exposure-scaled bounds. Still `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`. |
 | 2026-09-12 | Sprint 009 draft **revised** from `cbd3f23`. M1 filters the body-only book; M2 filters the iron fly. Still `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`. |
 | 2026-09-12 | Sprint 009 plan **drafted** for review. Status `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`. No D0, no new economic run. |
