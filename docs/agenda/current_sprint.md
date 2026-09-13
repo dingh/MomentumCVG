@@ -1,6 +1,6 @@
 # Current sprint — 009
 
-**Updated:** 2026-09-12
+**Updated:** 2026-09-13
 
 **Status:** `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`
 
@@ -41,7 +41,7 @@ Proposed method order:
 | Selection | Frozen `42:8` / CVG / liquidity / structure / name cap / weekly hold-to-expiry |
 | Wings | Current `0.15` below-nearest rule. No strike search |
 | Reference quantities | Official cross book, fixed. Midpoint at those quantities is a diagnostic, not the official midpoint run |
-| Candidates | M1 score filters the body-only cross book. M2 score filters the cross iron fly. Freeze at most one pair |
+| Candidates | M1 score filters the body-only cross book. M2 score filters the cross iron fly. Freeze at most one pair. If both qualify, the tie-break is the larger adjusted lower bound on mean date-level dollar uplift, not an exposure-scaled ranking |
 | Exposure | M2: official iron-fly capital at risk. M1: \(\sum Q S_0\), labeled notional, not margin. Filtered quantities stay unscaled |
 | Calendar | Whole-book `date_status` is not short-book status. Verified zero-short dates stay at zero. Missing short rows are a blocker |
 | Primary measure | Paired dollar P&L. A normalized companion is a diagnostic, not return on capital. Do not put an uncovered body on the iron fly’s max-loss denominator |
@@ -115,6 +115,7 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 
 | Date | Event |
 |------|-------|
+| 2026-09-13 | Sprint 009 draft **corrected** from `5a14348`. Tie-break is dollar uplift, not exposure-scaled bounds. Still `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`. |
 | 2026-09-12 | Sprint 009 draft **revised** from `cbd3f23`. M1 filters the body-only book; M2 filters the iron fly. Still `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`. |
 | 2026-09-12 | Sprint 009 plan **drafted** for review. Status `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`. No D0, no new economic run. |
 | 2026-09-12 | Sprint 008 D3 closeout **accepted** through `61cbf30`. Findings unchanged. See [`008_closeout.md`](../sprint_memos/008_closeout.md). |

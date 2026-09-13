@@ -1,8 +1,8 @@
 # Sprint 009 — Short-body economics, execution costs, protection, and conditional entry filtering
 
 **Status:** `DRAFT — AWAITING REVIEW`  
-**Revised from:** `cbd3f23` (planning correction only; not accepted)  
-**Updated:** 2026-09-12  
+**Revised from:** `5a14348` (tie-break correction only; not accepted)  
+**Updated:** 2026-09-13  
 **Mode:** Audit. Planning only. Implementation has not started.  
 **Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md)  
 **Canonical path:** `docs/agenda/sprint9_short_body_wing_plan.md` — do not duplicate under `docs/tmp/`.  
@@ -360,15 +360,22 @@ Freeze at most one measurement/expression/rule combination. A candidate is eligi
 5. At least 8 of the 10 largest development winning trades are retained. Report the dollar share of those ten separately. The count is not the dollar percentage.
 6. Mean date-level dollar uplift is positive in each of 2020, 2021, 2022, and 2023.
 
-If both are eligible, do not compare raw dollar bounds across expressions. Freeze the one with the larger adjusted lower bound on mean dollar uplift **per unit of that candidate’s unfiltered exposure**. That ratio is a tie-break only. It is not a third primary test, and family size stays 2. If those exposure-scaled bounds differ by less than \(10^{-6}\), freeze neither.
+Each candidate is judged only against its own matching unfiltered expression. Eligibility uses the six predicates above. Family size stays 2.
 
-If none are eligible, record `STOP_NO_RULE`. That is a complete D3.
+- If exactly one candidate is eligible, freeze that measurement/expression/rule.
+- If both are eligible, freeze the one with the larger adjusted lower confidence bound on mean date-level **dollar** uplift.
+- If those dollar bounds differ by less than \$1, freeze neither and record `STOP_NO_RULE` with the tie reason.
+- If neither is eligible, record `STOP_NO_RULE` with the failed predicates.
+
+Do not rank the candidates by exposure-scaled confidence bounds. M1’s denominator is underlying notional and M2’s is iron-fly capital at risk. Those denominators cannot support a comparable ranking. Exposure normalization stays inside each candidate’s diagnostic companion and, if that pair is frozen, inside that pair’s D4 benchmark.
+
+The common official iron-fly population, original cross quantities, and shared calendar make dollar uplift comparable for choosing which filter experiment to run next. That comparison is not a comparison of risk-adjusted returns and not a judgment of production suitability.
 
 **Footprint.** Score function, exclusion function, and inference wrapper. Reuse Sprint 008 HAC and retention reporting patterns. New tests for undefined denominators, sort stability, \(k=\lfloor n/5\rfloor\), and the family-size lock. No threshold search.
 
 **Evidence and checks.** Development score coverage, undefined counts, the two-candidate table, freeze or stop decision written before any later-period filter number is computed.
 
-**Done when.** Exactly one rule is frozen, or `STOP_NO_RULE` is recorded with the failed predicates named.
+**Done when.** Exactly one rule is frozen, or `STOP_NO_RULE` is recorded with the failed predicates or the dollar tie-break named.
 
 **Continuation.** One frozen rule authorizes D4 design/execution later. `STOP_NO_RULE` skips D4. It does not authorize a new measurement.
 
@@ -503,7 +510,7 @@ The reviewer should accept, reject, or amend these before any implementation:
 2. Body-only is a counterfactual on the iron-fly-selected population, not a newly selected short-straddle strategy.
 3. The five-term attribution and the concession definitions in §8, including fees = 0.
 4. The two measurement/expression pairs in §10: M1 filters the body-only cross book; M2 filters the cross iron fly. No cross-combinations. Rejecting a pair requires a plan amendment before D3, not a post-result replacement.
-5. The freeze predicates, including the 80% winning-profit floor and the 8-of-10 largest-winner count, applied on each candidate’s matching expression. These are proposed gates, not results.
+5. The freeze predicates, including the 80% winning-profit floor and the 8-of-10 largest-winner count, applied on each candidate’s matching expression. If both qualify, the tie-break is the larger adjusted lower bound on mean date-level dollar uplift. A difference under \$1 freezes neither. Exposure-scaled bounds are not used to rank candidates. These are proposed gates, not results.
 6. Exposure benchmarks: M2 uses official iron-fly capital at risk; M1 uses \(\sum Q S_0\) and is labeled notional, not margin. Filtered quantities stay unscaled. D4 tests exactly those two contrasts for the frozen pair.
 7. Later-period attribution and protection summaries wait until a freeze or a skip, and cannot select a structure or authorize uncovered trading.
 8. Sequential authorization: accepting this plan does not start D0.
