@@ -2,12 +2,13 @@
 
 **Updated:** 2026-09-13
 
-**Status:** `D0 DESIGN ACCEPTED; IMPLEMENTATION IN PROGRESS`
+**Status:** `D0 EXECUTED — EVIDENCE AWAITING REVIEW; D1 NOT STARTED`
 
-**Mode:** **Build**, restricted to the approved D0 helper, runner, tests, and documentation. Official input artifacts remain read-only. Do not start D1. Do not mark D0 `READY` before the official readiness evidence is reviewed.
+**Mode:** **Build**, restricted to the approved D0 helper, runner, tests, and documentation. Official input artifacts remain read-only. Do not start D1. The official run returned `READY`; that evidence is awaiting review and is not an accepted D0 closeout.
 
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.md) — scope accepted for D0 planning; do not duplicate under `docs/tmp/`.
-**D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`. Implementation in progress. Official readiness evidence not yet attached.
+**D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`.  
+**D0 evidence:** [`docs/tmp/sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md) — `AWAITING REVIEW`. Run `READY` at `546d3e6`. Output `C:/MomentumCVG_env/runs/sprint009_d0_20260913T212939Z`.
 
 **Previous:** Sprint 008 — [`CLOSED — D3 ACCEPTED`](../sprint_memos/008_closeout.md) through `61cbf30`. Findings unchanged: not an income-generating long filter; historical `STOP_NO_THRESHOLDS` preserved.  
 **Prior diagnosis:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md). This draft does not implement that execution-observation handoff and does not cancel it.  
@@ -21,7 +22,7 @@ Answer, for the frozen `42:8` short iron-fly book:
 
 > Where does the selected short book lose its economic edge, and can better trade selection improve it while accounting for the value of protection?
 
-Sprint scope is accepted. The D0 design at `5329726` is accepted and implementation is in progress. This sprint does not rescue the frozen cross book, retune the signal window, search new wings, or claim that historical quote scenarios are attainable fills. D1 has not started.
+Sprint scope is accepted. The D0 design at `5329726` is accepted. Implementation `546d3e6` has been run; the official readiness verdict is `READY` and the evidence is awaiting review. This sprint does not rescue the frozen cross book, retune the signal window, search new wings, or claim that historical quote scenarios are attainable fills. D1 has not started.
 
 Proposed method order:
 
@@ -58,14 +59,14 @@ Full protocol: [`sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.
 
 | ID | Question | Status |
 |---|---|---|
-| **D0** | Can the accepted artifacts support a matched body/wing dataset that reproduces every selected short iron fly and correctly accounts for every trading date? | Design **ACCEPTED** at `5329726`. Implementation **in progress**. Official evidence not yet attached. Not `READY` |
+| **D0** | Can the accepted artifacts support a matched body/wing dataset that reproduces every selected short iron fly and correctly accounts for every trading date? | Executed at `546d3e6`. Official run `READY`. Evidence [awaiting review](../tmp/sprint009_d0_evidence_review.md). Not an accepted closeout. D1 not started |
 | **D1** | Where does the short book lose economic margin? | **Not started** |
 | **D2** | What protection do the wings provide? | **Not started** |
 | **D3** | Can entry measurements identify unattractive trades? | **Not started** |
 | **D4** | Does the frozen rule improve later-period economics? | **Not started.** Skipped if D3 does not freeze a rule |
 | **D5** | What does the evidence justify? | **Not started** |
 
-D0 implementation is authorized and in progress, limited to the approved helper, runner, tests, and documentation. Official inputs stay read-only. D1–D5 have no design files and have not started.
+D0 implementation and the official readiness run are done. Evidence is awaiting review. Do not start D1. D1–D5 have no design files.
 
 ---
 
@@ -108,9 +109,9 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 
 **D0 design:** [`sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED**.
 
-**Implementation:** in progress. Do not start D1. Do not mark D0 `READY` until official readiness evidence is reviewed.
+**Implementation:** `546d3e6`. Official run returned `READY`. Evidence is awaiting review. Do not start D1.
 
-**Next action:** finish the approved D0 helper, tests, and official readiness run. Record `READY` or `BLOCKED` with evidence. Do not weaken a check to obtain `READY`.
+**Next action:** review [`sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md). Do not start D1 from this execution.
 
 ---
 
@@ -118,6 +119,7 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 
 | Date | Event |
 |------|-------|
+| 2026-09-13 | D0 official readiness **executed** at `546d3e6`. Verdict `READY`. Evidence [`sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md) awaiting review. Output `C:/MomentumCVG_env/runs/sprint009_d0_20260913T212939Z`. D1 not started. |
 | 2026-09-13 | D0 design at `5329726` **accepted**. Mode set to Build for the approved helper, runner, tests, and documentation. Implementation **in progress**. Official readiness evidence not yet attached. D1 not started. |
 | 2026-09-13 | D0 design **corrected** from `b813f5e`. Direct mid/cross pairing and saved-row contract added. Design still `DRAFT — AWAITING REVIEW`. Implementation not started. |
 | 2026-09-13 | Sprint scope **accepted for D0 planning**. D0 design drafted ([`sprint009_d0_design.md`](../tmp/sprint009_d0_design.md)), `DRAFT — AWAITING REVIEW`. Implementation not started. |

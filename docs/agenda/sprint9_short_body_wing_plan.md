@@ -1,16 +1,17 @@
 # Sprint 009 — Short-body economics, execution costs, protection, and conditional entry filtering
 
-**Status:** `SCOPE ACCEPTED; D0 DESIGN ACCEPTED; D0 IMPLEMENTATION IN PROGRESS`  
-**Revised from:** `5329726` (D0 design accepted; implementation in progress; not a `READY` verdict)  
+**Status:** `D0 EXECUTED — EVIDENCE AWAITING REVIEW; D1 NOT STARTED`  
+**Revised from:** `546d3e6` (official D0 run returned `READY`; evidence not yet accepted)  
 **Updated:** 2026-09-13  
-**D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`. Not a `READY` verdict.  
-**Mode:** Build, restricted to the approved D0 helper, runner, tests, and documentation. D1 has not started.  
+**D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`.  
+**D0 evidence:** [`docs/tmp/sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md) — `AWAITING REVIEW`.  
+**Mode:** Build restricted to D0. Do not start D1.  
 **Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md)  
 **Canonical path:** `docs/agenda/sprint9_short_body_wing_plan.md` — do not duplicate under `docs/tmp/`.  
 **Prior closeouts:** [`docs/sprint_memos/008_closeout.md`](../sprint_memos/008_closeout.md) (accepted through `61cbf30`), [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 
-This document is the accepted sprint-level research protocol. The D0 design at `5329726` is accepted and its implementation is in progress. It does not authorize D1, a new economic comparison, or a `READY` verdict. Official inputs stay read-only.
+This document is the accepted sprint-level research protocol. The D0 design at `5329726` is accepted. Implementation `546d3e6` has been run; evidence is awaiting review. It does not authorize D1 or a new economic comparison. Official inputs stay read-only.
 
 ---
 
@@ -165,7 +166,7 @@ No deliverable selects a signal window, a new wing, a size, or a live fill.
 
 ## 7. D0 — Can we trust the body/wing comparison?
 
-**Design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`. Implementation in progress. The question, population, and calendar rules below are unchanged. That design specifies the column projection and checks. It does not replace D1–D5.
+**Design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`. Executed at `546d3e6`; evidence awaiting review. The question, population, and calendar rules below are unchanged. That design specifies the column projection and checks. It does not replace D1–D5.
 
 **Question.** Can the accepted artifacts support a matched body/wing dataset that reproduces every selected short iron fly and correctly accounts for every trading date?
 
@@ -485,7 +486,7 @@ These start only after plan acceptance and a separate authorization for that inc
 
 If D4 is skipped, the remaining path is the descriptive companion plus the closeout. No increment reruns `SurfaceRunner` or retunes `42:8`.
 
-Separate one-page designs are written when an increment is authorized, following the existing workflow. D0 implementation is in progress under the accepted design. Do not create D1–D5 designs, runners, or evidence directories until those increments are authorized.
+Separate one-page designs are written when an increment is authorized, following the existing workflow. D0 has been executed; its evidence is awaiting review. Do not create D1–D5 designs, runners, or evidence directories until those increments are authorized.
 
 ---
 

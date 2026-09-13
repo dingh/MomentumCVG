@@ -2,7 +2,7 @@
 
 **Status:** `ACCEPTED` at `5329726`  
 **Updated:** 2026-09-13  
-**Implementation:** **IN PROGRESS.** This document does not mark D0 `READY` or complete. Official readiness evidence is not yet attached.  
+**Implementation:** executed at `546d3e6`. Official run verdict `READY`. Evidence [`sprint009_d0_evidence_review.md`](sprint009_d0_evidence_review.md) is `AWAITING REVIEW` and is not an accepted closeout. D1 has not started.  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](../agenda/sprint9_short_body_wing_plan.md) — scope accepted for D0 planning; D1–D5 unchanged  
 **Official run (read-only):** `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z`  
@@ -20,7 +20,7 @@ The official cross and mid artifacts appear to carry the fields this design requ
 
 ## Authorization
 
-This design was accepted at `5329726`. Implementation of the approved helper, runner, tests, and documentation is in progress. Official inputs stay read-only. D1 has not started. This acceptance does not mark D0 `READY`.
+This design was accepted at `5329726`. Implementation `546d3e6` has been run against the read-only official directory. The run verdict is `READY`. That evidence is awaiting review and does not start D1. This file is not a D0 closeout.
 
 ---
 
