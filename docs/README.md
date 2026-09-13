@@ -32,7 +32,7 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [surface_straddle_observation_transform_design.md](surface_straddle_observation_transform_design.md) | Sprint 005 D2 accepted transform contract / design of record | 2026-08-09 |
 | [development_workflow.md](development_workflow.md) | Human + agent sprint workflow; roadmap 004–008 | 2026-08-09 |
 | [baseline_status.md](baseline_status.md) | Test and smoke-command baseline (Sprint 006 closeout Phase 1 gate) | 2026-08-24 |
-| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 007 — `CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED` (next sprint unauthorized) | 2026-09-06 |
+| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 008 — `D3 SUBMITTED — AWAITING FINAL REVIEW` | 2026-09-12 |
 | [agenda/sprint7_shortfall_plan.md](agenda/sprint7_shortfall_plan.md) | Sprint 007 working plan — D0–D4 questions, gates, and evidence boundaries | 2026-09-06 |
 | [v1_weekly_runbook.md](v1_weekly_runbook.md) | Stage A producer / repair notes (Sprint 004 input scope; Sprint 005 closed) | 2026-08-09 |
 | [known_bugs.md](known_bugs.md) | Open bugs and spec drift (fix deferred) | 2026-06-14 |
@@ -78,6 +78,7 @@ These remain useful for Sprint 001 gap history. They are **not** active specific
 | 006 (D4) | [Baseline execution evidence](sprint_memos/sprint006_d4_baseline_execution_evidence.md) _(Phase 4 evidence; technical record)_ |
 | 006 | [Sprint 006 closeout](sprint_memos/006_closeout.md) _(CLOSED 2026-08-24 — evidence accepted; frozen 42:8 economics weak/negative; hypothesis rejected/deferred)_ |
 | 007 | [Sprint 007 closeout](sprint_memos/007_closeout.md) _(CLOSED 2026-09-06 — D3 accepted; D4 `EXECUTION_CALIBRATION_REQUIRED`; next sprint unauthorized)_ |
+| 008 | [Sprint 008 closeout](sprint_memos/008_closeout.md) _(submitted 2026-09-12 — awaiting final review; not yet reviewer-accepted)_ |
 | — | [Week 0 review notes](sprint_memos/week0_review_notes.md) _(archived from agenda)_ |
 
 ## Related (repo root)

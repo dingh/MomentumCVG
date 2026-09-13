@@ -1,7 +1,8 @@
 # Sprint 008 D2 — evidence review
 
-**Status:** `EXECUTED — AWAITING REVIEW`  
+**Status:** `REVIEWED / ACCEPTED` through `c9b0a6a`  
 **Executed:** 2026-09-12  
+**Review annotation (2026-09-12):** Accepted through `c9b0a6a`. No further D2 fixes. This annotation does not change the results below. The closeout was submitted afterward in [`docs/sprint_memos/008_closeout.md`](../sprint_memos/008_closeout.md) and is awaiting final review.  
 **Design:** [`sprint008_d2_design.md`](sprint008_d2_design.md) — accepted 2026-09-12, reviewed commit `c2ba972`  
 **Evidence:** `C:/MomentumCVG_env/runs/sprint008_d2_20260912T232144Z/`  
 **Characterization:** Retrospective validation of already frozen rules. Not a pristine holdout or independent confirmation. Historical D1 findings and `STOP_NO_THRESHOLDS` are unchanged. This run does not promote a filter.
@@ -185,4 +186,4 @@ No research-rule changes after seeing results. No threshold, measurement, sizing
 - Fees remain 0. Quote-based full-cross results do not establish attainable live fills.
 - This is retrospective validation, not independent confirmation.
 
-D3 is not started.
+At execution, D3 had not started. The submitted closeout is [`docs/sprint_memos/008_closeout.md`](../sprint_memos/008_closeout.md); that submission is not reviewer acceptance.

@@ -2,9 +2,9 @@
 
 **Updated:** 2026-09-12
 
-**Status:** `D1 CLOSED; D2 EXECUTED — EVIDENCE AWAITING REVIEW`
+**Status:** `D3 SUBMITTED — AWAITING FINAL REVIEW`
 
-**Mode:** **Build/Audit.** Sprint-level plan accepted. **D0 accepted.** **D1 closed and reviewed.** Findings unchanged: M1/M2 `inconclusive`, M3 `unsupported`, gate **`STOP_NO_THRESHOLDS` preserved.** **D2 executed** 2026-09-12. Evidence awaiting review. The accepted amendment replaced threshold search with one retrospective evaluation of the unchanged M1 and M2 exclude-U rules. D3 remains incomplete.
+**Mode:** **Build/Audit.** Sprint-level plan accepted. **D0 accepted.** **D1 closed and reviewed.** Findings unchanged: M1/M2 `inconclusive`, M3 `unsupported`, gate **`STOP_NO_THRESHOLDS` preserved.** **D2 reviewed and accepted** through `c9b0a6a`. **D3 closeout submitted** for final review; not yet reviewer-accepted.
 
 **Working plan:** [`docs/agenda/sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md) — accepted detailed scope; canonical path; do not duplicate under `docs/tmp/`.
 
@@ -17,7 +17,8 @@
 **D1 cost-diagnosis protocol:** [`docs/tmp/sprint008_d1_cost_diagnosis_protocol.md`](../tmp/sprint008_d1_cost_diagnosis_protocol.md) — bounded amendment (two fixed U-exclusions); **reviewed** 2026-09-12
 **D1 cost-diagnosis evidence:** [`docs/tmp/sprint008_d1_cost_diagnosis_evidence.md`](../tmp/sprint008_d1_cost_diagnosis_evidence.md) — **reviewed** (correction accepted, commit `870d4b7`); `C:/MomentumCVG_env/runs/sprint008_d1_cost_diagnosis_20260912T211530Z/` (HEAD `e1248f0`, dirty at run). Prior run preserved: `sprint008_d1_cost_diagnosis_20260911T162501Z`.
 **D2 design:** [`docs/tmp/sprint008_d2_design.md`](../tmp/sprint008_d2_design.md) — **`ACCEPTED`** 2026-09-12 (reviewed commit `c2ba972`)
-**D2 evidence:** [`docs/tmp/sprint008_d2_evidence_review.md`](../tmp/sprint008_d2_evidence_review.md) — **executed, awaiting review**; `C:/MomentumCVG_env/runs/sprint008_d2_20260912T232144Z/` (HEAD `c2ba972`, dirty at run). Historical `STOP_NO_THRESHOLDS` preserved.
+**D2 evidence:** [`docs/tmp/sprint008_d2_evidence_review.md`](../tmp/sprint008_d2_evidence_review.md) — **reviewed / accepted** through `c9b0a6a`; `C:/MomentumCVG_env/runs/sprint008_d2_20260912T232144Z/` (HEAD `c2ba972`, dirty at run). Historical `STOP_NO_THRESHOLDS` preserved.
+**D3 closeout:** [`docs/sprint_memos/008_closeout.md`](../sprint_memos/008_closeout.md) — **submitted for final review**; not yet reviewer-accepted.
 
 **Previous:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md)  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable evidence; not edited by this sprint.
@@ -64,16 +65,17 @@ Full protocol: [`sprint8_long_filter_plan.md`](sprint8_long_filter_plan.md).
 | **D1** | Validate measurements; record `supported` / `unsupported` / `inconclusive` gate | **Closed / reviewed** (`STOP_NO_THRESHOLDS` **preserved**; M1/M2 inconclusive, M3 unsupported) |
 | **D1-FU** | Within-date lowest vs highest 20% (M1/M2); exploratory | **Complete and reviewed** (does not amend the gate) |
 | **D1-CD** | Cost diagnosis + fixed U-exclusion (M1, M2); bounded amendment | **Complete and reviewed** (correction `870d4b7` accepted; not D2) |
-| **D2** | Accepted amendment: one retrospective evaluation of unchanged M1 and M2 exclude-U rules on `2024-01-01` through `2026-07-10` | **Executed — evidence awaiting review**. Not a change to historical `STOP_NO_THRESHOLDS` |
-| **D3** | Closeout: conclusions, limitations, implications for later work | **Incomplete** (subsequent sprint closeout) |
+| **D2** | Accepted amendment: one retrospective evaluation of unchanged M1 and M2 exclude-U rules on `2024-01-01` through `2026-07-10` | **Reviewed / accepted** through `c9b0a6a`. Not a threshold search and not a change to historical `STOP_NO_THRESHOLDS` |
+| **D3** | Closeout: conclusions, limitations, implications for later work | **Submitted for final review** ([`008_closeout.md`](../sprint_memos/008_closeout.md)). Not yet reviewer-accepted |
 
 D0: [`sprint008_d0_design.md`](../tmp/sprint008_d0_design.md), [`sprint008_d0_evidence_review.md`](../tmp/sprint008_d0_evidence_review.md).  
 D1: [`sprint008_d1_design.md`](../tmp/sprint008_d1_design.md), [`sprint008_d1_evidence_review.md`](../tmp/sprint008_d1_evidence_review.md).  
 D1-FU: [`sprint008_d1_within_date_followup_protocol.md`](../tmp/sprint008_d1_within_date_followup_protocol.md), [`sprint008_d1_within_date_followup_evidence.md`](../tmp/sprint008_d1_within_date_followup_evidence.md).  
 D1-CD: [`sprint008_d1_cost_diagnosis_protocol.md`](../tmp/sprint008_d1_cost_diagnosis_protocol.md), [`sprint008_d1_cost_diagnosis_evidence.md`](../tmp/sprint008_d1_cost_diagnosis_evidence.md).
-D2: [`sprint008_d2_design.md`](../tmp/sprint008_d2_design.md) — **accepted** 2026-09-12 (`c2ba972`).
+D2: [`sprint008_d2_design.md`](../tmp/sprint008_d2_design.md) — design accepted (`c2ba972`); evidence **reviewed / accepted** through `c9b0a6a`.
+D3: [`008_closeout.md`](../sprint_memos/008_closeout.md) — submitted for final review.
 
-D1 is closed. Historical `STOP_NO_THRESHOLDS` is preserved. The accepted D2 amendment authorizes only the specified retrospective evaluation. It is not a threshold search and does not change D1 findings.
+D1 is closed. Historical `STOP_NO_THRESHOLDS` is preserved. The accepted D2 amendment replaced threshold search with the specified retrospective evaluation. It is not a threshold search and does not change D1 findings.
 
 ---
 
@@ -83,14 +85,14 @@ Sprint 008 is complete when:
 
 - [x] D0 confirms protocol freeze / input readiness (or records a specific blocker).
 - [x] D1 records an explicit measurement gate decision (`STOP_NO_THRESHOLDS`; follow-ups reviewed; not a D2 completion).
-- [x] D2 is accepted and executed, or a stop is recorded without threshold search. Executed 2026-09-12; evidence awaiting review. Historical `STOP_NO_THRESHOLDS` unchanged.
-- [ ] D3 closes with a defensible answer to the central question.
-- [ ] Equal-dollar baseline, within-\(h\) quantity freeze, unused-cash treatment, and winning-profit retention metrics are honored.
-- [ ] Sprint 006/007 accepted results remain unreinterpreted.
-- [ ] No signal-window, short-side, structure, or execution-policy winner is selected from this sprint.
-- [ ] Hypothetical fills are not claimed attainable.
-- [ ] Focused tests pass for any new financial calculation code.
-- [ ] Remaining risks and required future/unused confirmation are documented.
+- [x] D2 is accepted and executed, or a stop is recorded without threshold search. Reviewed / accepted through `c9b0a6a`. The amendment replaced threshold search; historical `STOP_NO_THRESHOLDS` unchanged.
+- [x] D3 memo answers the central question and is **submitted for final review** ([`008_closeout.md`](../sprint_memos/008_closeout.md)). Not yet reviewer-accepted.
+- [x] Equal-dollar baseline, within-\(h\) quantity freeze, unused-cash treatment, and winning-profit retention metrics are honored. Dollar retention is reported separately from winner-count retention.
+- [x] Sprint 006/007 accepted results remain unreinterpreted.
+- [x] No signal-window, short-side, structure, or execution-policy winner is selected from this sprint. M1 is a candidate for later validation only.
+- [x] Hypothetical fills are not claimed attainable.
+- [x] Focused tests pass for any new financial calculation code (67 passed before the D2 run; recorded in the D2 evidence).
+- [x] Remaining risks and required future/unused confirmation are documented in the closeout.
 
 An unsupported measurement, inconclusive relationship, or ineffective threshold is a valid completion.
 
@@ -115,9 +117,9 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 **D1 status:** **closed and reviewed** (2026-09-12). Labels unchanged: M1/M2 `inconclusive`, M3 `unsupported`. Gate **`STOP_NO_THRESHOLDS` preserved.** Original evidence `sprint008_d1_20260907T223037Z` (exec SHA `72629a0`, clean tree). Within-date follow-up and corrected cost-diagnosis follow-up are accepted as D1 extensions, not as a change to those labels.
 
-**D2 status:** **executed — evidence awaiting review.** [`docs/tmp/sprint008_d2_evidence_review.md`](../tmp/sprint008_d2_evidence_review.md); `C:/MomentumCVG_env/runs/sprint008_d2_20260912T232144Z/`. Retrospective validation only. M1 label `relative_benefit`; M2 label `inconclusive`. Neither filtered book is profitable over the full window. Do not promote a filter, retune cutoffs, or start D3 until this evidence is reviewed. Historical `STOP_NO_THRESHOLDS` is unchanged.
+**D2 status:** **reviewed and accepted** through `c9b0a6a`. [`docs/tmp/sprint008_d2_evidence_review.md`](../tmp/sprint008_d2_evidence_review.md); `C:/MomentumCVG_env/runs/sprint008_d2_20260912T232144Z/`. Retrospective validation only. M1 label `relative_benefit`; M2 label `inconclusive`. Neither filtered book is profitable over the full window. Do not promote a filter or retune cutoffs. Historical `STOP_NO_THRESHOLDS` is unchanged.
 
-**D3** remains the subsequent sprint closeout.
+**D3 status:** **submitted for final review.** [`docs/sprint_memos/008_closeout.md`](../sprint_memos/008_closeout.md). Not yet reviewer-accepted. Sprint 009 is not designed here. The user’s stated intention is a separately scoped short-side sprint.
 
 ---
 
@@ -125,6 +127,7 @@ An unsupported measurement, inconclusive relationship, or ineffective threshold 
 
 | Date | Event |
 |------|-------|
+| 2026-09-12 | D3 closeout **submitted for final review** ([`008_closeout.md`](../sprint_memos/008_closeout.md)). Not yet reviewer-accepted. D2 accepted through `c9b0a6a`. No experiment rerun. |
 | 2026-09-12 | D2 **executed.** Evidence `sprint008_d2_20260912T232144Z` awaiting review. M1 `relative_benefit`; M2 `inconclusive`. No filter promoted. D3 not started. |
 | 2026-09-12 | D2 design **accepted** (reviewed commit `c2ba972`). Amendment replaces threshold search with one retrospective evaluation of unchanged M1 and M2 exclude-U rules on `2024-01-01` through `2026-07-10`. Historical `STOP_NO_THRESHOLDS` preserved. Implementation authorized. |
 | 2026-09-12 | D2 design **revised in place** after review of `269fde0` (evaluation-window portfolio interface; authoritative calendar). Still `DRAFT — AWAITING REVIEW`. Not implemented. |
