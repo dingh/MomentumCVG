@@ -2,9 +2,10 @@
 
 **Status:** `AWAITING REVIEW`  
 **Executed:** 2026-09-13  
-**Design:** [`sprint009_d0_design.md`](sprint009_d0_design.md) — accepted at `5329726`  
-**Implementation:** `546d3e6f6c79549d389e14e5ad60bc9520407d09`  
-**Evidence:** `C:/MomentumCVG_env/runs/sprint009_d0_20260913T212939Z/`  
+**Design:** [`sprint009_d0_design.md`](sprint009_d0_design.md) — accepted at `5329726`. Population, accounting, and official anchors unchanged.  
+**Implementation:** `004ba80052f6586f6a230ad207e8151e695e156e`  
+**Evidence:** `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z/`  
+**Supersedes:** `546d3e6` / `C:/MomentumCVG_env/runs/sprint009_d0_20260913T212939Z/`. That run is not the current readiness record. Its accounting figures are unchanged by the stricter checks.  
 **Characterization:** Readiness of a matched short iron-fly body/wing panel. Not a profitability, filter, or protection result. Later-period rows are stored only as row-level readiness. D1 has not started.
 
 ---
@@ -13,7 +14,20 @@
 
 `READY`
 
-Every gate passed. The primary-window short book is 3,322 included iron flies and official P&L −$146,279.84743525038, within $0.01 of the accepted −$146,279.85. The baseline was not rerun. No check was weakened.
+Every gate passed under the stricter checks. The stricter checks did not expose an official input inconsistency. The baseline was not rerun and no check was weakened.
+
+Official accounting is unchanged from the superseded run: 3,322 included short iron flies, official P&L −$146,279.84743525038, reconstructed P&L −$146,279.84743525033, residual sum 5.58e-11.
+
+---
+
+## What the correction changed
+
+The correction does not change the accepted design, population, quantity convention, or anchors.
+
+- Missing or non-finite `entry_spot`, `capital_at_risk_dollars`, `portfolio_quantity`, and logged `pnl_total_leg` now fail with the trade key, field, and reason. Reconstructed values no longer skip those checks.
+- Short quantity must be negative and have positive magnitude. Each leg settlement spot must agree with the trade settlement spot.
+- Duplicate midpoint legs fail pairing before set or dictionary construction. The cross row is kept and the reason is named.
+- `n_included_short` must be a finite nonnegative integer. Fractional counts are not truncated. A positive short book requires `traded`. A `valid_no_trade` date cannot contain included positions. Verified long-only and zero-short dates remain `verified_zero_short`.
 
 ---
 
@@ -26,12 +40,11 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint009_d0_readiness.py
 
 | Item | Value |
 |---|---|
-| Code revision | `546d3e6f6c79549d389e14e5ad60bc9520407d09` |
+| Code revision | `004ba80052f6586f6a230ad207e8151e695e156e` |
 | Official run | `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` |
 | Official execution SHA | `e205b9acc5d0400aa38169de721acb7fb8268f29` |
-| Contract SHA-256 | `4012b4a472448004e1a1b14e8814f506911ea0e263e35157b4e13e27ed51a54c` (receipt integrity gate) |
 | Receipt SHA-256 | `4499ee89707fc0b514ad5276e5e5cfa4db5d829482cfec1c635e594a1ec35461` |
-| Output directory | `C:/MomentumCVG_env/runs/sprint009_d0_20260913T212939Z` |
+| Output directory | `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z` |
 | Official directory writes | none |
 
 ---
@@ -42,7 +55,7 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint009_d0_readiness.py
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_sprint009_d0_body_wing_readiness.py -q
 ```
 
-12 passed. Covers cash signs, share-equivalent quantity versus an extra ×100, swapped wing, non-body strike, duplicate leg key, reconciliation failure, missing and extra midpoint keys, quote mismatch, paired settlement mismatch, long-only and missing funnel dates, null short count, and the saved-row contract. Official artifacts were not used as fixtures.
+17 passed, including the prior synthetic cases and regression tests that propagate each invalid case to `BLOCKED` while a valid control stays `READY`.
 
 ---
 
@@ -53,7 +66,7 @@ C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_sprint009_d
 | Receipt | PASS. Inventory 17; all receipt hashes matched |
 | Columns | PASS |
 | Reconstruction | PASS. Independent cash, settlement, and structure checks |
-| Pairing | PASS. No missing or extra selected-short keys |
+| Pairing | PASS. No missing, extra, or duplicate selected-short keys |
 | Reconciliation | PASS. Trade residuals failed = 0 |
 | Primary anchor | PASS. n = 3,322; official and reconstructed P&L match the closeout and `decision_report.json` |
 | Calendar | PASS. Blocked dates = 0 |
@@ -64,7 +77,7 @@ C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_sprint009_d
 
 | Check | Result |
 |---|---|
-| Matched cross rows | 3,684, including pairing-failure rows if any; none failed |
+| Matched cross rows | 3,684 |
 | `pairing_ok` false | 0 |
 | Missing from mid | 0 |
 | Unmatched midpoint keys | 0 |
@@ -75,7 +88,7 @@ C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_sprint009_d
 | Primary reconstructed P&L | −146,279.84743525033 |
 | Decision-report short | n = 3,322; pnl = −146,279.84743525038 |
 
-Trade counts by window: pre-study 362, development 2,087, later period 1,235. Primary = development + later period = 3,322. Pre-study rows are labeled and are not part of the 3,322 anchor.
+Trade counts by window: pre-study 362, development 2,087, later period 1,235. Primary = 3,322. Pre-study rows are labeled and are not part of the 3,322 anchor.
 
 ---
 
@@ -90,7 +103,7 @@ Authoritative dates: 403. Dates after 2026-07-10: 0.
 | development | verified_zero_short | 1 |
 | later_period | verified_positive_short | 132 |
 
-The verified zero-short date is 2020-03-13. Whole-book status is `traded`, funnel `n_included_short` is 0, and there are no included short iron-fly rows. It is not converted to cash and is not dropped.
+The verified zero-short date is 2020-03-13. Whole-book status is `traded`, funnel `n_included_short` is 0, and there are no included short iron-fly rows.
 
 ---
 
@@ -103,7 +116,7 @@ Stored outside the repo, under the output directory above:
 - `short_calendar.parquet`
 - `d0_report.json`
 - `d0_report.md`
-- `execution_receipt.json` (invocation metadata; not a sixth economic output)
+- `execution_receipt.json`
 
 `d0_report.json` has no development-versus-later P&L, filter result, or protection summary.
 

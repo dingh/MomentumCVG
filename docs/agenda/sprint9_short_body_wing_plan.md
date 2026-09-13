@@ -1,7 +1,7 @@
 # Sprint 009 — Short-body economics, execution costs, protection, and conditional entry filtering
 
 **Status:** `D0 EXECUTED — EVIDENCE AWAITING REVIEW; D1 NOT STARTED`  
-**Revised from:** `546d3e6` (official D0 run returned `READY`; evidence not yet accepted)  
+**Revised from:** `004ba80` (stricter D0 rerun returned `READY`; `546d3e6` superseded; evidence not yet accepted)  
 **Updated:** 2026-09-13  
 **D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`.  
 **D0 evidence:** [`docs/tmp/sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md) — `AWAITING REVIEW`.  
@@ -11,7 +11,7 @@
 **Prior closeouts:** [`docs/sprint_memos/008_closeout.md`](../sprint_memos/008_closeout.md) (accepted through `61cbf30`), [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 
-This document is the accepted sprint-level research protocol. The D0 design at `5329726` is accepted. Implementation `546d3e6` has been run; evidence is awaiting review. It does not authorize D1 or a new economic comparison. Official inputs stay read-only.
+This document is the accepted sprint-level research protocol. The D0 design at `5329726` is accepted. Implementation `004ba80` has been rerun; `546d3e6` is superseded. Evidence is awaiting review. It does not authorize D1 or a new economic comparison. Official inputs stay read-only.
 
 ---
 
@@ -166,7 +166,7 @@ No deliverable selects a signal window, a new wing, a size, or a live fill.
 
 ## 7. D0 — Can we trust the body/wing comparison?
 
-**Design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`. Executed at `546d3e6`; evidence awaiting review. The question, population, and calendar rules below are unchanged. That design specifies the column projection and checks. It does not replace D1–D5.
+**Design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`. Rerun at `004ba80`; evidence awaiting review. The question, population, and calendar rules below are unchanged. That design specifies the column projection and checks. It does not replace D1–D5.
 
 **Question.** Can the accepted artifacts support a matched body/wing dataset that reproduces every selected short iron fly and correctly accounts for every trading date?
 
