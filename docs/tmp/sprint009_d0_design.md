@@ -16,7 +16,7 @@
 
 ## Working hypothesis (not a verdict)
 
-The official cross trade log, leg log, date status, and funnel summary appear to carry the fields this design requires. Sprint 007 already paired mid and cross leg identity. That is not this verdict. D0 still has to project the columns below, rebuild each included short iron fly, and classify every authoritative date. A missing field, a broken identity, or a calendar mismatch is `BLOCKED` with a named gap. It is not a cue to rerun the baseline.
+The official cross and mid artifacts appear to carry the fields this design requires. Sprint 007 pairing is precedent for the check, not a stored result this step can cite as coverage. D0 still has to project the columns below, pair the selected short keys without an inner join, rebuild each included short iron fly, and classify every authoritative date. A missing field, a broken identity, or a calendar mismatch is `BLOCKED` with a named gap. It is not a cue to rerun the baseline.
 
 ## Authorization
 
@@ -51,7 +51,7 @@ Do **not** call `run_d0_validation`, `load_fill_primary_tables`, or any Sprint 0
 
 ### 1.2 Required artifacts
 
-File names follow `expected_run_output_path`. Cross is the reference book. Mid is loaded only to prove the diagnostic midpoint book is separately sized.
+File names follow `expected_run_output_path`. Cross is the reference book. Mid is loaded to pair selected short keys, legs, quotes, and settlements, and to show that official midpoint quantities are a different sizing. Midpoint P&L is not read from the mid book.
 
 | Role | File | Why |
 |---|---|---|
@@ -61,7 +61,8 @@ File names follow `expected_run_output_path`. Cross is the reference book. Mid i
 | Funnel | `funnel_summary_sprint006_baseline_v1_cross.parquet` | `n_included_short` |
 | Trade log | `trade_log_sprint006_baseline_v1_cross.parquet` | Selected shorts, \(Q\), spot, P&L, capital at risk |
 | Leg log | `leg_log_sprint006_baseline_v1_cross.parquet` | Four legs, quotes, fills, cash, settlement |
-| Mid trade log | `trade_log_sprint006_baseline_v1_mid.parquet` | Quantity contrast only. Not the diagnostic P&L |
+| Mid trade log | `trade_log_sprint006_baseline_v1_mid.parquet` | Selected-short key pairing and quantity contrast. Not the diagnostic P&L |
+| Mid leg log | `leg_log_sprint006_baseline_v1_mid.parquet` | Leg identity, quote, and settlement pairing against cross |
 
 ### 1.3 Required columns
 
@@ -87,9 +88,15 @@ A column listing on 2026-09-13 confirmed these names exist on the official cross
 
 `trade_date`, `status`, `reason`
 
-**Mid trade log, contrast only**
+**Mid trade log, pairing and quantity contrast**
 
-`trade_date`, `ticker`, `direction`, `included_in_portfolio`, `quantity`
+`trade_date`, `ticker`, `direction`, `included_in_portfolio`, `instrument_type`, `quantity`
+
+**Mid leg log, pairing**
+
+`trade_date`, `ticker`, `direction`, `expiry_date`, `option_type`, `strike`, `leg_index`, `unit_quantity`, `bid`, `ask`, `mid`, `exit_spot`, `expiry_payoff_per_unit`, `included_in_portfolio`, `fill_label`
+
+Do not load mid `pnl_total`. The diagnostic midpoint P&L is computed at cross \(Q\) from quotes.
 
 ### 1.4 Join keys
 
@@ -165,15 +172,57 @@ D0 must use that signed product. Do not compare the unsigned intrinsic to the lo
 \text{pnl\_total\_leg} = Q \times \text{pnl\_per\_unit}
 \]
 
-### 2.5 Midpoint at frozen \(Q\)
+### 2.5 Mid/cross pairing
 
-A midpoint repricing uses the cross leg quotes and `expected_mid_fill_price` (bid + half spread), then the same \(Q\). It must be computed in the helper. It must not be read from `trade_log_mid.pnl_total`.
+Sprint 007 D0 paired included keys on the primary window for the whole book. That evidence is not this contract. It does not cover `pre_study` dates, it does not persist a short iron-fly subset, and its column list omits fields this D0 requires. Re-running `run_d0_validation` would check a wider book than this step needs. Implementation therefore validates the short iron-fly pair directly. It does not treat the Sprint 007 report as a substitute.
 
-Also load mid-book `quantity` on the same trade keys. Record whether any absolute quantity differs. That difference is the proof the official midpoint book was sized separately. If every quantity happens to match, still do not use mid-book P&L as the diagnostic. The output column `pnl_mid_at_cross_q` is the diagnostic. `pnl_official_mid_book` is not an output of D0.
+Reference set \(R\): included short `iron_fly` keys on the cross trade log. Mid set \(M\): included short `iron_fly` keys on the mid trade log. Compare by set difference. Do not inner-join.
 
-D0 checks that the diagnostic is computable. It does not interpret whether midpoint P&L is better.
+| Mismatch | Handling |
+|---|---|
+| Key in \(R\) missing from \(M\) | Keep the cross row. Set `pairing_ok` false and name the missing key. `BLOCKED` |
+| Key in \(M\) missing from \(R\) | Do not add it to the matched file. Write it to `pairing_unmatched_mid` in `d0_report.json`. `BLOCKED` |
+| Key in both, leg-key sets differ | Keep the cross row. Name the missing or extra leg keys. `BLOCKED` |
+| Key in both, `bid` / `ask` / `mid`, `unit_quantity`, `exit_spot`, or `expiry_payoff_per_unit` differ | Keep the cross row. `BLOCKED` |
 
-### 2.6 Reconciliation
+`fill_price` may differ. That is the fill, not a pairing failure. Absolute quantity may differ. Official cross quantity remains \(Q\). Store the mid magnitude only as `quantity_mid_abs`. If the mid key is missing, that field is null. Do not write zero.
+
+A midpoint repricing uses the cross leg quotes and `expected_mid_fill_price` (bid + half spread), then the same \(Q\). It is computed in the helper. It is not read from `trade_log_mid.pnl_total`. If every mid quantity happens to match \(Q\), still do not use mid-book P&L. D0 checks that the diagnostic is computable. It does not interpret whether midpoint P&L is better.
+
+### 2.6 Saved trade-row contract
+
+`matched_short_iron_flies.parquet` is one row per key in \(R\), including rows that fail pairing. A failed row is not deleted.
+
+Keys: `trade_date`, `ticker`, `direction`. `direction` is `short`.
+
+| Column | Unit | Meaning |
+|---|---|---|
+| `window_label` | label | `pre_study`, `development`, `later_period`, or `unexpected` |
+| `instrument_type` | label | `iron_fly` |
+| `expiry_date` | date | Shared expiry |
+| `body_strike` | premium points per share | Logged body strike |
+| `Q` | share-equivalent | \(\lvert\) official cross `quantity` \(\rvert\). Not contracts. Not rescaled by 100 |
+| `quantity_cross_signed` | share-equivalent | Official cross `quantity`, negative |
+| `quantity_mid_abs` | share-equivalent or null | Mid-book magnitude when the key is in \(M\). Null if missing. Not \(Q\) |
+| `entry_spot` | dollars per share | Official `entry_spot` |
+| `capital_at_risk_dollars` | dollars | Official cross capital at risk |
+| `pnl_cross_official` | dollars | Official cross `pnl_total` |
+| `pnl_body_cross` | dollars | Sum of body-leg `pnl_total_leg` |
+| `pnl_wing_cross` | dollars | Sum of wing-leg `pnl_total_leg` |
+| `pnl_legs_sum` | dollars | Sum of four `pnl_total_leg` |
+| `pnl_mid_at_cross_q` | dollars | Midpoint fill at frozen \(Q\). Not mid-book P&L |
+| `residual_body_wing_vs_legs` | dollars | Body plus wing minus `pnl_legs_sum` |
+| `residual_legs_vs_official` | dollars | `pnl_legs_sum` minus `pnl_cross_official` |
+| `pairing_ok` | bool | False if any §2.5 mismatch |
+| `pairing_reason` | text | Empty when `pairing_ok` is true |
+
+The four legs are columns on that same row, not a second file. Prefixes are `put_wing`, `body_put`, `body_call`, and `call_wing`, matching leg indexes 0–3. Each prefix has `option_type`, `strike`, `unit_quantity`, `bid`, `ask`, `mid`, `fill_price_cross`, `entry_cash_per_unit`, `expiry_payoff_per_unit`, `exit_spot`, and `pnl_total_leg`.
+
+Quote and cash fields are premium per share, with signs as in §2.4. `pnl_total_leg` is already dollars at \(Q\). Missing pairing fields stay null and set `pairing_ok` false. They are not imputed.
+
+Later-period rows may be stored with `window_label = later_period`. That is row-level readiness. `d0_report.json` may count rows by window. It must not contain a development-versus-later P&L, a filter result, or a protection summary.
+
+### 2.7 Reconciliation
 
 For each included short iron fly, body legs are indices 1 and 2. Wing legs are indices 0 and 3.
 
@@ -247,7 +296,7 @@ Do not create that directory in this planning step.
 | File | Contents |
 |---|---|
 | `input_inventory.json` | Paths, receipt SHA, column lists, hash of each input file |
-| `matched_short_iron_flies.parquet` | One row per included short iron fly, plus the four leg identities and the reconciliation residual |
+| `matched_short_iron_flies.parquet` | One row per official cross included short iron fly, including pairing failures. Schema is §2.6 |
 | `short_calendar.parquet` | One row per authoritative date: window label, short-book class, funnel count, trade count, blocker reason |
 | `d0_report.json` | Gate results, counts by window and class, primary-window residual versus the accepted anchor |
 | `d0_report.md` | `READY` or `BLOCKED`, with named reasons |
@@ -287,7 +336,11 @@ Synthetic cases, not official extracts:
 - Body plus wing plus four-leg sum failing the tolerance is a failed gate.
 - A `traded` date with funnel `n_included_short == 0` and no short rows is `verified_zero_short`.
 - A `traded` date with a missing funnel row, or `n_included_short` null, is `blocked`, not cash.
-- A later-period date is labeled `later_period` and does not produce a comparative P&L field.
+- A later-period date is labeled `later_period` and may be stored as a row. The report has no development-minus-later field.
+- A cross short key missing from mid stays in the matched file with `pairing_ok` false. It is not removed by an inner join.
+- An extra included mid short key is listed in `pairing_unmatched_mid` and is not added to the matched file.
+- A quote or settlement mismatch on a paired leg fails pairing and keeps the cross row.
+- A matched row includes `window_label`, \(Q\), `entry_spot`, `capital_at_risk_dollars`, the four prefixed legs, signed cash and settlement, official cross P&L, body and wing cross P&L, `pnl_mid_at_cross_q`, and both residuals.
 
 ---
 

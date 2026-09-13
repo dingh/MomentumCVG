@@ -10,7 +10,7 @@
 **Prior closeouts:** [`docs/sprint_memos/008_closeout.md`](../sprint_memos/008_closeout.md) (accepted through `61cbf30`), [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 
-This document is the sprint-level research protocol. It is not accepted and does not authorize D0 implementation, a backtest, or a new economic run. Deliverable-specific notebooks, runners, and evidence files are created only after the relevant step is accepted. Do not add empty implementation or evidence files now.
+This document is the accepted sprint-level research protocol for D0 planning. It does not authorize D0 implementation, a backtest, or a new economic run. The D0 design remains a separate draft. Deliverable-specific runners and evidence files are created only after that step is authorized. Do not add empty implementation or evidence files now.
 
 ---
 
@@ -35,7 +35,7 @@ An inconclusive measurement, a decision not to freeze a rule, or a skipped D4 is
 | Source | Role |
 |---|---|
 | [`docs/agenda/current_sprint.md`](current_sprint.md) | Active sprint status |
-| This plan | Proposed Sprint 009 protocol, pending review |
+| This plan | Accepted scope for D0 planning. D0 design is a separate draft |
 | [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) and official run `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` | Frozen selection, structures, and the reference cross book |
 | [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md) | Accepted cross economics. Not revised here |
 | [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md) | `EXECUTION_CALIBRATION_REQUIRED` remains. This sprint does not implement the observer and does not cancel that handoff |
@@ -171,7 +171,7 @@ No deliverable selects a signal window, a new wing, a size, or a live fill.
 
 **Inputs.** Official run `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` and `run_receipt.json`. Expected files already used in Sprint 007, plus the official funnel summary: `trade_log_cross`, `trade_log_mid`, `leg_log_cross`, `leg_log_mid`, `date_status_*`, `funnel_summary_*`, `decision_report.json`. Read-only. Sprint 007 D0 confirmed paired leg identity, quote identity, and settlement identity between fills. D0 here confirms those properties still hold for the short iron-fly subset, that body plus wings add to the official short book, and that the short-side calendar in §4.5 classifies every authoritative date.
 
-**Bounded analysis.** Inventory the artifacts. Build one matched row per official included short iron fly, with four legs. Verify leg identity, option side, strike, expiry, quantity sign, premium sign, bid/ask/mid, fill price, and expiry settlement. Confirm cross quantities will be the reference. Confirm midpoint at those quantities is computable from quotes and is distinct from `trade_log_mid` quantities. Reconcile, by date: whole-book `date_status`; funnel `n_included_short`; included short trade rows and their quantities; required leg rows and settlement fields. Assign the §4.5 classification. Later-period files may be opened only for this readiness and reconciliation. Do not compute development-versus-later economic comparisons, filter results, or protection summaries in D0.
+**Bounded analysis.** Inventory the artifacts. Build one matched row per official included short iron fly, with four legs. Verify leg identity, option side, strike, expiry, quantity sign, premium sign, bid/ask/mid, fill price, and expiry settlement. Confirm cross quantities will be the reference. Pair each selected short trade key and its leg identity, quotes, and settlement to the midpoint artifacts by set difference, not an inner join. Confirm midpoint P&L at those cross quantities is computable from quotes and is distinct from `trade_log_mid` P&L. Reconcile, by date: whole-book `date_status`; funnel `n_included_short`; included short trade rows and their quantities; required leg rows and settlement fields. Assign the §4.5 classification. Later-period row-level readiness data may be stored. Do not compute development-versus-later economic comparisons, filter results, or protection summaries in D0. The pairing and saved-column contract are in [`sprint009_d0_design.md`](../tmp/sprint009_d0_design.md).
 
 **Footprint.** One small read-only helper under `src/backtest/` and focused tests. Reuse Sprint 007 artifact-validation patterns. Do not call `build_ironfly_from_surface` to reselect wings. No `SurfaceRunner` rerun unless a required field is absent. A missing field is a blocker and a plan amendment, not a silent repair.
 

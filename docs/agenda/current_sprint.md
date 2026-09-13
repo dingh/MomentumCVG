@@ -21,7 +21,7 @@ Answer, for the frozen `42:8` short iron-fly book:
 
 > Where does the selected short book lose its economic edge, and can better trade selection improve it while accounting for the value of protection?
 
-This is a separately scoped research draft. It does not rescue the frozen cross book, retune the signal window, search new wings, or claim that historical quote scenarios are attainable fills.
+Sprint scope is accepted for D0 planning. This sprint does not rescue the frozen cross book, retune the signal window, search new wings, or claim that historical quote scenarios are attainable fills. The D0 design is still awaiting review. Implementation has not started.
 
 Proposed method order:
 
@@ -34,7 +34,7 @@ Proposed method order:
 
 ---
 
-## 2. Central conventions (proposed)
+## 2. Central conventions (accepted for D0 planning)
 
 | Item | Convention |
 |---|---|
@@ -118,6 +118,7 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 
 | Date | Event |
 |------|-------|
+| 2026-09-13 | D0 design **corrected** from `b813f5e`. Direct mid/cross pairing and saved-row contract added. Design still `DRAFT — AWAITING REVIEW`. Implementation not started. |
 | 2026-09-13 | Sprint scope **accepted for D0 planning**. D0 design drafted ([`sprint009_d0_design.md`](../tmp/sprint009_d0_design.md)), `DRAFT — AWAITING REVIEW`. Implementation not started. |
 | 2026-09-13 | Sprint 009 draft **corrected** from `5a14348`. Tie-break is dollar uplift, not exposure-scaled bounds. Still `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`. |
 | 2026-09-12 | Sprint 009 draft **revised** from `cbd3f23`. M1 filters the body-only book; M2 filters the iron fly. Still `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`. |
