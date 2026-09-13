@@ -27,9 +27,9 @@ Proposed method order:
 1. Trust a matched body/wing dataset against the official cross book (D0).
 2. Attribute development-history dollars into body economics, execution concession, protection price, wing spread, and wing payout (D1).
 3. Compare the same positions with and without wings at fixed body quantities (D2).
-4. Only then test two predeclared entry measurements and freeze at most one rule, or stop (D3).
-5. If a rule is frozen, evaluate it once on the later period against the unfiltered book and a same-exposure cash benchmark (D4).
-6. Close with what the evidence justifies, including a stop (D5).
+4. Only then test two predeclared pairs and freeze at most one, or stop (D3). M1 filters the body-only cross book. M2 filters the cross iron fly. Same population. No cross-combinations.
+5. If a pair is frozen, evaluate it once on the later period against its matching unfiltered expression and its matching exposure benchmark (D4).
+6. Close with historical results and one next investigation (D5). Do not authorize uncovered trading or resolve Sprint 007.
 
 ---
 
@@ -37,12 +37,14 @@ Proposed method order:
 
 | Item | Convention |
 |---|---|
-| Side | Official short iron flies only |
+| Side | Official short iron-fly population. Body-only is a counterfactual on those names, not a new selection |
 | Selection | Frozen `42:8` / CVG / liquidity / structure / name cap / weekly hold-to-expiry |
 | Wings | Current `0.15` below-nearest rule. No strike search |
 | Reference quantities | Official cross book, fixed. Midpoint at those quantities is a diagnostic, not the official midpoint run |
-| Population | Conditional on names that passed iron-fly construction, including wing availability |
-| Primary measure | Paired dollar P&L. Ratios need an explicit denominator. Do not put an uncovered body on the iron fly’s max-loss denominator |
+| Candidates | M1 score filters the body-only cross book. M2 score filters the cross iron fly. Freeze at most one pair |
+| Exposure | M2: official iron-fly capital at risk. M1: \(\sum Q S_0\), labeled notional, not margin. Filtered quantities stay unscaled |
+| Calendar | Whole-book `date_status` is not short-book status. Verified zero-short dates stay at zero. Missing short rows are a blocker |
+| Primary measure | Paired dollar P&L. A normalized companion is a diagnostic, not return on capital. Do not put an uncovered body on the iron fly’s max-loss denominator |
 | Fees | 0, matching the official book. Not deducted twice through the spread |
 | Development | `2020-01-01` through `2023-12-31` |
 | Later period | `2024-01-01` through `2026-07-10`. Retrospective. Used only after a freeze or a recorded skip |
@@ -55,7 +57,7 @@ Full protocol: [`sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.
 
 | ID | Question | Status |
 |---|---|---|
-| **D0** | Can we trust the body/wing comparison? | **Not started** |
+| **D0** | Can we trust the body/wing comparison, including the short-side calendar? | **Not started** |
 | **D1** | Where does the short book lose economic margin? | **Not started** |
 | **D2** | What protection do the wings provide? | **Not started** |
 | **D3** | Can entry measurements identify unattractive trades? | **Not started** |
@@ -70,13 +72,13 @@ No design, runner, or evidence file exists yet. Do not create empty ones before 
 
 Sprint 009 is not complete while this plan is a draft. After a later execution authorization, it is complete when:
 
-- [ ] D0 records `READY` or a named blocker.
+- [ ] D0 records `READY` or a named blocker, including the short-book calendar classification.
 - [ ] D1 reconciles the five-term identity on development history, or stops on that identity.
 - [ ] D2 separates gross protection payout from net contribution and does not claim unmeasured path risks were measured.
-- [ ] D3 freezes at most one predeclared rule, or records `STOP_NO_RULE`.
-- [ ] D4 reports both comparisons, or is skipped with the D3 reason. The rule is not revised on the later period.
+- [ ] D3 freezes at most one measurement/expression pair, or records `STOP_NO_RULE`. Family size stays 2.
+- [ ] D4 reports both matching comparisons, or is skipped with the D3 reason. The pair is not revised on the later period.
 - [ ] Dollar-profit retention is reported separately from winner-count retention.
-- [ ] D5 answers the central question without assuming wing removal or a production filter.
+- [ ] D5 states historical results and one next investigation only. It does not authorize uncovered trading, production use, or a Sprint 007 resolution.
 - [ ] Sprint 006/007/008 accepted results remain unreinterpreted.
 - [ ] Hypothetical fills are not claimed attainable.
 - [ ] Focused tests pass for any new financial calculation code.
@@ -113,5 +115,6 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 
 | Date | Event |
 |------|-------|
+| 2026-09-12 | Sprint 009 draft **revised** from `cbd3f23`. M1 filters the body-only book; M2 filters the iron fly. Still `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`. |
 | 2026-09-12 | Sprint 009 plan **drafted** for review. Status `DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`. No D0, no new economic run. |
 | 2026-09-12 | Sprint 008 D3 closeout **accepted** through `61cbf30`. Findings unchanged. See [`008_closeout.md`](../sprint_memos/008_closeout.md). |

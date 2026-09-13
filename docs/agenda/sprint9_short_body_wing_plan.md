@@ -1,6 +1,7 @@
 # Sprint 009 — Short-body economics, execution costs, protection, and conditional entry filtering
 
 **Status:** `DRAFT — AWAITING REVIEW`  
+**Revised from:** `cbd3f23` (planning correction only; not accepted)  
 **Updated:** 2026-09-12  
 **Mode:** Audit. Planning only. Implementation has not started.  
 **Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md)  
@@ -20,9 +21,9 @@ This document is the sprint-level research protocol. It is not accepted and does
 | **Theme** | Short-body economics, execution costs, protection value, and conditional entry filtering |
 | **Population** | Official short iron-fly candidates and strikes from the frozen `42:8` book. Conclusions are conditional on that population, including its wing-availability restrictions |
 | **Reference book** | Official cross book. Quantities stay fixed. A midpoint repricing at those quantities is a diagnostic, not the separately sized official midpoint run |
-| **Structures in scope** | Current iron fly (`wing_delta_target = 0.15`, `_choose_below_nearest`) and a body-only counterfactual that drops wings without adding names or resizing |
+| **Structures in scope** | Current iron fly (`wing_delta_target = 0.15`, `_choose_below_nearest`) and a body-only counterfactual that drops wings without adding names or resizing. D3/D4 pair each predeclared score with one matching expression: M1 filters the body-only cross book; M2 filters the cross iron fly |
 | **Windows** | Development `2020-01-01` through `2023-12-31` for D1–D3 inspection and any rule freeze. Later period `2024-01-01` through `2026-07-10` only after a freeze or an explicit stop. Retrospective evaluation, not an untouched holdout |
-| **Not the goal** | Force profitability; remove wings; search new wing strikes; promote a production filter; replace Sprint 007’s execution-observation handoff |
+| **Not the goal** | Force profitability; authorize uncovered trading; search new wing strikes; establish production readiness; resolve Sprint 007’s execution-calibration requirement |
 
 An inconclusive measurement, a decision not to freeze a rule, or a skipped D4 is a valid completion.
 
@@ -104,17 +105,30 @@ Paired dollar P&L is the primary attribution measure.
 
 Any ratio needs a named denominator, used the same way on every name in that comparison:
 
-- Body midpoint credit \(C_{\mathrm{body}} = \mathrm{mid}_{\mathrm{call}} + \mathrm{mid}_{\mathrm{put}}\), in premium per share, or \(Q \times C_{\mathrm{body}}\) in dollars.
-- Do **not** apply the iron fly’s finite `max_loss_per_share` or `return_on_max_loss` to the uncovered body. That cap exists only while the wings are held.
+- Body midpoint credit \(C_{\mathrm{body}} = \mathrm{mid}_{\mathrm{call}} + \mathrm{mid}_{\mathrm{put}}\), in premium per share, or \(Q \times C_{\mathrm{body}}\) in dollars. This is the measurement denominator in §10.1. It is not a capital-at-risk figure.
+- Iron-fly exposure for the M2 candidate only: official cross `capital_at_risk_dollars`. That quantity exists because the wings are held. It is not a return-on-capital claim by itself.
+- Body-only exposure for the M1 candidate: entry-known notional \(Q \times S_0\), summed across positions, where \(S_0\) is the official entry spot. This matches underlying notional. It does not match brokerage margin, Greeks, or tail risk. Do **not** use the iron fly’s finite `max_loss_per_share` or `return_on_max_loss` as the body’s capital at risk.
 - A large wing spread percentage on a cheap wing is not, by itself, large economic damage. Report dollars beside any percentage.
+
+Normalized companions divide a dollar difference by the matching unfiltered exposure for that date. They are diagnostics. They are not return on capital and not a second primary test.
 
 Cumulative results are sums of these fixed-quantity dollars across the authoritative date calendar. They are not compounded account equity, not View B compounded returns, and not a new equal-dollar book. Drawdown is peak-to-trough of that cumulative dollar series, with the peak including the initial zero.
 
-### 4.5 Calendar and missing data
+### 4.5 Short-side calendar contract
 
-Use the official `date_status` calendar. Keep verified no-trade dates. A missing row is not cash and is not a dropped date. If a required quote, quantity, strike, or settlement field is missing, D0 records a blocker. Do not impute.
+Official `date_status` describes the **whole** portfolio. A date marked traded can contain zero included shorts, including a long-only date. Do not treat whole-book status as a short-book status.
 
-The official primary window has `n_valid_no_trade = 0`. That is a fact to confirm, not a license to omit dates.
+D0 builds the authoritative date list from official `date_status` and reconciles it to official `funnel_summary` (`n_included_short`, `date_status`) and to included short trade and leg rows. Every authoritative date is retained. D0 may open later-period artifacts only for this readiness and reconciliation. It must not produce new comparative later-period economic results.
+
+Each authoritative date is exactly one of:
+
+| Class | Meaning |
+|---|---|
+| Verified positive short book | `n_included_short > 0`, included short trade rows and quantities match that count, and required leg and settlement fields are present |
+| Verified zero-short book | Short inclusion is verified at zero. This includes official no-trade dates and traded dates that are long-only or otherwise have no included short. Not a missing file |
+| Blocker | Missing, failed, or inconsistent short rows, quantities, legs, or settlement. This is not cash |
+
+Verified zero-short dates contribute zero to applicable dollar series and to both exposure benchmarks. A missing short row must not be rewritten as cash. A zero unfiltered exposure omits that date from the normalized diagnostic only, and the omission is disclosed. The dollar series still keeps the verified zero.
 
 ---
 
@@ -140,9 +154,9 @@ Do not pool development and later-period inference. They are different windows a
 | **D0** | Can we trust the body/wing comparison? | Matched short-book dataset reconciles to the official cross iron fly | Named identity or reconciliation blocker. No D1 |
 | **D1** | Where does the short book lose economic margin? | Development decomposition reconciles | Reconciliation failure. No economic story from a broken identity |
 | **D2** | What protection do the wings provide? | Development with/without-wings comparison is identified and labeled as a counterfactual | Same. A large wing cost does not by itself authorize wing removal |
-| **D3** | Can entry measurements identify unattractive trades? | Exactly one predeclared rule meets the freeze rule | Inconclusive, both fail, or tie-break fails → D4 skipped |
-| **D4** | Does the frozen rule improve later-period economics? | D3 froze exactly one rule | Skipped with the D3 reason. No substitute rule |
-| **D5** | What does the evidence justify? | Always, including after a stop | Must not assume wing removal, a new wing rule, or a production filter |
+| **D3** | Can entry measurements identify unattractive trades? | Exactly one predeclared measurement/expression pair meets the freeze rule | Inconclusive, both fail, or tie-break fails → D4 skipped |
+| **D4** | Does the frozen rule improve later-period economics? | D3 froze exactly one pair | Skipped with the D3 reason. No substitute pair |
+| **D5** | What does the evidence justify? | Always, including after a stop | Historical results and one investigation only. Not production readiness, uncovered trading, or a Sprint 007 resolution |
 
 No deliverable selects a signal window, a new wing, a size, or a live fill.
 
@@ -152,13 +166,13 @@ No deliverable selects a signal window, a new wing, a size, or a live fill.
 
 **Question.** Can accepted artifacts support a matched trade-level body/wing dataset that reproduces the official short iron fly?
 
-**Inputs.** Official run `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` and `run_receipt.json`. Expected files already used in Sprint 007: `trade_log_cross`, `trade_log_mid`, `leg_log_cross`, `leg_log_mid`, `date_status_*`, `decision_report.json`. Read-only. Sprint 007 D0 confirmed paired leg identity, quote identity, and settlement identity between fills. D0 here confirms those properties still hold for the short iron-fly subset and that body plus wings add to the official short book.
+**Inputs.** Official run `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` and `run_receipt.json`. Expected files already used in Sprint 007, plus the official funnel summary: `trade_log_cross`, `trade_log_mid`, `leg_log_cross`, `leg_log_mid`, `date_status_*`, `funnel_summary_*`, `decision_report.json`. Read-only. Sprint 007 D0 confirmed paired leg identity, quote identity, and settlement identity between fills. D0 here confirms those properties still hold for the short iron-fly subset, that body plus wings add to the official short book, and that the short-side calendar in §4.5 classifies every authoritative date.
 
-**Bounded analysis.** Inventory the artifacts. Build one matched row per official included short iron fly, with four legs. Verify leg identity, option side, strike, expiry, quantity sign, premium sign, bid/ask/mid, fill price, and expiry settlement. Confirm cross quantities will be the reference. Confirm midpoint at those quantities is computable from quotes and is distinct from `trade_log_mid` quantities. Confirm the official date calendar, including any verified no-trade date. Do not open development-versus-later economic comparisons in D0.
+**Bounded analysis.** Inventory the artifacts. Build one matched row per official included short iron fly, with four legs. Verify leg identity, option side, strike, expiry, quantity sign, premium sign, bid/ask/mid, fill price, and expiry settlement. Confirm cross quantities will be the reference. Confirm midpoint at those quantities is computable from quotes and is distinct from `trade_log_mid` quantities. Reconcile, by date: whole-book `date_status`; funnel `n_included_short`; included short trade rows and their quantities; required leg rows and settlement fields. Assign the §4.5 classification. Later-period files may be opened only for this readiness and reconciliation. Do not compute development-versus-later economic comparisons, filter results, or protection summaries in D0.
 
 **Footprint.** One small read-only helper under `src/backtest/` and focused tests. Reuse Sprint 007 artifact-validation patterns. Do not call `build_ironfly_from_surface` to reselect wings. No `SurfaceRunner` rerun unless a required field is absent. A missing field is a blocker and a plan amendment, not a silent repair.
 
-**Evidence and checks.** Artifact inventory, key uniqueness, leg-role verification, quantity-sign checks, quote sanity (missing bid/ask, crossed quotes), settlement present, and
+**Evidence and checks.** Artifact inventory, key uniqueness, leg-role verification, quantity-sign checks, quote sanity (missing bid/ask, crossed quotes), settlement present, the short-book classification counts, and
 
 \[
 \sum \text{leg P\&L} = \text{official cross trade P\&L} = \text{body dollars} + \text{wing dollars}
@@ -249,15 +263,24 @@ Also report, on development dates only:
 
 **Done when.** Costs saved, payouts forgone, absolute P&L, frequency, concentration, and drawdown are reported with the path limitation explicit.
 
-**Continuation.** D2 does not authorize wing removal. D3 still uses the iron fly, not the body-only book, as the filter population. Whether a later descriptive companion on 2024+ is worth filing is decided only after the D4 freeze or skip, and it still cannot select a structure.
+**Continuation.** D2 does not authorize wing removal or uncovered trading. Body-only P&L is a fixed-quantity research comparison. It does not establish brokerage-margin feasibility. D3 then tests the two predeclared pairs in §10: M1 on the body-only cross book, and M2 on the cross iron fly. Both stay on this same population. A later descriptive companion on 2024+ waits until the D4 freeze or skip, and it still cannot select a structure or authorize uncovered trading.
 
 ---
 
 ## 10. D3 — Can entry measurements identify unattractive trades?
 
-**Question.** On development history only, does one predeclared entry-only measurement support freezing a single exclusion rule?
+**Question.** On development history only, does one predeclared entry-only measurement support freezing a single measurement/expression/exclusion combination?
 
-**Inputs.** D0 quotes and official cross quantities. Profitability labels come from the official cross iron-fly P&L at those quantities. D1/D2 may explain the measurements. They must not add a third measurement or change a formula after results are seen.
+**Inputs.** D0 quotes, classifications, and official cross quantities. Two profitability expressions, both counterfactuals on the same official iron-fly-selected population:
+
+| Candidate | Score | Expression being filtered |
+|---|---|---|
+| M1 | Body execution burden | Body-only cross book at frozen \(Q\) |
+| M2 | Complete-package entry burden | Cross iron-fly book at the same frozen \(Q\) |
+
+M1 answers whether body execution burden identifies unattractive **body-only** trades. It is not scored on iron-fly P&L. M2 is scored on iron-fly P&L. Do not cross the pairs. Do not add a measurement or a cutoff grid. D1/D2 may explain the scores. They must not change a formula after results are seen.
+
+Body-only results are fixed-quantity research comparisons. They do not establish feasibility on brokerage margin and do not authorize wing removal.
 
 These scores are entry accounting ratios. They are not expected-return forecasts. They do not use the exit spot, the expiry payoff, or a model of the future move.
 
@@ -293,19 +316,22 @@ M2 = (D_{\mathrm{wing}} + H_{\mathrm{body}} + H_{\mathrm{wing}}) / C_{\mathrm{bo
 
 Units: fraction of body midpoint credit consumed, at entry, by the midpoint price of the wings plus body and wing spread concessions. Dimensionless. The wing payout is intentionally absent. Including it would be a forecast, not an entry measurement.
 
-**Undefined scores.** If any required quote is missing, the quote is crossed (`bid > ask`), or \(C_{\mathrm{body}} \le 0\), the score is undefined. Do not impute zero. Do not drop the name from the unfiltered book. An exclusion rule may omit only defined scores. Undefined names stay in both the filtered and unfiltered books and are counted.
+**Undefined scores.** A score is undefined if a quote that **its** formula uses is missing, that quote is crossed (`bid > ask`), or \(C_{\mathrm{body}} \le 0\). M1 does not become undefined because a wing quote is missing. M2 does. Do not impute zero. Do not drop the name from the unfiltered book of that expression. An exclusion rule may omit only defined scores. Undefined names stay in both the filtered and unfiltered books of that expression and are counted.
 
 ### 10.2 Candidate rule family
 
-Exactly two candidates. No combinations. No cutoff grid. No second expression invented after seeing ranks.
+Exactly two candidates. No cross-combinations. No cutoff grid. No second expression invented after seeing ranks.
 
-On each development date, for one measurement:
+On each development date, for one candidate:
 
-- Let \(n\) be the count of names with a defined score.
-- If \(n < 5\), exclude nobody that date. The filtered book equals the unfiltered book. Record the date.
+- Let \(n\) be the count of names with a defined score for that measurement.
+- If \(n < 5\), exclude nobody that date. The filtered book equals the unfiltered book of **that** expression. Record the date.
 - Otherwise exclude the highest-score group, \(k=\lfloor n/5\rfloor\), sorting by score descending, then ticker ascending.
-- Retained names keep official cross quantities.
-- Excluded names contribute cash at zero return that date. They are not resized onto the survivors.
+- Retained names keep official cross quantities on that expression.
+- Excluded names contribute cash at zero return that date on that expression. They are not resized onto the survivors.
+- Verified zero-short dates contribute zero. They are not dropped.
+
+Each candidate uses its matching expression for unfiltered and filtered P&L, excluded-versus-retained comparisons, winner retention, downside reporting, and the freeze predicates below.
 
 ### 10.3 What “separation” means
 
@@ -313,28 +339,28 @@ Do not use a Pearson correlation p-value as the continuation criterion. Do not c
 
 Evaluate, on development dates only:
 
-- economic separation: whether the excluded group has worse mean paired dollar P&L than the retained group, summarized at date level;
-- uncertainty: HAC inference on the date-level dollar P&L difference, filtered minus unfiltered, including cash dates;
-- a companion normalized difference, that dollar difference divided by the date’s official short `capital_at_risk_dollars`, reported beside the dollars and not used as a second family member;
-- winner retention: dollar-profit retention and winner-count retention, reported separately, plus the ten largest winning trades;
+- economic separation: whether the excluded group has worse mean paired dollar P&L than the retained group, on that candidate’s expression, summarized at date level;
+- uncertainty: HAC inference on the date-level dollar P&L difference, filtered minus unfiltered, on that expression, including verified zero-short dates at zero;
+- a diagnostic companion: that dollar difference divided by the date’s unfiltered exposure for **that** expression. M2 uses official short `capital_at_risk_dollars`. M1 uses \(\sum Q S_0\). The companion is not return on capital and not a second family member;
+- winner retention and downside on that expression: dollar-profit retention and winner-count retention, reported separately, plus the ten largest winning trades and the worst trades and dates;
 - stability: sign of the mean date-level dollar difference in each development year. Year checks are not added to the Bonferroni family.
 
 HAC, frozen: maxlags 3, Bartlett kernel, small-sample correction, Student-t with \(T-1\) degrees of freedom. Adjusted p = \(\min(1,\ 2\times\text{raw p})\). Adjusted interval is 97.5%. Family size stays 2 even if one measurement is undefined on every row.
 
-A verified no-trade date stays in the dollar series at zero. It is omitted from the normalized companion only when the denominator is zero.
+A verified zero-short date stays in the dollar series at zero. A zero unfiltered exposure omits that date from the diagnostic companion only. Those omissions are disclosed. They are not silent cash substitutions for missing rows.
 
 ### 10.4 Freeze rule
 
-Freeze at most one measurement and its exclude-highest-group expression. A candidate is eligible only if all of the following hold on development history:
+Freeze at most one measurement/expression/rule combination. A candidate is eligible only if all of the following hold on **its** development-history expression:
 
 1. Excluded-minus-retained date-level mean dollar P&L is negative (the dropped group is worse).
 2. The adjusted HAC interval for mean date-level dollar uplift (filtered minus unfiltered) lies entirely above zero.
-3. The normalized companion has a non-negative point estimate. Disagreement with the dollar sign blocks a freeze. It is not a second test to shop.
+3. The diagnostic companion has a non-negative point estimate. Disagreement with the dollar sign blocks a freeze. It is not a second test to shop, and it is not return on capital.
 4. Winning-profit retention is at least 80% of development baseline winning dollars.
 5. At least 8 of the 10 largest development winning trades are retained. Report the dollar share of those ten separately. The count is not the dollar percentage.
 6. Mean date-level dollar uplift is positive in each of 2020, 2021, 2022, and 2023.
 
-If both are eligible, freeze the one with the larger adjusted lower bound on the mean dollar uplift. If those bounds differ by less than \$1, freeze neither.
+If both are eligible, do not compare raw dollar bounds across expressions. Freeze the one with the larger adjusted lower bound on mean dollar uplift **per unit of that candidate’s unfiltered exposure**. That ratio is a tie-break only. It is not a third primary test, and family size stays 2. If those exposure-scaled bounds differ by less than \(10^{-6}\), freeze neither.
 
 If none are eligible, record `STOP_NO_RULE`. That is a complete D3.
 
@@ -350,28 +376,33 @@ If none are eligible, record `STOP_NO_RULE`. That is a complete D3.
 
 ## 11. D4 — Does the frozen rule improve later-period economics?
 
-**Question.** On `2024-01-01` through `2026-07-10`, does the single frozen rule improve economics relative to the unfiltered book and relative to a same-exposure cash benchmark?
+**Question.** On `2024-01-01` through `2026-07-10`, does the single frozen measurement/expression/rule improve economics relative to its matching unfiltered expression and relative to its matching exposure-scaled benchmark?
 
-**Inputs.** The frozen D3 rule, unchanged. Official cross quantities. Later-period calendar. Not available if D3 did not freeze a rule.
+**Inputs.** The frozen D3 combination, unchanged. Official cross quantities. Later-period calendar from §4.5. Not available if D3 did not freeze a pair. If the frozen pair is M1, the expression remains the body-only cross book. If it is M2, the expression remains the cross iron fly. Do not evaluate the other expression as a new candidate.
 
-**Two comparisons, both required.**
+**Two contrasts, both required. Family size for this evaluation is 2. Development inference is not pooled with it.**
 
-1. **Matching unfiltered expression.** Same names and original quantities. Excluded names are cash at zero. This shows incremental P&L, including the effect of holding more cash.
-2. **Same-exposure benchmark.** Scale every unfiltered name’s official-cross dollar P&L by
+1. **Matching unfiltered expression.** Same names and original quantities on that expression. Excluded names are cash at zero. This shows incremental P&L, including the effect of holding more cash.
+2. **Matching exposure-scaled benchmark.** On each date,
 
 \[
-f_t = \frac{\mathrm{CAR}_{\mathrm{retained},t}}{\mathrm{CAR}_{\mathrm{unfiltered},t}}
+f_t = \frac{E_{\mathrm{retained},t}}{E_{\mathrm{unfiltered},t}}
 \]
 
-where CAR is official cross `capital_at_risk_dollars`. The filtered book is not scaled. It keeps original quantities. The benchmark shrinks the unfiltered mix so retained capital-at-risk matches the filter. It does not drop names. This CAR scaler is valid only because both sides are iron flies. Do not apply it to the uncovered body.
+Scale every unfiltered position’s dollar P&L on that expression by \(f_t\). Keep filtered positions at their original quantities. The benchmark shrinks the unfiltered mix. It does not drop names.
 
-If unfiltered CAR is zero on a verified empty date, both dollar results are zero. Do not drop the date.
+| Frozen candidate | Exposure \(E\) | What the scaler matches |
+|---|---|---|
+| M2 iron fly | Official cross `capital_at_risk_dollars` | Iron-fly capital at risk. Not used for the body |
+| M1 body-only | \(\sum Q S_0\) | Underlying notional. Not brokerage margin, Greeks, or tail risk. Not the iron fly’s maximum loss |
 
-**Inference, frozen.** Date-level mean dollar difference. Same HAC settings as D3. Family size 2: contrast 1 and contrast 2. Adjusted interval 97.5%. Do not add a third contrast after seeing results. Year slices, including partial 2026, are descriptive.
+If unfiltered exposure is zero on a verified zero-short date, both dollar results are zero. Do not drop the date. Disclose the zero denominator if a diagnostic ratio is also shown. A missing short row is a blocker, not a zero.
 
-**Report.** Absolute P&L, incremental P&L versus each comparison, losses avoided, winning profits sacrificed, dollar-profit retention, winner-count retention, retained exposure (CAR and name count), worst trades, worst dates, and fixed-quantity cumulative dollar drawdown. State whether either book is profitable. Relative improvement is not absolute profitability.
+**Inference, frozen.** Date-level mean dollar difference on the frozen expression. Same HAC settings as D3. Family size 2: contrast 1 and contrast 2. Adjusted interval 97.5%. Do not add a third contrast after seeing results. Year slices, including partial 2026, are descriptive.
 
-**Footprint.** One evaluation function. Tests that the rule text matches the D3 freeze record, that quantities are unscaled on the filtered book, and that \(f_t\) uses CAR rather than max-loss of a straddle.
+**Report.** Absolute P&L, incremental P&L versus each comparison, losses avoided, winning profits sacrificed, dollar-profit retention, winner-count retention, retained exposure and name count, worst trades, worst dates, and fixed-quantity cumulative dollar drawdown. State whether either book is profitable. Relative improvement is not absolute profitability. An M1 result does not authorize uncovered trading.
+
+**Footprint.** One evaluation function. Tests that the rule text matches the D3 freeze record, that filtered quantities are unscaled, that M1 uses \(\sum Q S_0\) rather than iron-fly max loss, and that M2 uses official capital at risk.
 
 **Done when.** Both comparisons are reported, or D4 is recorded skipped with the D3 reason. The rule is not revised after later-period results.
 
@@ -381,24 +412,23 @@ If unfiltered CAR is zero on a verified empty date, both dollar results are zero
 
 ## 12. D5 — What does the evidence justify?
 
-**Question.** Given the accepted chain, what can be said about body economics, execution-cost attribution, protection cost and value, filtering, and remaining limitations, and what single follow-up is prioritized?
+**Question.** Given the accepted chain, what historical results are established, what one investigation should come next, and what evidence is still missing for any operational decision?
 
 **Inputs.** Accepted D0–D4 evidence, including a skipped D4.
 
-**Bounded analysis.** A closeout memo. It must cover:
+**Bounded analysis.** A closeout memo. It may:
 
-- body economics at midpoint and cross, at frozen quantities;
-- execution-cost attribution, with protection price separated from spread paid;
-- protection cost, gross payout, and net contribution, plus the unmeasured path risks;
-- filtering evidence, or the reason no rule was frozen;
-- remaining profitability and implementation limits, including unknown live fills;
-- one prioritized direction for later work.
+- establish the historical body, wing, and filtering results, including a stop;
+- recommend one prioritized subsequent investigation;
+- identify evidence still needed before any operational decision.
 
-That direction is not pre-filled. Wing removal, a new wing rule, and a production filter are allowed outcomes only if the evidence supports them. They are not the required outcome. Sprint 007’s `EXECUTION_CALIBRATION_REQUIRED` handoff remains unless the closeout explicitly says this evidence does not replace it — the default is that it does not.
+It must cover body economics, execution-cost attribution, protection cost and value, filtering evidence or the reason no pair was frozen, and remaining profitability and implementation limits.
+
+It must **not** establish production readiness, authorize uncovered trading, approve wing removal, promote a production filter, treat quote crosses as attainable fills, or claim to resolve Sprint 007’s `EXECUTION_CALIBRATION_REQUIRED` outcome. That handoff remains open.
 
 **Footprint.** `docs/sprint_memos/009_closeout.md` when D5 is authorized. Not created in this planning step.
 
-**Done when.** The memo answers the central question, including a stop, and does not treat quote results as attainable fills.
+**Done when.** The memo answers the central question within those limits, including a stop.
 
 ---
 
@@ -424,8 +454,8 @@ Choices that wait for evidence, and must not be answered in this plan:
 - Whether D0 finds a missing field that blocks a no-rerun path.
 - The development dollar split among the five D1 terms.
 - Whether net wing contribution is positive.
-- Whether either measurement meets the freeze predicates.
-- Whether a frozen rule, if any, helps on the later period after the cash-matched comparison.
+- Whether either measurement/expression pair meets the freeze predicates.
+- Whether a frozen pair, if any, helps on the later period against its matching unfiltered expression and its matching exposure benchmark.
 - What single follow-up D5 should prioritize.
 
 ---
@@ -436,11 +466,11 @@ These start only after plan acceptance and a separate authorization for that inc
 
 | Increment | Work | Rough effort | Depends on |
 |---|---|---|---|
-| 1 | D0 inventory, matched dataset, reconciliation tests | 1–2 days | Plan acceptance |
+| 1 | D0 inventory, short-book calendar classification, reconciliation tests | 1–2 days | Plan acceptance |
 | 2 | D1 development decomposition and identity tests | about 1 day | D0 ready |
 | 3 | D2 development protection comparison and tests | 1–2 days | D1 identity |
-| 4 | D3 scores, two-rule family, freeze record, tests | about 2 days | D0 quotes; D1/D2 reviewed so formulas are not quietly edited |
-| 5 | D4 later-period evaluation, only if a rule is frozen | 1–2 days | D3 freeze |
+| 4 | D3 two candidate-expression pairs, freeze record, tests | about 2 days | D0 quotes; D1/D2 reviewed so formulas are not quietly edited |
+| 5 | D4 later-period evaluation of the frozen pair only | 1–2 days | D3 freeze |
 | 6 | D5 closeout | about 1 day | D0–D4 status, including skips |
 
 If D4 is skipped, the remaining path is the descriptive companion plus the closeout. No increment reruns `SurfaceRunner` or retunes `42:8`.
@@ -472,12 +502,12 @@ The reviewer should accept, reject, or amend these before any implementation:
 1. Reference quantities are the official cross book, not the official midpoint book and not a new equal-dollar book.
 2. Body-only is a counterfactual on the iron-fly-selected population, not a newly selected short-straddle strategy.
 3. The five-term attribution and the concession definitions in §8, including fees = 0.
-4. The two measurements, score direction, and undefined-denominator rule in §10.1. Rejecting a measurement requires a plan amendment before D3, not a post-result replacement.
-5. The freeze predicates, including the 80% winning-profit floor and the 8-of-10 largest-winner count. These are proposed gates, not results.
-6. D4’s cash-matched benchmark uses official iron-fly capital at risk, and the filtered quantities stay unscaled.
-7. Later-period attribution and protection summaries wait until a freeze or a skip, and cannot select a structure.
+4. The two measurement/expression pairs in §10: M1 filters the body-only cross book; M2 filters the cross iron fly. No cross-combinations. Rejecting a pair requires a plan amendment before D3, not a post-result replacement.
+5. The freeze predicates, including the 80% winning-profit floor and the 8-of-10 largest-winner count, applied on each candidate’s matching expression. These are proposed gates, not results.
+6. Exposure benchmarks: M2 uses official iron-fly capital at risk; M1 uses \(\sum Q S_0\) and is labeled notional, not margin. Filtered quantities stay unscaled. D4 tests exactly those two contrasts for the frozen pair.
+7. Later-period attribution and protection summaries wait until a freeze or a skip, and cannot select a structure or authorize uncovered trading.
 8. Sequential authorization: accepting this plan does not start D0.
-9. Sprint 007’s execution-observation handoff is not replaced by this draft.
+9. D5 cannot close Sprint 007’s execution-calibration requirement or declare production readiness.
 
 ---
 
@@ -485,13 +515,13 @@ The reviewer should accept, reject, or amend these before any implementation:
 
 Sprint 009 is complete only after a later acceptance, not by this draft. When executed, it is complete when:
 
-- [ ] D0 records `READY` or a named blocker.
+- [ ] D0 records `READY` or a named blocker, including the short-book calendar classification.
 - [ ] D1 reconciles the five-term identity on development history, or stops on that identity.
 - [ ] D2 reports protection cost, gross payout, and net contribution, and states that intraholding margin and liquidation paths were not measured if they are absent.
-- [ ] D3 freezes at most one rule under the predeclared predicates, or records `STOP_NO_RULE`.
-- [ ] D4 evaluates that rule against both benchmarks, or is skipped with the D3 reason. The rule is not revised on the later period.
+- [ ] D3 freezes at most one measurement/expression pair under the predeclared predicates, or records `STOP_NO_RULE`. Family size stays 2.
+- [ ] D4 evaluates that pair against its matching unfiltered expression and its matching exposure benchmark, or is skipped with the D3 reason. The pair is not revised on the later period.
 - [ ] Dollar-profit retention and winner-count retention are not treated as the same number.
-- [ ] D5 answers the central question without assuming wing removal or a production filter.
+- [ ] D5 states historical results and one next investigation only. It does not authorize uncovered trading, production use, or a Sprint 007 resolution.
 - [ ] Sprint 006/007/008 accepted results stay unreinterpreted.
 - [ ] Quote fills are not claimed attainable.
 - [ ] Focused tests pass for any new financial calculation.

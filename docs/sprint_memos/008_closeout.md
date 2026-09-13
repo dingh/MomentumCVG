@@ -106,6 +106,6 @@ The user intends **Sprint 009 to focus on the short side**. Scope is to be defin
 | Within-date follow-up | Reviewed | [`sprint008_d1_within_date_followup_evidence.md`](../tmp/sprint008_d1_within_date_followup_evidence.md) |
 | Cost diagnosis | Reviewed (`870d4b7`) | [`sprint008_d1_cost_diagnosis_evidence.md`](../tmp/sprint008_d1_cost_diagnosis_evidence.md) |
 | D2 | Reviewed through `c9b0a6a` | [`sprint008_d2_evidence_review.md`](../tmp/sprint008_d2_evidence_review.md); `C:/MomentumCVG_env/runs/sprint008_d2_20260912T232144Z/` |
-| D3 | Submitted for final review | this memo |
+| D3 | Accepted through `61cbf30` | this memo |
 
 Official Sprint 006 artifacts were not mutated.
