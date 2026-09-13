@@ -1,7 +1,8 @@
 # Sprint 009 D0 — evidence review
 
-**Status:** `AWAITING REVIEW`  
+**Status:** `REVIEWED / ACCEPTED` through `82e3b46`  
 **Executed:** 2026-09-13  
+**Review annotation (2026-09-13):** Accepted through `82e3b46`. Findings unchanged. Implementation remains `004ba80`. Output remains `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z/`. The earlier run stays superseded. This annotation does not change the results below and does not start D1.  
 **Design:** [`sprint009_d0_design.md`](sprint009_d0_design.md) — accepted at `5329726`. Population, accounting, and official anchors unchanged.  
 **Implementation:** `004ba80052f6586f6a230ad207e8151e695e156e`  
 **Evidence:** `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z/`  

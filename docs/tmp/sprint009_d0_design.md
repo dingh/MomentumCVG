@@ -2,7 +2,7 @@
 
 **Status:** `ACCEPTED` at `5329726`  
 **Updated:** 2026-09-13  
-**Implementation:** corrected at `004ba80`. Official rerun verdict `READY`. Evidence [`sprint009_d0_evidence_review.md`](sprint009_d0_evidence_review.md) is `AWAITING REVIEW` and supersedes `546d3e6`. Not an accepted closeout. D1 has not started. The accepted design, population, accounting, and anchors are unchanged.  
+**Implementation:** `004ba80`. Official rerun verdict `READY`. Evidence [`sprint009_d0_evidence_review.md`](sprint009_d0_evidence_review.md) is **ACCEPTED** through `82e3b46` and supersedes `546d3e6`. D1 implementation has not started. The accepted design, population, accounting, and anchors are unchanged.  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](../agenda/sprint9_short_body_wing_plan.md) — scope accepted for D0 planning; D1–D5 unchanged  
 **Official run (read-only):** `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z`  
@@ -20,7 +20,7 @@ The official cross and mid artifacts appear to carry the fields this design requ
 
 ## Authorization
 
-This design was accepted at `5329726`. Implementation `004ba80` has been rerun against the read-only official directory. The run verdict is `READY`. The `546d3e6` run is superseded. That evidence is awaiting review and does not start D1. This file is not a D0 closeout.
+This design was accepted at `5329726`. Implementation `004ba80` has been rerun against the read-only official directory. The run verdict is `READY`. The `546d3e6` run is superseded. That evidence is accepted through `82e3b46`. Acceptance does not start D1. This file is not a D1 design.
 
 ---
 
