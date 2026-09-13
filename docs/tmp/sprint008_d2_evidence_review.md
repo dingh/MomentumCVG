@@ -19,11 +19,14 @@
 
 These labels are relative to the unfiltered baseline on the original budget \(B\). They are not a decision to trade either book, and they do not reopen threshold search.
 
-Separate facts:
+Interpretation:
 
-- **Relative improvement:** M1’s mean weekly uplift is positive and its Bonferroni-adjusted interval excludes 0. M2’s point uplift is smaller and inconclusive.
-- **Absolute historical profitability:** The unfiltered later-period book loses money. Both filtered books also lose money over the full evaluation window. A relative gain on a losing book is not a profitable book.
-- **Reliable advantage:** Not established. The window was inspected in earlier sprints. Fees are 0. Quote crosses are not attainable fills. Significance does not promote a filter.
+- M1 shows statistically supported relative improvement in this retrospective evaluation.
+- Neither filtered book is profitable over the full evaluation window.
+- M2 remains inconclusive.
+- These contrasts do not directly test M1 against M2 or isolate selection benefit from reduced exposure.
+
+The window was inspected in earlier sprints. Fees are 0. Quote-based full-cross results do not establish attainable live fills.
 
 An inconclusive M2 result completes that contrast. No cutoff was tuned after seeing results. D3 remains the subsequent closeout.
 
@@ -71,13 +74,18 @@ Budget \(B=\$10{,}000\) per date. Fees \(=0\), disclosed. Full cross \(h=1\). Or
 | Mean return on \(B\) | −2.97 pp | −0.62 pp | −2.14 pp |
 | Losses avoided | — | \$80,881.80 | \$75,448.80 |
 | Winning profits sacrificed | — | \$49,786.86 | \$64,397.98 |
-| Winning-profit retention | — | 87.0% (778/914 winners) | 83.2% (761/914) |
-| Top-5 winner-profit retention | — | 100% (5/5) | 76.8% (4/5) |
-| Top-10 winner-profit retention | — | 100% (10/10) | 86.7% (9/10) |
+| Winning-profit retention | — | 87.0% | 83.2% |
+| Winner-count retention | — | 778/914 = 85.1% | 761/914 = 83.3% |
+| Top-5 winner-profit retention | — | 100% | 76.8% |
+| Top-5 winners retained (count) | — | 5/5 | 4/5 |
+| Top-10 winner-profit retention | — | 100% | 86.7% |
+| Top-10 winners retained (count) | — | 10/10 | 9/10 |
 | Drawdown | \$-53,311.48 | \$-37,901.86 | \$-46,184.30 |
 | Dates exclusion applied | — | 132/132 | 132/132 |
 | Executed retained | 2304 | 1906 (398 excluded) | 1906 (398 excluded) |
 | Mean invested / cash (filtered) | 100.0% invested | 82.7% / 17.3% | 82.7% / 17.3% |
+
+Winning-profit retention is the share of baseline winning dollars kept. Winner-count retention is the share of winning trades kept. The count fraction is not the dollar-profit percentage. Stored summary fields are the authority: M1 winning-profit retention 0.870158293968001 (87.0%) and winner-count retention 0.8512035010940919 (778/914 = 85.1%); M2 winning-profit retention 0.8320532163221744 (83.2%) and winner-count retention 0.8326039387308534 (761/914 = 83.3%).
 
 Actual exclusion is about 17.3% of executed trades (\(398/2304\)), consistent with \(k=\lfloor n/5\rfloor\) plus the one crossed-quote cash name remaining in \(N\).
 
@@ -174,7 +182,7 @@ No research-rule changes after seeing results. No threshold, measurement, sizing
 
 - Executing tree was dirty. Receipt records source hashes and the diff hash. Historical evidence directories were not mutated.
 - The evaluation window contained no verified zero-long date. The calendar still has every official entry date. Absence of a long-trade row was not treated as \(N=0\).
-- Fees remain 0. Full-cross quotes are not claimed attainable fills.
+- Fees remain 0. Quote-based full-cross results do not establish attainable live fills.
 - This is retrospective validation, not independent confirmation.
 
 D3 is not started.

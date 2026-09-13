@@ -871,8 +871,12 @@ def render_d2_report_md(result: D2ValidationResult) -> str:
             f"Calendar gaps (successive evaluation dates): median {result.inference['calendar_gap_days_median']:.1f} days, "
             f"max {result.inference['calendar_gap_days_max']} days.",
             "",
-            "Relative improvement, absolute historical profitability, and evidence of a reliable advantage are separate. "
-            "Statistical significance does not promote a filter.",
+            "M1's relative_benefit label is statistically supported relative improvement "
+            "in this retrospective evaluation. Neither that label nor a positive incremental "
+            "P&L means the filtered book is profitable over the full window; read absolute "
+            "filtered P&L separately. An inconclusive label does not establish relative "
+            "benefit or harm. These contrasts do not directly test M1 against M2 or isolate "
+            "selection benefit from reduced exposure.",
             "",
         ]
     )
@@ -974,7 +978,7 @@ def render_d2_report_md(result: D2ValidationResult) -> str:
             "",
             "- Retrospective window; earlier sprints inspected this history.",
             "- Fees remain 0.",
-            "- Quote-based full-cross results are not attainable fills.",
+            "- Quote-based full-cross results do not establish attainable live fills.",
             "- Drawdown is peak-to-trough of cumulative fixed-budget dollar P&L, including the initial zero. Not compounded equity and not intraholding-period risk.",
             "- No cutoff was tuned after results. No automatic next experiment. D3 remains the closeout.",
             "",
