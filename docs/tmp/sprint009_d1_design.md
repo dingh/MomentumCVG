@@ -1,6 +1,7 @@
 # Sprint 009 D1 — Development margin decomposition
 
 **Status:** `DRAFT — AWAITING REVIEW`  
+**Corrected from:** `5d33055` (stored ORATS mid is not the fill-model midpoint; disagreement is a diagnostic, not a gate)  
 **Updated:** 2026-09-13  
 **Implementation:** **NOT STARTED.** This document does not authorize a runner, tests, a chart, or an evidence directory.  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
@@ -113,23 +114,35 @@ The interpretation memo answers D1-A, D1-B, and D1-C from those reconciled dolla
 
 ## 4. Accounting
 
-Reuse `expected_mid_fill_price` from `src/backtest/sprint007_artifact_validation.py`. That is bid plus half the spread, the same convention D0 used for `pnl_mid_at_cross_q`. Do not read `trade_log_mid.pnl_total`. Do not invent another midpoint.
+Two midpoints appear on a D0 row. They are not the same object, and a difference between them is not by itself an error.
+
+| Name | Source | Role in D1 |
+|---|---|---|
+| Stored ORATS mid | Saved `{prefix}_mid` | Provenance. Copied unchanged. Not an input to any dollar term |
+| Arithmetic fill midpoint | `expected_mid_fill_price(bid, ask, unit_quantity)` | The only midpoint used in \(B_{\mathrm{mid}}\), \(H_{\mathrm{body}}\), \(W_{\mathrm{mid}}\), \(H_{\mathrm{wing}}\), and \(C_{\mathrm{body}}\) |
+
+`option_surface.py` documents why they can differ. `_mid_entry_cost` computes entry cost with `FillAssumption.mid()` rather than the stored `option.mid` field, because that stored mid comes from ORATS and may not be exactly \((\mathrm{bid}+\mathrm{ask})/2\) after ORATS rounding or smoothing. `expected_mid_fill_price` is that same fill model: bid plus half the spread, alpha 0.5 on both sides, the convention D0 used for `pnl_mid_at_cross_q`. Call it with all three arguments, including `unit_quantity`. Do not call it with bid and ask only. Do not read `trade_log_mid.pnl_total`. Do not invent a third midpoint. Do not replace the stored mid with the arithmetic mid.
 
 Body prefixes: `body_put`, `body_call` (leg indexes 1 and 2). Wing prefixes: `put_wing`, `call_wing` (leg indexes 0 and 3).
 
-Per-unit fields (`bid`, `ask`, `mid`, `fill_price_cross`, `entry_cash_per_unit`, `expiry_payoff_per_unit`) are premium per share. Saved `pnl_total_leg`, `pnl_body_cross`, `pnl_wing_cross`, `pnl_legs_sum`, `pnl_mid_at_cross_q`, and `pnl_cross_official` are already dollars at \(Q\). Do not scale a dollar field by \(Q\) again. Do not treat `expiry_payoff_per_unit` as unsigned: D0 stored unsigned intrinsic times `unit_quantity`.
+Per-unit fields (`bid`, `ask`, `mid`, `fill_price_cross`, `entry_cash_per_unit`, `expiry_payoff_per_unit`) are premium per share. The saved `mid` is the stored ORATS midpoint. It is not the arithmetic fill midpoint in §4.1. Saved `pnl_total_leg`, `pnl_body_cross`, `pnl_wing_cross`, `pnl_legs_sum`, `pnl_mid_at_cross_q`, and `pnl_cross_official` are already dollars at \(Q\). Do not scale a dollar field by \(Q\) again. Do not treat `expiry_payoff_per_unit` as unsigned: D0 stored unsigned intrinsic times `unit_quantity`.
 
-### 4.1 Quote midpoint used in the formulas
+### 4.1 Arithmetic midpoint used in the formulas
 
-For each required leg:
+For each required leg, with that leg’s saved `unit_quantity`:
 
 \[
-\mathrm{mid\_fill} = \texttt{expected\_mid\_fill\_price}(\texttt{bid}, \texttt{ask})
+\mathrm{mid\_fill} = \texttt{expected\_mid\_fill\_price}(\texttt{bid}, \texttt{ask}, \texttt{unit\_quantity})
 \]
 
-Cross-check `mid_fill` against the saved `{prefix}_mid`. Tolerance on a quote field is \(10^{-6}\) premium points per share, matching D0’s per-share cash check. A disagreement is a named field mismatch. Do not overwrite one with the other.
+`ask < bid`, a missing bid or ask, or a non-finite bid or ask is a blocker. Do not repair it and do not clip a negative spread to zero. A missing or non-finite stored `{prefix}_mid` is also an invalid input. A finite stored mid that differs from `mid_fill` is not.
 
-`ask < bid`, a missing quote, or a non-finite quote is a blocker. Do not repair it and do not clip a negative spread to zero.
+After the arithmetic midpoint is computed, compare it with the saved `{prefix}_mid` without changing either value. Report, on the development book:
+
+- the count of legs whose absolute difference exceeds \(10^{-6}\) premium points per share
+- the maximum absolute difference across compared legs
+
+Those two figures are diagnostics. They do not fail a gate, do not drop a trade, and do not rewrite `mid`. Financial reconciliation still uses saved D0 dollar columns, not the stored mid.
 
 ### 4.2 Components
 
@@ -143,7 +156,7 @@ Let \(u\) be `unit_quantity`. Reuse the D0 cash sign: a sold body has entry cash
 Q \times \big(\texttt{expiry\_payoff\_per\_unit} - \text{signed mid entry cash}\big)
 \]
 
-Signed mid entry cash uses `mid_fill` and the leg’s `unit_quantity`. For a short body that cash is negative. Do not build \(B_{\mathrm{mid}}\) from `pnl_total_leg` or `pnl_body_cross`. Those are cross results.
+Signed mid entry cash uses `mid_fill` from `expected_mid_fill_price(bid, ask, unit_quantity)` and the leg’s `unit_quantity`. It does not use stored `{prefix}_mid`. For a short body that cash is negative. Do not build \(B_{\mathrm{mid}}\) from `pnl_total_leg` or `pnl_body_cross`. Those are cross results.
 
 **\(H_{\mathrm{body}}\)** — body execution concession, dollars. Sum over the two sold body legs:
 
@@ -251,7 +264,9 @@ If any development trade used in a sum has a non-finite component, the run is `B
 
 Record the trade key or date, the field, and the reason. Do not impute a quote, a zero concession, or a cash P&L for a missing field.
 
-A development trade is invalid if any of these fail: `pairing_ok` is not true; \(Q\) or `quantity_cross_signed` fails the sign and magnitude rules above; a required bid, ask, mid, or `expiry_payoff_per_unit` is missing or non-finite; unit quantities are not the accepted \(+1/-1\) pattern; a quote is crossed; `mid_fill` disagrees with saved `mid`; a required D0 dollar field listed in §4.4 is missing or non-finite.
+A development trade is invalid if any of these fail: `pairing_ok` is not true; \(Q\) or `quantity_cross_signed` fails the sign and magnitude rules above; a required bid, ask, stored `mid`, or `expiry_payoff_per_unit` is missing or non-finite; unit quantities are not the accepted \(+1/-1\) pattern; a quote is crossed; a required D0 dollar field listed in §4.4 is missing or non-finite.
+
+A finite stored `mid` that differs from `expected_mid_fill_price(bid, ask, unit_quantity)` is not an invalid input. Keep the stored value. Count the difference as in §4.1.
 
 Invalid development input is `BLOCKED`. Do not publish an interpretation from a partial book. The exception list is evidence. It is not a reason to rerun the baseline.
 
@@ -277,7 +292,7 @@ Do not create that directory in this planning step. Do not write into the D0 dir
 | `annual_decomposition.parquet` | One row per calendar year 2020–2023 |
 | `waterfall_development.png` | One aggregate waterfall, dollars, after the identity passes |
 | `d1_report.md` | `READY` or `BLOCKED`, the three answers, named residuals |
-| `d1_report.json` | Gate results and the same totals. No later-period economic field |
+| `d1_report.json` | Gate results, the same totals, and the stored-versus-arithmetic mid diagnostic (count and maximum absolute difference). No later-period economic field |
 
 Forbidden report keys: `development_minus_later_pnl`, `later_period_pnl`, `filter_result`, `protection_summary`, `primary_window_anchor_as_development`.
 
@@ -285,7 +300,7 @@ Forbidden report keys: `development_minus_later_pnl`, `later_period_pnl`, `filte
 
 Keys: `trade_date`, `ticker`, `direction`. `direction` is `short`. `window_label` is `development`.
 
-Copy, do not recompute, for provenance: `Q`, `quantity_cross_signed`, `entry_spot`, `pnl_cross_official`, `pnl_body_cross`, `pnl_wing_cross`, `pnl_legs_sum`, `pnl_mid_at_cross_q`.
+Copy, do not recompute or overwrite, for provenance: `Q`, `quantity_cross_signed`, `entry_spot`, each leg’s stored `mid`, `pnl_cross_official`, `pnl_body_cross`, `pnl_wing_cross`, `pnl_legs_sum`, `pnl_mid_at_cross_q`.
 
 Derived columns: `b_mid`, `h_body`, `w_mid`, `h_wing`, `w_pay`, `p_body_cross`, `p_fly_cross`, `c_body`, the five residuals in §4.4, and the three trade-level ratios plus `ratio_reason`.
 
@@ -332,7 +347,7 @@ If any gate fails, the report says `BLOCKED` and lists the named gaps. It does n
 
 ## 7. Gates
 
-`READY` only if all of these pass. Any named gap is `BLOCKED`. There is no `READY_WITH_NARROW`.
+`READY` only if all of these pass. Any named gap is `BLOCKED`. There is no `READY_WITH_NARROW`. Stored-versus-arithmetic mid disagreement is not a gate. The report still includes its count and maximum absolute difference.
 
 | Gate | Pass rule |
 |---|---|
@@ -341,7 +356,7 @@ If any gate fails, the report says `BLOCKED` and lists the named gaps. It does n
 | Body cross | Every trade, date, year, and the development total: \(P_{\mathrm{body,cross}}\) matches `pnl_body_cross` |
 | Wing cross | \(W_{\mathrm{pay}} - W_{\mathrm{mid}} - H_{\mathrm{wing}}\) matches `pnl_wing_cross` at those same levels |
 | Identity | \(P_{\mathrm{fly,cross}}\) matches `pnl_cross_official` and `pnl_legs_sum` at those levels |
-| Midpoint | \(B_{\mathrm{mid}} + W_{\mathrm{pay}} - W_{\mathrm{mid}}\) matches `pnl_mid_at_cross_q` at those levels |
+| Midpoint | \(B_{\mathrm{mid}} + W_{\mathrm{pay}} - W_{\mathrm{mid}}\), built from `expected_mid_fill_price(bid, ask, unit_quantity)`, matches `pnl_mid_at_cross_q` at those levels |
 | Calendar | 209 date rows, one zero-short row on `2020-03-13` with zeros, no dropped date |
 | Scope | No later-period economic field and no forbidden key |
 
@@ -355,7 +370,7 @@ If any gate fails, the report says `BLOCKED` and lists the named gaps. It does n
 | Runner | `scripts/run_sprint009_d1_decomposition.py` | Thin CLI. Reads the accepted D0 directory, writes the output directory, draws the chart only after the identity passes |
 | Tests | `tests/unit/test_sprint009_d1_body_wing_decomposition.py` | Hand-calculated fixtures. No official parquet |
 
-Reuse `expected_mid_fill_price` and the D0 cash-sign helper. Do not import `run_d0_validation`, `load_fill_primary_tables`, or `SurfaceRunner`.
+Reuse `expected_mid_fill_price(bid, ask, unit_quantity)` and the D0 cash-sign helper. Do not import `run_d0_validation`, `load_fill_primary_tables`, or `SurfaceRunner`.
 
 ### Invocation (not run now)
 
@@ -370,12 +385,13 @@ The script does not call the D0 runner and does not read the superseded D0 direc
 
 Hand-calculated, not official extracts. A valid control must pass the same verdict aggregator the runner will use. Each invalid case must fail the named gate and must not be `READY`.
 
-- Sold body mid entry cash is negative; bought wing mid entry cash is positive. \(H_{\mathrm{body}}\) and \(H_{\mathrm{wing}}\) match \(Q\times(\mathrm{mid\_fill}-\mathrm{bid})\) and \(Q\times(\mathrm{ask}-\mathrm{mid\_fill})\).
+- Sold body mid entry cash is negative; bought wing mid entry cash is positive. Both use `expected_mid_fill_price(bid, ask, unit_quantity)`. \(H_{\mathrm{body}}\) and \(H_{\mathrm{wing}}\) match \(Q\times(\mathrm{mid\_fill}-\mathrm{bid})\) and \(Q\times(\mathrm{ask}-\mathrm{mid\_fill})\).
 - With the quotes in the appendix, \(P_{\mathrm{body,cross}} = B_{\mathrm{mid}} - H_{\mathrm{body}}\) and the five-term identity equals the fixture’s official cross P&L. Subtracting concession from an already-cross body P&L fails that check.
 - A fixture whose saved P&L uses share-equivalent \(Q\) fails if the decomposition multiplies by 100.
 - \(W_{\mathrm{pay}}\) uses signed `expiry_payoff_per_unit` once. A positive wing intrinsic increases \(W_{\mathrm{pay}}\) and does not get multiplied by `unit_quantity` again.
 - A trade with \(C_{\mathrm{body}} = 0\) stays in the dollar table with a null ratio and a reason. It is not dropped.
 - A two-date calendar with one valid fly and one verified zero-short date keeps both date rows. The zero-short dollars are zero, not missing. A later-period trade in the same fixture is absent from the development sums.
+- A fixture with the appendix quotes and saved D0 P&L, but a stored `{prefix}_mid` that differs from `expected_mid_fill_price(bid, ask, unit_quantity)`, still passes. The stored mid is unchanged. The report counts the discrepancy and the maximum absolute difference. A genuine mismatch against saved D0 P&L, with those same quotes, still fails the identity or midpoint gate.
 
 ---
 
@@ -387,7 +403,7 @@ Acceptance of this design still does not start implementation. An implementation
 
 D2–D5 stay as written in the sprint plan. This design does not change their formulas, windows, or freeze rule.
 
-No accounting choice is left open for the implementer. The midpoint is the D0 repricer. The denominator is body midpoint credit in dollars. The development benchmark is the development sum of `pnl_cross_official`, not the primary-window anchor.
+No accounting choice is left open for the implementer. The midpoint used in every dollar term is `expected_mid_fill_price(bid, ask, unit_quantity)`, not the stored ORATS mid. The denominator is body midpoint credit in dollars. The development benchmark is the development sum of `pnl_cross_official`, not the primary-window anchor.
 
 ---
 
@@ -395,12 +411,14 @@ No accounting choice is left open for the implementer. The midpoint is the D0 re
 
 Not a result. \(Q = 2\). Spot at expiry 100. Body strikes 100, so body `expiry_payoff_per_unit` is 0. Wings finish out of the money, so wing payoff is 0.
 
-| Leg | bid | ask | mid_fill | unit |
+| Leg | bid | ask | arithmetic `mid_fill` | unit |
 |---|---:|---:|---:|---:|
-| `body_put` | 2.00 | 2.20 | 2.10 | −1 |
-| `body_call` | 2.10 | 2.30 | 2.20 | −1 |
-| `put_wing` | 0.40 | 0.60 | 0.50 | +1 |
-| `call_wing` | 0.30 | 0.50 | 0.40 | +1 |
+| `body_put` | 2.00 | 2.20 | 2.10 = `expected_mid_fill_price(2.00, 2.20, -1)` | −1 |
+| `body_call` | 2.10 | 2.30 | 2.20 = `expected_mid_fill_price(2.10, 2.30, -1)` | −1 |
+| `put_wing` | 0.40 | 0.60 | 0.50 = `expected_mid_fill_price(0.40, 0.60, +1)` | +1 |
+| `call_wing` | 0.30 | 0.50 | 0.40 = `expected_mid_fill_price(0.30, 0.50, +1)` | +1 |
+
+The regression case that must pass keeps these bids, asks, unit quantities, and saved D0 P&L, and sets one stored mid away from its arithmetic value, for example `body_put` stored mid \(2.11\). Economics still use \(2.10\). The stored \(2.11\) is not overwritten.
 
 \[
 \begin{align*}

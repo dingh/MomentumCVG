@@ -9,7 +9,7 @@
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.md) — scope accepted for D0 planning; do not duplicate under `docs/tmp/`.
 **D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`.  
 **D0 evidence:** [`docs/tmp/sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md) — **ACCEPTED** through `82e3b46`. Run `READY` at `004ba80`. Output `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z`. Supersedes `546d3e6` / `sprint009_d0_20260913T212939Z`.  
-**D1 design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — `DRAFT — AWAITING REVIEW`. Implementation not started.
+**D1 design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — `DRAFT — AWAITING REVIEW`, corrected from `5d33055`. Implementation not started.
 
 **Previous:** Sprint 008 — [`CLOSED — D3 ACCEPTED`](../sprint_memos/008_closeout.md) through `61cbf30`. Findings unchanged: not an income-generating long filter; historical `STOP_NO_THRESHOLDS` preserved.  
 **Prior diagnosis:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md). This draft does not implement that execution-observation handoff and does not cancel it.  
@@ -122,6 +122,7 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 
 | Date | Event |
 |------|-------|
+| 2026-09-13 | D1 design **corrected** from `5d33055`. Stored ORATS mid is not the fill-model midpoint; that difference is a diagnostic, not a gate. Still `DRAFT — AWAITING REVIEW`. Implementation not started. |
 | 2026-09-13 | D1 design **drafted** ([`sprint009_d1_design.md`](../tmp/sprint009_d1_design.md)). `DRAFT — AWAITING REVIEW`. Implementation not started. D0 evidence **accepted** through `82e3b46`. |
 | 2026-09-13 | D0 validation **corrected** at `004ba80` and rerun. Verdict `READY`. Official accounting unchanged. Evidence awaiting review at that commit. Output `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z`. Supersedes `546d3e6` / `sprint009_d0_20260913T212939Z`. D1 not started. |
 | 2026-09-13 | D0 official readiness **executed** at `546d3e6`. Verdict `READY`. Evidence [`sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md) awaiting review. Output `C:/MomentumCVG_env/runs/sprint009_d0_20260913T212939Z`. D1 not started. |

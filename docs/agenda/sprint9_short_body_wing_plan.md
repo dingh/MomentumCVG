@@ -5,7 +5,7 @@
 **Updated:** 2026-09-13  
 **D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`.  
 **D0 evidence:** [`docs/tmp/sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md) — **ACCEPTED** through `82e3b46`. Implementation `004ba80`.  
-**D1 design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — `DRAFT — AWAITING REVIEW`. Not a `READY` verdict.  
+**D1 design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — `DRAFT — AWAITING REVIEW`, corrected from `5d33055`. Not a `READY` verdict.  
 **Mode:** Audit. D1 planning only. Implementation has not started.  
 **Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md)  
 **Canonical path:** `docs/agenda/sprint9_short_body_wing_plan.md` — do not duplicate under `docs/tmp/`.  
@@ -193,7 +193,7 @@ within \(\max(\$0.01,\ 10^{-9}\times|\text{official}|)\). Primary-window short i
 
 ## 8. D1 — Where does the short book lose economic margin?
 
-**Design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — `DRAFT — AWAITING REVIEW`. Implementation not started. The question, terms, and identity below are unchanged. That design pins D0 column names, the development slice, and outputs. It does not replace D2–D5.
+**Design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — `DRAFT — AWAITING REVIEW`, corrected from `5d33055`. Implementation not started. The question, terms, and identity below are unchanged. That design pins D0 column names, the development slice, and outputs. It does not replace D2–D5.
 
 **Question.** On development history, how much of iron-fly P&L is body midpoint profit, body execution concession, the midpoint price of protection, the spread paid to buy the wings, and wing expiry payout?
 
