@@ -8,8 +8,11 @@ import pandas as pd
 from src.backtest.sprint009_d0_body_wing_readiness import (
     FORBIDDEN_REPORT_KEYS,
     MATCHED_COLUMNS,
+    GateResult,
+    assess_panel,
     build_matched_rows,
     classify_short_calendar,
+    readiness_verdict,
     reconstructed_leg_economics,
     signed_entry_cash,
     unsigned_intrinsic,
@@ -277,3 +280,161 @@ def test_saved_row_contract_and_later_period_storage() -> None:
     assert row["pnl_mid_at_cross_q"] is not None
     assert row["residual_legs_vs_official"] == 0.0 or abs(row["residual_legs_vs_official"]) < 1e-6
     assert not set(FORBIDDEN_REPORT_KEYS) & set(matched.columns)
+
+
+VNT = date(2020, 3, 13)
+
+
+def _status_funnel(*, n_short: float = 1, status: str = "traded") -> tuple[pd.DataFrame, pd.DataFrame]:
+    status_rows = [
+        {"trade_date": DAY, "status": status, "reason": "ok"},
+        {"trade_date": DEV, "status": "traded", "reason": "long only"},
+        {"trade_date": VNT, "status": "valid_no_trade", "reason": "no book"},
+    ]
+    funnel_rows = [
+        {
+            "trade_date": DAY,
+            "n_included": n_short,
+            "n_included_long": 0,
+            "n_included_short": n_short,
+            "date_status": status,
+            "date_reason": "ok",
+        },
+        {
+            "trade_date": DEV,
+            "n_included": 1,
+            "n_included_long": 1,
+            "n_included_short": 0,
+            "date_status": "traded",
+            "date_reason": "long only",
+        },
+        {
+            "trade_date": VNT,
+            "n_included": 0,
+            "n_included_long": 0,
+            "n_included_short": 0,
+            "date_status": "valid_no_trade",
+            "date_reason": "no book",
+        },
+    ]
+    return pd.DataFrame(status_rows), pd.DataFrame(funnel_rows)
+
+
+def _panel(trade: pd.DataFrame | None = None, legs: pd.DataFrame | None = None, mid_legs: pd.DataFrame | None = None, **funnel_kwargs):
+    frame = legs if legs is not None else _legs()
+    book = trade if trade is not None else _trade(legs=frame)
+    status, funnel = _status_funnel(**funnel_kwargs)
+    return assess_panel(book, frame, _mid_trade(), mid_legs if mid_legs is not None else _mid_legs(frame), status, funnel)
+
+
+def _gate(result, gate_id: str) -> GateResult:
+    return next(gate for gate in result.gates if gate.gate_id == gate_id)
+
+
+def _cannot_be_ready(result) -> None:
+    identity = [
+        GateResult("receipt", True, "ok"),
+        GateResult("columns", True, "ok"),
+        GateResult("primary_anchor", True, "identity held only to test propagation"),
+    ]
+    assert result.verdict == "BLOCKED"
+    assert readiness_verdict(identity + result.gates) == "BLOCKED"
+
+
+def test_valid_control_panel_is_ready() -> None:
+    result = _panel()
+    assert result.verdict == "READY"
+    assert all(gate.passed for gate in result.gates)
+    by_day = {row.trade_date: row.short_book_class for row in result.calendar.itertuples()}
+    assert by_day[DAY] == "verified_positive_short"
+    assert by_day[DEV] == "verified_zero_short"
+    assert by_day[VNT] == "verified_zero_short"
+    identity = [
+        GateResult("receipt", True, "ok"),
+        GateResult("columns", True, "ok"),
+        GateResult("primary_anchor", True, "identity held only to test propagation"),
+    ]
+    assert readiness_verdict(identity + result.gates) == "READY"
+
+
+def test_missing_required_fields_fail_reconstruction_and_block_ready() -> None:
+    cases = {
+        "entry_spot": ("trade", "entry_spot", "missing or non-finite"),
+        "capital_at_risk_dollars": ("trade", "capital_at_risk_dollars", "missing or non-finite"),
+        "portfolio_quantity": ("leg", "portfolio_quantity", "missing or non-finite"),
+        "pnl_total_leg": ("leg", "pnl_total_leg", "missing or non-finite"),
+    }
+    for field, (where, name, reason) in cases.items():
+        trade = _trade()
+        legs = _legs()
+        if where == "trade":
+            trade[field] = float("nan")
+        else:
+            legs.loc[legs["leg_index"] == 1, field] = float("nan")
+        result = _panel(trade=trade, legs=legs)
+        assert len(result.matched) == 1
+        assert any(name in item and reason in item for item in _gate(result, "reconstruction").detail.split("; "))
+        assert not _gate(result, "reconstruction").passed
+        if field == "pnl_total_leg":
+            assert result.matched.iloc[0]["body_put_pnl_total_leg"] is not None
+        _cannot_be_ready(result)
+
+
+def test_bad_short_quantity_and_settlement_spot_block_ready() -> None:
+    positive = _panel(trade=_trade(quantity=2.0))
+    assert any("quantity" in item and "sign is not negative" in item for item in _gate(positive, "reconstruction").detail.split("; "))
+    assert not _gate(positive, "reconstruction").passed
+    _cannot_be_ready(positive)
+
+    zero = _trade(quantity=0.0)
+    zero_result = _panel(trade=zero)
+    assert any("quantity" in item and "magnitude is not positive" in item for item in _gate(zero_result, "reconstruction").detail.split("; "))
+    _cannot_be_ready(zero_result)
+
+    legs = _legs(exit_spot=90.0)
+    legs["expiry_payoff_per_unit"] = [
+        (max(strike - 90.0, 0.0) if option_type == "put" else max(90.0 - strike, 0.0)) * unit
+        for option_type, strike, unit in zip(legs["option_type"], legs["strike"], legs["unit_quantity"])
+    ]
+    legs["pnl_per_unit"] = legs["expiry_payoff_per_unit"] - legs["entry_cash_per_unit"]
+    legs["pnl_total_leg"] = 2.0 * legs["pnl_per_unit"]
+    trade = _trade(pnl=float(legs["pnl_total_leg"].sum()), legs=legs)
+    spot = _panel(trade=trade, legs=legs)
+    assert any("exit_spot" in item and "disagrees with trade settlement spot" in item for item in _gate(spot, "reconstruction").detail.split("; "))
+    assert not _gate(spot, "reconstruction").passed
+    _cannot_be_ready(spot)
+
+
+def test_duplicate_midpoint_legs_fail_pairing_and_keep_cross_row() -> None:
+    legs = _legs()
+    mid = pd.concat([_mid_legs(legs), _mid_legs(legs).iloc[[1]]], ignore_index=True)
+    result = _panel(legs=legs, mid_legs=mid)
+    assert len(result.matched) == 1
+    assert result.matched.iloc[0]["ticker"] == "AAA"
+    assert bool(result.matched.iloc[0]["pairing_ok"]) is False
+    assert "midpoint duplicate leg keys" in result.matched.iloc[0]["pairing_reason"]
+    assert not _gate(result, "pairing").passed
+    _cannot_be_ready(result)
+
+
+def test_fractional_count_and_incompatible_status_block_calendar() -> None:
+    fractional = _panel(n_short=1.7)
+    stored_count = fractional.calendar.loc[fractional.calendar["trade_date"] == DAY, "funnel_n_included_short"].iloc[0]
+    assert pd.isna(stored_count)
+    assert fractional.calendar.loc[fractional.calendar["trade_date"] == DAY, "blocker_reason"].iloc[0] == "fractional n_included_short"
+    assert not _gate(fractional, "calendar").passed
+    _cannot_be_ready(fractional)
+
+    occupied = _panel(status="valid_no_trade")
+    assert occupied.calendar.loc[occupied.calendar["trade_date"] == DAY, "blocker_reason"].iloc[0] == "valid_no_trade date contains included positions"
+    assert not _gate(occupied, "calendar").passed
+    _cannot_be_ready(occupied)
+
+    status, funnel = _status_funnel()
+    status.loc[status["trade_date"] == DAY, "status"] = "unknown"
+    funnel.loc[funnel["trade_date"] == DAY, "date_status"] = "unknown"
+    unknown = assess_panel(_trade(), _legs(), _mid_trade(), _mid_legs(_legs()), status, funnel)
+    assert unknown.calendar.loc[unknown.calendar["trade_date"] == DAY, "short_book_class"].iloc[0] == "blocked"
+    assert "not traded" in unknown.calendar.loc[unknown.calendar["trade_date"] == DAY, "blocker_reason"].iloc[0]
+    assert not _gate(unknown, "calendar").passed
+    _cannot_be_ready(unknown)

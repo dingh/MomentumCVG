@@ -348,6 +348,73 @@ def _float_close(left: Any, right: Any, tol: float) -> bool:
     return abs(float(left) - float(right)) <= tol
 
 
+def _field_issue(key: tuple[date, str, str], field: str, reason: str, *, leg_index: int | None = None) -> str:
+    where = field if leg_index is None else f"{field} leg {leg_index}"
+    return f"{key}: {where}: {reason}"
+
+
+def _require_finite(
+    key: tuple[date, str, str],
+    field: str,
+    value: Any,
+    issues: list[str],
+    *,
+    leg_index: int | None = None,
+) -> float | None:
+    if _finite(value):
+        return float(value)
+    issues.append(_field_issue(key, field, "missing or non-finite", leg_index=leg_index))
+    return None
+
+
+def _short_quantity_problems(key: tuple[date, str, str], quantity: Any) -> list[str]:
+    """Accepted short quantity is negative. Magnitude must be positive. Do not repair the sign."""
+    if not _finite(quantity):
+        return [_field_issue(key, "quantity", "missing or non-finite")]
+    signed = float(quantity)
+    problems: list[str] = []
+    if not signed < 0:
+        problems.append(_field_issue(key, "quantity", "sign is not negative"))
+    if abs(signed) <= QUANTITY_TOL:
+        problems.append(_field_issue(key, "quantity", "magnitude is not positive"))
+    return problems
+
+
+def _leg_identity_list(frame: pd.DataFrame) -> list[tuple[Any, ...]]:
+    if frame.empty:
+        return []
+    return [_leg_identity(row) for _, row in frame.iterrows()]
+
+
+def _fill_leg_cardinality_problems(frame: pd.DataFrame, label: str) -> list[str]:
+    """Uniqueness and cardinality before any set or dict of leg keys is built."""
+    identities = _leg_identity_list(frame)
+    problems: list[str] = []
+    if len(identities) != len(set(identities)):
+        duplicates = sorted({item for item in identities if identities.count(item) > 1})
+        problems.append(f"{label} duplicate leg keys {duplicates}")
+    if len(frame) != 4:
+        problems.append(f"{label} expected 4 legs, found {len(frame)}")
+    return problems
+
+
+def _nonnegative_integer_count(value: Any) -> tuple[int | None, str | None]:
+    """Accept a finite nonnegative integer. Do not truncate a fractional count."""
+    if value is None or pd.isna(value):
+        return None, "null n_included_short"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None, "n_included_short is not a finite integer"
+    if not math.isfinite(number):
+        return None, "n_included_short is not a finite integer"
+    if number < 0:
+        return None, "n_included_short is negative"
+    if not number.is_integer():
+        return None, "fractional n_included_short"
+    return int(number), None
+
+
 def pair_selected_shorts(
     cross_trades: pd.DataFrame,
     cross_legs: pd.DataFrame,
@@ -375,8 +442,13 @@ def pair_selected_shorts(
         reasons: list[str] = []
         cross_leg_frame = cross_leg_index.get(key, pd.DataFrame())
         mid_leg_frame = mid_leg_index.get(key, pd.DataFrame())
-        cross_ids = {_leg_identity(row) for _, row in cross_leg_frame.iterrows()} if not cross_leg_frame.empty else set()
-        mid_ids = {_leg_identity(row) for _, row in mid_leg_frame.iterrows()} if not mid_leg_frame.empty else set()
+        reasons.extend(_fill_leg_cardinality_problems(cross_leg_frame, "cross"))
+        reasons.extend(_fill_leg_cardinality_problems(mid_leg_frame, "midpoint"))
+        if reasons:
+            pair_reasons[key] = "; ".join(reasons)
+            continue
+        cross_ids = {_leg_identity(row) for _, row in cross_leg_frame.iterrows()}
+        mid_ids = {_leg_identity(row) for _, row in mid_leg_frame.iterrows()}
         if cross_ids != mid_ids:
             reasons.append(
                 "leg keys differ missing_in_mid="
@@ -475,11 +547,16 @@ def build_matched_rows(
     for _, trade in book.iterrows():
         key = _trade_key(trade)
         legs = leg_index.get(key, pd.DataFrame())
+        quantity_problems = _short_quantity_problems(key, trade["quantity"])
         q_signed = float(trade["quantity"]) if _finite(trade["quantity"]) else float("nan")
-        q_mag = abs(q_signed) if _finite(q_signed) else float("nan")
+        q_mag = abs(q_signed) if _finite(q_signed) and abs(q_signed) > QUANTITY_TOL else float("nan")
         structure = _structure_problems(trade, legs)
         if structure:
             issues.append(f"{key}: " + "; ".join(structure))
+        issues.extend(quantity_problems)
+        entry_spot = _require_finite(key, "entry_spot", trade["entry_spot"], issues)
+        capital = _require_finite(key, "capital_at_risk_dollars", trade["capital_at_risk_dollars"], issues)
+        trade_exit = _require_finite(key, "exit_spot", trade["exit_spot"], issues)
         record: dict[str, Any] = {name: None for name in MATCHED_COLUMNS}
         record.update(
             {
@@ -493,12 +570,8 @@ def build_matched_rows(
                 "Q": q_mag if _finite(q_mag) else None,
                 "quantity_cross_signed": q_signed if _finite(q_signed) else None,
                 "quantity_mid_abs": pairing["mid_quantity_abs"].get(key),
-                "entry_spot": float(trade["entry_spot"]) if _finite(trade["entry_spot"]) else None,
-                "capital_at_risk_dollars": (
-                    float(trade["capital_at_risk_dollars"])
-                    if _finite(trade["capital_at_risk_dollars"])
-                    else None
-                ),
+                "entry_spot": entry_spot,
+                "capital_at_risk_dollars": capital,
                 "pnl_cross_official": float(trade["pnl_total"]) if _finite(trade["pnl_total"]) else None,
                 "pairing_ok": key not in pairing["pair_reasons"] and key not in pairing["duplicate_cross_keys"],
                 "pairing_reason": pairing["pair_reasons"].get(key, ""),
@@ -514,9 +587,9 @@ def build_matched_rows(
         recon_wing = 0.0
         recon_sum = 0.0
         mid_sum = 0.0
-        have_all = len(legs) == 4 and _finite(q_mag)
+        have_all = len(legs) == 4 and _finite(q_mag) and not quantity_problems
         quote_ok = True
-        row_inconsistent = bool(structure)
+        row_inconsistent = bool(structure) or bool(quantity_problems) or entry_spot is None or capital is None or trade_exit is None
         by_index = {} if legs.empty else {int(row["leg_index"]): row for _, row in legs.iterrows()}
         for idx, role, _otype, _qty, _side in LEG_SPECS:
             row = by_index.get(idx)
@@ -531,6 +604,25 @@ def build_matched_rows(
             record[f"{prefix}_ask"] = float(row["ask"]) if _finite(row["ask"]) else None
             record[f"{prefix}_mid"] = float(row["mid"]) if _finite(row["mid"]) else None
             record[f"{prefix}_exit_spot"] = float(row["exit_spot"]) if _finite(row["exit_spot"]) else None
+            logged_leg_pnl = _require_finite(key, "pnl_total_leg", row["pnl_total_leg"], issues, leg_index=idx)
+            logged_portfolio = _require_finite(
+                key, "portfolio_quantity", row["portfolio_quantity"], issues, leg_index=idx
+            )
+            if logged_leg_pnl is None or logged_portfolio is None:
+                row_inconsistent = True
+            leg_exit = _require_finite(key, "exit_spot", row["exit_spot"], issues, leg_index=idx)
+            if leg_exit is None:
+                row_inconsistent = True
+            elif trade_exit is not None and not _float_close(leg_exit, trade_exit, CASH_TOL):
+                row_inconsistent = True
+                issues.append(
+                    _field_issue(
+                        key,
+                        "exit_spot",
+                        "disagrees with trade settlement spot",
+                        leg_index=idx,
+                    )
+                )
             bid, ask = row["bid"], row["ask"]
             if not _finite(bid) or not _finite(ask) or float(ask) < float(bid):
                 quote_ok = False
@@ -572,16 +664,34 @@ def build_matched_rows(
             if not _float_close(row["pnl_per_unit"], rebuilt["pnl_per_unit"], CASH_TOL):
                 row_inconsistent = True
                 issues.append(f"{key}: pnl_per_unit mismatch leg {idx}")
-            if _finite(row["pnl_total_leg"]) and not _float_close(
-                row["pnl_total_leg"], rebuilt["pnl_total_leg"], dollar_tolerance(float(row["pnl_total_leg"]))
+            if logged_leg_pnl is None:
+                row_inconsistent = True
+            elif not _float_close(
+                logged_leg_pnl, rebuilt["pnl_total_leg"], dollar_tolerance(logged_leg_pnl)
             ):
                 row_inconsistent = True
-                issues.append(f"{key}: logged pnl_total_leg disagrees with reconstruction")
-            if _finite(row["portfolio_quantity"]) and _finite(q_mag):
+                issues.append(
+                    _field_issue(
+                        key,
+                        "pnl_total_leg",
+                        "logged value disagrees with independent reconstruction",
+                        leg_index=idx,
+                    )
+                )
+            if logged_portfolio is None or not _finite(q_mag):
+                row_inconsistent = True
+            else:
                 expected_port = float(q_mag) * int(row["unit_quantity"])
-                if abs(float(row["portfolio_quantity"]) - expected_port) > max(QUANTITY_TOL, 1e-9 * abs(expected_port)):
+                if abs(logged_portfolio - expected_port) > max(QUANTITY_TOL, 1e-9 * abs(expected_port)):
                     row_inconsistent = True
-                    issues.append(f"{key}: portfolio_quantity is not Q times unit_quantity")
+                    issues.append(
+                        _field_issue(
+                            key,
+                            "portfolio_quantity",
+                            "is not Q times unit_quantity",
+                            leg_index=idx,
+                        )
+                    )
         official = record["pnl_cross_official"]
         if have_all and quote_ok and official is not None:
             record["pnl_body_cross"] = recon_body
@@ -652,6 +762,10 @@ def classify_short_calendar(
         n_short = funnel_row["n_included_short"] if funnel_row is not None else None
         n_trades = counts.get(day, 0)
         blocker = ""
+        count_value: int | None = None
+        count_error: str | None = None
+        if funnel_row is not None:
+            count_value, count_error = _nonnegative_integer_count(n_short)
         if day not in status_only:
             short_class = "blocked"
             blocker = "date missing from date_status"
@@ -661,19 +775,34 @@ def classify_short_calendar(
         elif funnel_row is None:
             short_class = "blocked"
             blocker = "missing funnel row"
-        elif not _finite(n_short) and n_short is not None and pd.isna(n_short):
+        elif count_error is not None:
             short_class = "blocked"
-            blocker = "null n_included_short"
-        elif n_short is None or (isinstance(n_short, float) and math.isnan(n_short)):
-            short_class = "blocked"
-            blocker = "null n_included_short"
+            blocker = count_error
         elif funnel_status is not None and whole is not None and funnel_status != whole:
             short_class = "blocked"
             blocker = "funnel date_status disagrees with date_status"
-        elif int(n_short) == 0 and n_trades == 0 and whole in {"traded", "valid_no_trade"}:
+        elif whole == "valid_no_trade" and ((count_value or 0) > 0 or n_trades > 0):
+            short_class = "blocked"
+            blocker = "valid_no_trade date contains included positions"
+        elif count_value == 0 and n_trades == 0 and whole in {"traded", "valid_no_trade"}:
             short_class = "verified_zero_short"
-        elif int(n_short) > 0 and int(n_short) == n_trades and day not in incomplete:
+        elif (
+            count_value is not None
+            and count_value > 0
+            and count_value == n_trades
+            and day not in incomplete
+            and whole == "traded"
+        ):
             short_class = "verified_positive_short"
+        elif (
+            count_value is not None
+            and count_value > 0
+            and count_value == n_trades
+            and day not in incomplete
+            and whole != "traded"
+        ):
+            short_class = "blocked"
+            blocker = "positive short book status is not traded"
         else:
             short_class = "blocked"
             blocker = "short count, legs, or settlement inconsistent"
@@ -690,7 +819,7 @@ def classify_short_calendar(
                 "date_status": whole,
                 "date_reason": reason,
                 "funnel_date_status": funnel_status,
-                "funnel_n_included_short": None if n_short is None or (isinstance(n_short, float) and math.isnan(float(n_short))) else int(n_short) if _finite(n_short) else None,
+                "funnel_n_included_short": count_value,
                 "n_included_short_trades": n_trades,
                 "blocker_reason": blocker,
             }
@@ -702,6 +831,73 @@ def classify_short_calendar(
 def _primary_mask(frame: pd.DataFrame) -> pd.Series:
     days = frame["trade_date"].map(_as_date)
     return (days >= PRIMARY_START) & (days <= PRIMARY_END)
+
+
+def readiness_verdict(gates: list[GateResult]) -> str:
+    """READY only when every supplied gate passed. An empty list is not READY."""
+    if not gates or any(not gate.passed for gate in gates):
+        return "BLOCKED"
+    return "READY"
+
+
+def evaluate_panel_gates(
+    *,
+    reconstruction_issues: list[str],
+    pairing: dict[str, Any],
+    matched: pd.DataFrame,
+    calendar: pd.DataFrame,
+    calendar_issues: list[str],
+) -> list[GateResult]:
+    """Reconstruction, pairing, reconciliation, and calendar. Same objects the official run uses."""
+    return [
+        gate
+        for gate in evaluate_gates(
+            receipt_ok=True,
+            receipt_detail="panel",
+            reconstruction_issues=reconstruction_issues,
+            pairing=pairing,
+            matched=matched,
+            calendar=calendar,
+            calendar_issues=calendar_issues,
+            decision_short=None,
+        )
+        if gate.gate_id in {"reconstruction", "pairing", "reconciliation", "calendar"}
+    ]
+
+
+def assess_panel(
+    cross_trades: pd.DataFrame,
+    cross_legs: pd.DataFrame,
+    mid_trades: pd.DataFrame,
+    mid_legs: pd.DataFrame,
+    date_status: pd.DataFrame,
+    funnel: pd.DataFrame,
+) -> D0ReadinessResult:
+    """Propagate panel gates to READY or BLOCKED. Does not replace the official primary anchor."""
+    matched, pairing, reconstruction_issues = build_matched_rows(
+        cross_trades, cross_legs, mid_trades, mid_legs
+    )
+    calendar, calendar_issues = classify_short_calendar(
+        date_status,
+        funnel,
+        matched,
+        incomplete_dates=pairing.get("calendar_incomplete_dates"),
+    )
+    gates = evaluate_panel_gates(
+        reconstruction_issues=reconstruction_issues,
+        pairing=pairing,
+        matched=matched,
+        calendar=calendar,
+        calendar_issues=calendar_issues,
+    )
+    verdict = readiness_verdict(gates)
+    return D0ReadinessResult(
+        verdict=verdict,
+        gates=gates,
+        matched=matched,
+        calendar=calendar,
+        report={"verdict": verdict, "pairing_unmatched_mid": pairing.get("unmatched_mid", [])},
+    )
 
 
 def _report_has_forbidden(report: dict[str, Any]) -> bool:
@@ -742,7 +938,11 @@ def evaluate_gates(
             and not pairing.get("duplicate_mid_keys"),
             "selected short keys, legs, quotes, and settlements pair"
             if not pairing_problems
-            else f"missing_mid={len(pairing.get('missing_from_mid') or [])} unmatched_mid={len(pairing.get('unmatched_mid') or [])}",
+            else (
+                f"missing_mid={len(pairing.get('missing_from_mid') or [])} "
+                f"unmatched_mid={len(pairing.get('unmatched_mid') or [])} "
+                f"pair_failures={len(pairing.get('pair_reasons') or {})}"
+            ),
         )
     )
     residual_fail = 0
@@ -898,7 +1098,7 @@ def run_d0_readiness(run_dir: Path | None = None) -> D0ReadinessResult:
         decision_short=decision_short,
     )
     gates.insert(1, GateResult("columns", True, "required columns present"))
-    verdict = "READY" if all(gate.passed for gate in gates) else "BLOCKED"
+    verdict = readiness_verdict(gates)
     class_counts = (
         {str(key): int(value) for key, value in calendar["short_book_class"].value_counts().items()}
         if not calendar.empty
