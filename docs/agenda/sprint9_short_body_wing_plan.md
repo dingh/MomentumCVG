@@ -1,18 +1,19 @@
 # Sprint 009 — Short-body economics, execution costs, protection, and conditional entry filtering
 
-**Status:** `D0 ACCEPTED; D1 DESIGN ACCEPTED at e109a9e; IMPLEMENTATION IN PROGRESS`  
-**Revised from:** `e109a9e` (D1 design accepted; D1 implementation in progress; D2–D5 not started)  
-**Updated:** 2026-09-13  
+**Status:** `D0 ACCEPTED; D1 EXECUTED — EVIDENCE AWAITING REVIEW`  
+**Revised from:** `0d63293` (D1 executed; evidence awaiting review; D2–D5 not started)  
+**Updated:** 2026-09-14  
 **D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`.  
 **D0 evidence:** [`docs/tmp/sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md) — **ACCEPTED** through `82e3b46`. Implementation `004ba80`.  
-**D1 design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`. Implementation **IN PROGRESS**. Not a `READY` verdict.  
-**Mode:** Build. Restricted to D1. D2–D5 have not started.  
+**D1 design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`. Implementation `0d63293`.  
+**D1 evidence:** [`docs/tmp/sprint009_d1_evidence_review.md`](../tmp/sprint009_d1_evidence_review.md) — `EXECUTED — EVIDENCE AWAITING REVIEW`. Run verdict `READY`. Not accepted.  
+**Mode:** Audit. D1 evidence awaiting review. D2–D5 have not started.  
 **Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md)  
 **Canonical path:** `docs/agenda/sprint9_short_body_wing_plan.md` — do not duplicate under `docs/tmp/`.  
 **Prior closeouts:** [`docs/sprint_memos/008_closeout.md`](../sprint_memos/008_closeout.md) (accepted through `61cbf30`), [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 
-This document is the accepted sprint-level research protocol. D0 is accepted through `82e3b46`. The D1 design is accepted at `e109a9e`. Implementation is in progress and restricted to D1. It does not authorize D2–D5 or a new later-period comparison. Official inputs stay read-only.
+This document is the accepted sprint-level research protocol. D0 is accepted through `82e3b46`. D1 was executed at `0d63293`. That evidence is awaiting review. It does not authorize D2–D5 or a new later-period comparison. Official inputs stay read-only.
 
 ---
 
@@ -37,7 +38,7 @@ An inconclusive measurement, a decision not to freeze a rule, or a skipped D4 is
 | Source | Role |
 |---|---|
 | [`docs/agenda/current_sprint.md`](current_sprint.md) | Active sprint status |
-| This plan | Accepted sprint scope. D0 is accepted. D1 design is accepted at `e109a9e`. Implementation is in progress |
+| This plan | Accepted sprint scope. D0 is accepted. D1 is executed; evidence is awaiting review |
 | [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) and official run `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` | Frozen selection, structures, and the reference cross book |
 | [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md) | Accepted cross economics. Not revised here |
 | [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md) | `EXECUTION_CALIBRATION_REQUIRED` remains. This sprint does not implement the observer and does not cancel that handoff |
@@ -193,7 +194,8 @@ within \(\max(\$0.01,\ 10^{-9}\times|\text{official}|)\). Primary-window short i
 
 ## 8. D1 — Where does the short book lose economic margin?
 
-**Design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`. Implementation **IN PROGRESS**. The question, terms, and identity below are unchanged. That design pins D0 column names, the development slice, and outputs. It does not replace D2–D5.
+**Design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`. Implementation `0d63293`.  
+**Evidence:** [`docs/tmp/sprint009_d1_evidence_review.md`](../tmp/sprint009_d1_evidence_review.md) — `EXECUTED — EVIDENCE AWAITING REVIEW`. Run verdict `READY`. Not accepted. The question, terms, and identity below are unchanged. That design pins D0 column names, the development slice, and outputs. It does not replace D2–D5.
 
 **Question.** On development history, how much of iron-fly P&L is body midpoint profit, body execution concession, the midpoint price of protection, the spread paid to buy the wings, and wing expiry payout?
 
@@ -489,7 +491,7 @@ These start only after plan acceptance and a separate authorization for that inc
 
 If D4 is skipped, the remaining path is the descriptive companion plus the closeout. No increment reruns `SurfaceRunner` or retunes `42:8`.
 
-Separate one-page designs are written when an increment is authorized, following the existing workflow. D0 is accepted. The D1 design is accepted at `e109a9e` and implementation is in progress. Do not create D2–D5 designs until those increments are authorized.
+Separate one-page designs are written when an increment is authorized, following the existing workflow. D0 is accepted. D1 is executed and the evidence is awaiting review. Do not create D2–D5 designs until those increments are authorized.
 
 ---
 
