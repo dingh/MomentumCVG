@@ -2,10 +2,11 @@
 
 **Status:** `EXECUTED — EVIDENCE AWAITING REVIEW`  
 **Executed:** 2026-09-14  
-**Design:** [`sprint009_d1_design.md`](sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`. Formulas unchanged.  
-**Implementation:** `0d63293d80fda7bede869b9205880c94906d25d4`  
-**Evidence:** `C:/MomentumCVG_env/runs/sprint009_d1_20260914T001504Z/`  
-**Input:** accepted D0 panel `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z/` (`004ba80`, verdict `READY`). The superseded D0 directory was not read.  
+**Design:** [`sprint009_d1_design.md`](sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`. Formulas, population, quantities, and windows unchanged.  
+**Implementation:** `5669773f356f6c33cef86bd0da30ce4051709a6b`  
+**Evidence:** `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z/`  
+**Supersedes:** `0d63293` / `C:/MomentumCVG_env/runs/sprint009_d1_20260914T001504Z/`, previously recorded through `4a9a073`. That directory is not the current D1 record.  
+**Input:** accepted D0 panel `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z/` (`004ba80`, receipt verdict `READY`). The superseded D0 directory was not read. D0 and the baseline were not rerun.  
 **Characterization:** Development-history attribution of the frozen short iron fly. Not a trading decision, not a protection study, and not a filter result. This file does not accept the evidence.
 
 ---
@@ -14,9 +15,34 @@
 
 `READY`
 
-Every gate passed. No check was weakened. A profitable book was not required. The development official cross result is negative. That does not fail the run.
+Every gate passed. No reconciliation check was weakened. A profitable book was not required. The development official cross result is negative. That does not fail the run.
 
 The primary-window anchor, −$146,279.85, is not this result and is not the residual reference.
+
+---
+
+## Correction from `0d63293`
+
+The accepted design is unchanged. The correction does three things:
+
+- A finite zero date-level numerator with a positive body-credit denominator stays a defined ratio of zero. Missing values are explicit, not truthiness. A zero-credit date stays null with a reason. Null date-ratio counts and reasons are reported.
+- `pairing_ok` must be an actual true boolean. A missing value or a truthy string fails. Leg unit quantity must equal `+1` or `−1` exactly; a fractional value is not truncated before validation. Those failures reach `BLOCKED` through `readiness_verdict`.
+- The official runner checks the accepted D0 directory, receipt code SHA `004ba80052f6586f6a230ad207e8151e695e156e`, and receipt verdict `READY` before accepting a result. A mismatch is a named blocker. Input hashes are still recorded. Stored-midpoint diagnostics are unchanged and are still not a gate.
+
+---
+
+## Comparison with the superseded run
+
+Input hashes are unchanged.
+
+| File | SHA-256 | Versus `sprint009_d1_20260914T001504Z` |
+|---|---|---|
+| `matched_short_iron_flies.parquet` | `80974323d48e5bc8133122031d6b8da7cf9a787aa379d9778191d3d086547451` | unchanged |
+| `short_calendar.parquet` | `ae1cd74c0b4ebf7f211d7303a83c91dd2c552d39e24543fd60a612599042dcca` | unchanged |
+
+Headline development dollar totals are unchanged, including `development_official_pnl` −$69,776.72498250673, the five components, body cross, iron-fly cross, and body midpoint credit. Annual dollar columns match exactly. On this panel, no date had a finite zero numerator with a positive denominator, so date-ratio null counts stayed at one: the zero-short date. The corrected report now records `null_date_ratio_counts` as `{"zero body midpoint credit": 1}`.
+
+The economic answers below are therefore the same numbers as the superseded run. They are restated from the corrected directory, not from the old one.
 
 ---
 
@@ -29,19 +55,14 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint009_d1_decompositio
 
 | Item | Value |
 |---|---|
-| Code revision | `0d63293d80fda7bede869b9205880c94906d25d4` |
+| Code revision | `5669773f356f6c33cef86bd0da30ce4051709a6b` |
 | D0 directory | `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z` |
-| D0 code SHA | `004ba80052f6586f6a230ad207e8151e695e156e` |
-| Generated | `2026-09-14T00:15:04.592974+00:00` |
-| Output directory | `C:/MomentumCVG_env/runs/sprint009_d1_20260914T001504Z` |
+| D0 receipt code SHA | `004ba80052f6586f6a230ad207e8151e695e156e` |
+| D0 receipt verdict | `READY` |
+| Provenance problems | none |
+| Generated | `2026-09-14T02:51:42.539880+00:00` |
+| Output directory | `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z` |
 | D0 directory writes | none |
-
-Input hashes of the files read:
-
-| File | SHA-256 |
-|---|---|
-| `matched_short_iron_flies.parquet` | `80974323d48e5bc8133122031d6b8da7cf9a787aa379d9778191d3d086547451` |
-| `short_calendar.parquet` | `ae1cd74c0b4ebf7f211d7303a83c91dd2c552d39e24543fd60a612599042dcca` |
 
 Generated tables, JSON, the Markdown report, and `waterfall_development.png` stay in that external directory. They are not in the repository.
 
@@ -53,7 +74,7 @@ Generated tables, JSON, the Markdown report, and `waterfall_development.png` sta
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_sprint009_d1_body_wing_decomposition.py -q
 ```
 
-6 passed before the official run. Coverage is hand-calculated: sold-body cash sign, concession formulas, appendix identity, quantity ×100 against official $6.00, signed wing payoff used once, a zero body-credit trade kept with a null ratio, a verified zero-short date retained at zero dollars, later-period isolation, a stored-mid discrepancy that still passes, and a saved-P&L mismatch that stays `BLOCKED`. A valid control uses the same `readiness_verdict` as the runner.
+9 passed before the official rerun: the original six plus regressions for a zero date-level numerator, non-boolean `pairing_ok`, a fractional unit that must not be truncated, and a D0 receipt mismatch that blocks acceptance of a `READY` economic result.
 
 ---
 
@@ -66,12 +87,13 @@ C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_sprint009_d
 | Zero-short date | `2020-03-13`: 0 trades, every dollar field 0, ratio reason `zero body midpoint credit` |
 | Pairing failures | 0 |
 | Null trade-level ratios | 0 |
+| Null date-level ratios | 1, reason `zero body midpoint credit` |
 | Later-period rows in the decomposition tables | 0 |
 | Stored vs arithmetic mid | 0 legs above 1e-6. Maximum absolute difference 4.55e-13. Diagnostic only; not a gate |
 
 | Gate | Result |
 |---|---|
-| Provenance | PASS. Coverage matches the accepted D0 evidence |
+| Provenance | PASS. Accepted directory, receipt SHA, receipt `READY`, and development coverage |
 | Inputs | PASS |
 | Body cross | PASS |
 | Wing cross | PASS |
@@ -112,6 +134,19 @@ Ratios are ratios of summed dollars. The denominator is body midpoint credit, no
 
 ---
 
+## Annual decomposition
+
+Source: `annual_decomposition.parquet` in the corrected evidence directory. Dollars are rounded to cents for review. Identity residuals versus each year’s official sum remain within 1e-11. 2020 includes the zero-short date. Empty `ratio_reason` means the year’s ratio is defined.
+
+| Year | Dates | Zero-short | Trades | \(B_{\mathrm{mid}}\) | \(H_{\mathrm{body}}\) | \(W_{\mathrm{mid}}\) | \(H_{\mathrm{wing}}\) | \(W_{\mathrm{pay}}\) | Body cross | Iron-fly cross | Body credit | Body concession ratio | Wing premium ratio | Wing concession ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2020 | 53 | 1 | 437 | 18,050.01 | 23,931.13 | 95,085.67 | 11,152.93 | 94,917.05 | −5,881.12 | −17,202.68 | 556,841.24 | 0.0430 | 0.1708 | 0.0200 |
+| 2021 | 52 | 0 | 531 | 16,621.96 | 23,602.22 | 87,957.28 | 9,291.08 | 67,584.16 | −6,980.26 | −36,644.46 | 517,495.66 | 0.0456 | 0.1700 | 0.0180 |
+| 2022 | 52 | 0 | 611 | 59,834.66 | 19,969.91 | 86,473.98 | 8,725.97 | 54,733.82 | 39,864.75 | −601.37 | 510,030.72 | 0.0392 | 0.1695 | 0.0171 |
+| 2023 | 52 | 0 | 508 | 26,021.22 | 15,678.89 | 93,437.24 | 9,214.99 | 76,981.68 | 10,342.33 | −15,328.22 | 545,463.82 | 0.0287 | 0.1713 | 0.0169 |
+
+---
+
 ## Answers
 
 **D1-A.** Development body midpoint P&L is positive, about $120,528. After body execution concession of about $83,182, body cross P&L is still positive, about $37,346. Concession is about 3.9% of body midpoint credit. That remaining body margin is not a trading decision and is not true in every year: 2020 and 2021 body cross P&L are negative.
@@ -126,6 +161,7 @@ Ratios are ratios of summed dollars. The denominator is body midpoint credit, no
 
 - It does not accept this evidence.
 - It does not start D2–D5.
+- It does not rerun D0 or the baseline.
 - It does not compute later-period economics.
 - It does not change signals, wings, sizing, or the frozen contract.
 - It does not measure path risk, payout frequency, or the value of protection.
