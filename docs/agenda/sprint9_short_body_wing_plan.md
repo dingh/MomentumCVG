@@ -1,20 +1,21 @@
 # Sprint 009 — Short-body economics, execution costs, protection, and conditional entry filtering
 
-**Status:** `D0 ACCEPTED; D1 ACCEPTED; D2 DESIGN ACCEPTED at a34f21e; IMPLEMENTATION IN PROGRESS`  
-**Revised from:** `a34f21e` (D2 design accepted; implementation in progress; D3–D5 not started)  
+**Status:** `D0 ACCEPTED; D1 ACCEPTED; D2 EXECUTED — EVIDENCE AWAITING REVIEW`  
+**Revised from:** `e7a1108` (D2 executed; evidence awaiting review; D3–D5 not started)  
 **Updated:** 2026-09-14  
 **D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`.  
 **D0 evidence:** [`docs/tmp/sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md) — **ACCEPTED** through `82e3b46`. Implementation `004ba80`.  
 **D1 design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`. Implementation `5669773`.  
 **D1 evidence:** [`docs/tmp/sprint009_d1_evidence_review.md`](../tmp/sprint009_d1_evidence_review.md) — **ACCEPTED** through `28f5ea4`. Implementation `5669773`. Output `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z`. Supersedes `0d63293` / `sprint009_d1_20260914T001504Z`.  
-**D2 design:** [`docs/tmp/sprint009_d2_design.md`](../tmp/sprint009_d2_design.md) — **ACCEPTED** at `a34f21e`. Implementation **IN PROGRESS**. Not a `READY` verdict.  
-**Mode:** Build. Restricted to D2. D3–D5 have not started.  
+**D2 design:** [`docs/tmp/sprint009_d2_design.md`](../tmp/sprint009_d2_design.md) — **ACCEPTED** at `a34f21e`. Implementation `e7a1108`.  
+**D2 evidence:** [`docs/tmp/sprint009_d2_evidence_review.md`](../tmp/sprint009_d2_evidence_review.md) — `EXECUTED — EVIDENCE AWAITING REVIEW`. Run verdict `READY`. Not accepted.  
+**Mode:** Audit. D2 evidence awaiting review. D3–D5 have not started.  
 **Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md)  
 **Canonical path:** `docs/agenda/sprint9_short_body_wing_plan.md` — do not duplicate under `docs/tmp/`.  
 **Prior closeouts:** [`docs/sprint_memos/008_closeout.md`](../sprint_memos/008_closeout.md) (accepted through `61cbf30`), [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 
-This document is the accepted sprint-level research protocol. D0 is accepted through `82e3b46`. D1 evidence is accepted through `28f5ea4`. The D2 design is accepted at `a34f21e`. Implementation is in progress and restricted to D2. It does not authorize D3–D5 or a new later-period comparison. Official inputs stay read-only.
+This document is the accepted sprint-level research protocol. D0 is accepted through `82e3b46`. D1 evidence is accepted through `28f5ea4`. D2 was executed at `e7a1108`. That evidence is awaiting review. It does not authorize D3–D5 or a new later-period comparison. Official inputs stay read-only.
 
 ---
 
@@ -39,7 +40,7 @@ An inconclusive measurement, a decision not to freeze a rule, or a skipped D4 is
 | Source | Role |
 |---|---|
 | [`docs/agenda/current_sprint.md`](current_sprint.md) | Active sprint status |
-| This plan | Accepted sprint scope. D0 and D1 evidence are accepted. D2 design is a separate draft |
+| This plan | Accepted sprint scope. D0 and D1 evidence are accepted. D2 is executed; evidence is awaiting review |
 | [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) and official run `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` | Frozen selection, structures, and the reference cross book |
 | [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md) | Accepted cross economics. Not revised here |
 | [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md) | `EXECUTION_CALIBRATION_REQUIRED` remains. This sprint does not implement the observer and does not cancel that handoff |
@@ -240,7 +241,8 @@ Body-only economics at midpoint and at cross use the same \(Q\) and the same bod
 
 ## 9. D2 — What protection do the wings provide?
 
-**Design:** [`docs/tmp/sprint009_d2_design.md`](../tmp/sprint009_d2_design.md) — **ACCEPTED** at `a34f21e`. Implementation **IN PROGRESS**. The question and boundaries below are unchanged. That design pins verified D1 column names, ranking, loss avoided, and outputs. It does not replace D3–D5.
+**Design:** [`docs/tmp/sprint009_d2_design.md`](../tmp/sprint009_d2_design.md) — **ACCEPTED** at `a34f21e`. Implementation `e7a1108`.  
+**Evidence:** [`docs/tmp/sprint009_d2_evidence_review.md`](../tmp/sprint009_d2_evidence_review.md) — `EXECUTED — EVIDENCE AWAITING REVIEW`. Run verdict `READY`. Not accepted. The question and boundaries below are unchanged. That design pins verified D1 column names, ranking, loss avoided, and outputs. It does not replace D3–D5.
 
 **Question.** Holding body quantities fixed, what do the wings change in development-history dollars, and what does that not measure?
 
@@ -494,7 +496,7 @@ These start only after plan acceptance and a separate authorization for that inc
 
 If D4 is skipped, the remaining path is the descriptive companion plus the closeout. No increment reruns `SurfaceRunner` or retunes `42:8`.
 
-Separate one-page designs are written when an increment is authorized, following the existing workflow. D0 and D1 evidence are accepted. The D2 design is drafted and awaiting review. Do not create the D2 runner, tests, charts, or evidence directory until that design is accepted and implementation is separately authorized. Do not create D3–D5 designs until those increments are authorized.
+Separate one-page designs are written when an increment is authorized, following the existing workflow. D0 and D1 evidence are accepted. D2 is executed and the evidence is awaiting review. Do not create D3–D5 designs until those increments are authorized.
 
 ---
 

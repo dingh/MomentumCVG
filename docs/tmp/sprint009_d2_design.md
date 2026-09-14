@@ -2,7 +2,7 @@
 
 **Status:** **ACCEPTED** at `a34f21e`  
 **Updated:** 2026-09-14  
-**Implementation:** **IN PROGRESS.** Restricted to D2. Official evidence is not attached until the committed implementation is executed.  
+**Implementation:** executed at `e7a1108`. Run verdict `READY`. Evidence [`sprint009_d2_evidence_review.md`](sprint009_d2_evidence_review.md) is awaiting review and is not accepted. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T151216Z`.  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](../agenda/sprint9_short_body_wing_plan.md) §9 — formulas unchanged; this file pins D1 columns and outputs  
 **D1 design:** [`docs/tmp/sprint009_d1_design.md`](sprint009_d1_design.md) — accepted at `e109a9e`  
@@ -311,6 +311,6 @@ It is not done if it claims a margin result, an unseen-tail probability, that mi
 
 Review can accept, amend, or reject the cross-versus-midpoint split, the ranking tie-break, the loss-avoided sign, and the ban on a D0 economic join.
 
-This design is accepted at `a34f21e` and D2 implementation is authorized. An implementation run returns `READY` or `BLOCKED`. This file must not be edited to say the D2 evidence is accepted before that evidence exists and is reviewed.
+This design is accepted at `a34f21e`. The authorized implementation run is complete at `e7a1108` and returned `READY`. That evidence is awaiting review. This file must not be edited to say the D2 evidence is accepted before that review.
 
 No accounting choice is left open for the implementer. Cross is primary. Purchase cost is `w_mid + h_wing`. Net contribution is `w_pay - w_mid - h_wing`. Loss avoided can be negative. The population and quantities stay the accepted D1 development book.
