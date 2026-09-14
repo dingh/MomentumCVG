@@ -2,13 +2,13 @@
 
 **Status:** **ACCEPTED** at `a34f21e`  
 **Updated:** 2026-09-14  
-**Implementation:** executed at `e7a1108`. Run verdict `READY`. Evidence [`sprint009_d2_evidence_review.md`](sprint009_d2_evidence_review.md) is awaiting review and is not accepted. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T151216Z`.  
+**Implementation:** corrected at `52be625`. Run verdict `READY`. Evidence [`sprint009_d2_evidence_review.md`](sprint009_d2_evidence_review.md) is awaiting review and is not accepted. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z`. Supersedes `e7a1108` / `sprint009_d2_20260914T151216Z`. Methodology unchanged.  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](../agenda/sprint9_short_body_wing_plan.md) §9 — formulas unchanged; this file pins D1 columns and outputs  
 **D1 design:** [`docs/tmp/sprint009_d1_design.md`](sprint009_d1_design.md) — accepted at `e109a9e`  
 **D1 evidence:** [`docs/tmp/sprint009_d1_evidence_review.md`](sprint009_d1_evidence_review.md) — **ACCEPTED** through `28f5ea4`. Implementation `5669773`.
 
-This design is **ACCEPTED** at `a34f21e`, with the midpoint caveat below. Implementation is in progress and restricted to D2. D3–D5 are unchanged.
+This design is **ACCEPTED** at `a34f21e`, with the midpoint caveat below. The corrected implementation is restricted to D2. D3–D5 are unchanged.
 
 ---
 
@@ -311,6 +311,6 @@ It is not done if it claims a margin result, an unseen-tail probability, that mi
 
 Review can accept, amend, or reject the cross-versus-midpoint split, the ranking tie-break, the loss-avoided sign, and the ban on a D0 economic join.
 
-This design is accepted at `a34f21e`. The authorized implementation run is complete at `e7a1108` and returned `READY`. That evidence is awaiting review. This file must not be edited to say the D2 evidence is accepted before that review.
+This design is accepted at `a34f21e`. The corrected implementation run is complete at `52be625` and returned `READY`. That evidence is awaiting review. This file must not be edited to say the D2 evidence is accepted before that review.
 
 No accounting choice is left open for the implementer. Cross is primary. Purchase cost is `w_mid + h_wing`. Net contribution is `w_pay - w_mid - h_wing`. Loss avoided can be negative. The population and quantities stay the accepted D1 development book.

@@ -3,8 +3,9 @@
 **Status:** `EXECUTED — EVIDENCE AWAITING REVIEW`  
 **Executed:** 2026-09-14  
 **Design:** [`sprint009_d2_design.md`](sprint009_d2_design.md) — **ACCEPTED** at `a34f21e`. Methodology unchanged. Midpoint caveat corrected before implementation.  
-**Implementation:** `e7a11083a76d6b9985f2e15159e2c4f0908f0f02`  
-**Evidence:** `C:/MomentumCVG_env/runs/sprint009_d2_20260914T151216Z/`  
+**Implementation:** `52be6254ef877a791fcf476e0a82fc663804ffa5`  
+**Evidence:** `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z/`  
+**Supersedes:** `e7a1108` / `C:/MomentumCVG_env/runs/sprint009_d2_20260914T151216Z/`. Those artifacts are preserved and are not the official record.  
 **Input:** accepted D1 panel `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z/` (`5669773`, receipt `READY`). Evidence acceptance `28f5ea4`.  
 **Characterization:** Fixed-quantity expiry comparison of the same iron-fly-selected names with and without the existing wings. Not a margin, liquidation, unseen-tail, or uncovered-trading result. This file does not accept the evidence. D3–D5 have not started.
 
@@ -112,7 +113,7 @@ Annual P&L is the year's sum. Year-end cumulative is the endpoint of the continu
 | 2022 | 52 | 0 | 611 | 39,864.75 | −601.37 | −40,466.12 | 87 | 58 | 27,003.37 | −54,448.51 |
 | 2023 | 52 | 0 | 508 | 10,342.33 | −15,328.22 | −25,670.54 | 94 | 72 | 37,345.69 | −69,776.72 |
 
-The dollar advantage of removing wings is negative net contribution in every year. It is largest in 2022 (−$40,466), then 2021, 2023, and 2020. It is not a one-year artifact, and 2022 is where a large positive body is almost entirely spent on wings that do not pay enough to cover their cost.
+The dollar advantage of removing wings is positive every year. It is largest in 2022 at **$40,466**. The wing contribution itself is negative every year, and in 2022 it is **−$40,466**. It is not a one-year artifact, and 2022 is where a large positive body is almost entirely spent on wings that do not pay enough to cover their cost.
 
 The observed protection is concentrated. Date-level loss avoided on 2020-02-21 is $36,506 of the $64,055 date-level total, about 57%. That one date is also 16.3% of body-date gross losing dollars. Protection in this sample is a few large expiry events, not a steady offset to the purchase cost.
 
@@ -133,12 +134,15 @@ This evidence does not measure intraperiod mark-to-market losses, margin calls, 
 | Verdict | `READY` |
 | Trades / dates | 2,087 / 209, including `2020-03-13` at zero dollars |
 | Gates | Provenance, coverage, identity, reconciliation, ranking, calendar, and scope all passed |
-| Identity residuals | Within floating-point noise of the saved D1 columns. Annual residuals versus D1 are on the order of \(10^{-11}\) |
-| Implementation | `e7a11083a76d6b9985f2e15159e2c4f0908f0f02` |
+| Identity residuals | Explicit at trade, date, annual, and development total. Development cross identity residual \(-1.46\times 10^{-11}\); midpoint identity residual \(2.91\times 10^{-11}\). Both are inside the matching-reference tolerance |
+| Component residuals | Every documented saved date dollar component and saved date trade count matches the derived sum. Date dollar residuals are 0. Date trade-count residual is 0. Annual dollar residuals versus saved D1 are at most \(1.46\times 10^{-11}\) (`w_mid`). Annual count residuals are 0 |
+| Comparison with `e7a1108` | Headline totals, frequencies, worst-event lists, concentration measures, and drawdowns are unchanged. Nothing in those series moved. The previous directory is preserved |
+| Implementation | `52be6254ef877a791fcf476e0a82fc663804ffa5` |
 | D1 code SHA | `5669773f356f6c33cef86bd0da30ce4051709a6b` |
 | D1 receipt | `READY` |
-| Generated | `2026-09-14T15:12:16Z` directory timestamp `20260914T151216Z` |
-| Output | `C:/MomentumCVG_env/runs/sprint009_d2_20260914T151216Z/` |
+| Generated | `2026-09-14T15:31:06Z` directory timestamp `20260914T153106Z` |
+| Output | `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z/` |
+| Previous output | `C:/MomentumCVG_env/runs/sprint009_d2_20260914T151216Z/` — preserved, not official |
 | D1 directory writes | none |
 
 Pinned input hashes matched:
@@ -159,6 +163,21 @@ C:/MomentumCVG_env/venv/Scripts/python.exe scripts/run_sprint009_d2_protection.p
 C:/MomentumCVG_env/venv/Scripts/python.exe -m pytest tests/unit/test_sprint009_d2_protection_comparison.py -q
 ```
 
-6 passed before the official run. The valid control uses the same `readiness_verdict` as the runner. A quantity-scaled book and a non-boolean `input_ok` stay `BLOCKED`. A zero gross-loss denominator stays null and does not drop trades. Drawdown starts from an initial peak of zero.
+8 passed before the official run. The valid control uses the same `readiness_verdict` as the runner. Scaling saved dollar columns still fails reconciliation and does not change \(Q\). A quantity mismatch against the source D1 row fails coverage and stays `BLOCKED`. A saved date `h_body` mismatch, which the previous body/fly-only date check would have missed, fails reconciliation. A saved date trade-count mismatch does the same. A zero gross-loss denominator stays null and does not drop trades. Drawdown starts from an initial peak of zero.
+
+Largest absolute residuals on the official book, using the matching reference and the accepted dollar tolerance:
+
+| Level | Largest absolute residual |
+|---|---|
+| Trade versus saved D1 | \(1.01\times 10^{-11}\) (`residual_fly_vs_official`) |
+| Date dollar components versus saved D1 | 0 for `b_mid`, `h_body`, `w_mid`, `h_wing`, `w_pay`, `p_body_cross`, and `p_fly_cross` |
+| Date trade count versus saved `n_trades` | 0 |
+| Date midpoint fly versus summed trade `pnl_mid_at_cross_q` | \(3.64\times 10^{-12}\) |
+| Annual dollar components versus saved D1 | \(1.46\times 10^{-11}\) (`w_mid`) |
+| Annual counts versus saved D1 | 0 for `n_dates`, `n_zero_short_dates`, and `n_trades` |
+| Development total, cross identity | \(-1.46\times 10^{-11}\) against fly \(-$69,776.72\) |
+| Development total, midpoint identity | \(2.91\times 10^{-11}\) against fly midpoint \($51,790.39\) |
+
+None of those residuals failed a gate. A discrepancy outside the matching tolerance, or a nonzero count residual, reaches `BLOCKED` through `readiness_verdict`.
 
 Charts `cumulative_cross.png` and `annual_cross.png` were written only because every gate passed. They stay in the external evidence directory.
