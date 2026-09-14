@@ -57,6 +57,20 @@ TRADE_DOLLAR_COLUMNS = (
     "pnl_mid_at_cross_q",
 )
 DATE_DOLLAR_COLUMNS = ("b_mid", "h_body", "w_mid", "h_wing", "w_pay", "p_body_cross", "p_fly_cross")
+ANNUAL_COUNT_COLUMNS = ("n_dates", "n_zero_short_dates", "n_trades")
+DATE_COMPONENT_PAIRS = tuple((f"residual_{name}_vs_d1", f"saved_{name}") for name in DATE_DOLLAR_COLUMNS)
+DATE_RECONCILE_PAIRS = DATE_COMPONENT_PAIRS + (("residual_mid_vs_trades", "trade_sum_fly_mid"),)
+TRADE_COMPONENT_PAIRS = (
+    ("residual_body_vs_d1", "pnl_body_cross"),
+    ("residual_fly_vs_official", "pnl_cross_official"),
+    ("residual_fly_vs_legs", "pnl_legs_sum"),
+    ("residual_wing_vs_d1", "pnl_wing_cross"),
+    ("residual_mid_vs_d1", "pnl_mid_at_cross_q"),
+)
+IDENTITY_PAIRS = (
+    ("residual_identity_cross", "p_fly_cross"),
+    ("residual_identity_mid", "p_fly_mid"),
+)
 
 
 class D2ComparisonError(Exception):
@@ -327,6 +341,7 @@ def _build_dates(trades: pd.DataFrame, calendar: pd.DataFrame, issues: list[str]
         elif klass == "verified_positive_short" and n_trades == 0:
             issues.append(f"{day}: verified positive date has no trades")
         saved = {name: 0.0 for name in DATE_DOLLAR_COLUMNS}
+        saved_n_trades: float | None = 0.0 if status is not None else None
         derived = {name: 0.0 for name in ("b_mid", "h_body", "w_mid", "h_wing", "w_pay", "p_body_cross", "p_fly_cross", "cost_cross", "net_cross", "p_fly_mid", "net_mid")}
         official_mid = 0.0
         if n_trades:
@@ -340,8 +355,17 @@ def _build_dates(trades: pd.DataFrame, calendar: pd.DataFrame, issues: list[str]
                     saved[name] = float("nan")
                 else:
                     saved[name] = float(status[name])
+            if not _finite(status.get("n_trades")):
+                issues.append(f"{day}: saved n_trades missing or non-finite")
+                saved_n_trades = None
+            else:
+                saved_n_trades = float(status["n_trades"])
         body = derived["p_body_cross"]
         fly = derived["p_fly_cross"]
+        fly_mid = derived["p_fly_mid"]
+        component_residuals = {
+            name: (derived[name] - saved[name] if _finite(saved[name]) else None) for name in DATE_DOLLAR_COLUMNS
+        }
         rows.append(
             {
                 "trade_date": day,
@@ -349,17 +373,16 @@ def _build_dates(trades: pd.DataFrame, calendar: pd.DataFrame, issues: list[str]
                 "n_trades": n_trades,
                 **derived,
                 "loss_avoided_date": loss_avoided(body, fly),
-                "saved_b_mid": saved["b_mid"],
-                "saved_h_body": saved["h_body"],
-                "saved_w_mid": saved["w_mid"],
-                "saved_h_wing": saved["h_wing"],
-                "saved_w_pay": saved["w_pay"],
-                "saved_p_body_cross": saved["p_body_cross"],
-                "saved_p_fly_cross": saved["p_fly_cross"],
-                "residual_body_vs_d1": body - saved["p_body_cross"] if _finite(saved["p_body_cross"]) else None,
-                "residual_fly_vs_d1": fly - saved["p_fly_cross"] if _finite(saved["p_fly_cross"]) else None,
-                "residual_mid_vs_trades": derived["p_fly_mid"] - official_mid,
+                **{f"saved_{name}": saved[name] for name in DATE_DOLLAR_COLUMNS},
+                "saved_n_trades": saved_n_trades,
+                **{f"residual_{name}_vs_d1": component_residuals[name] for name in DATE_DOLLAR_COLUMNS},
+                "residual_n_trades_vs_d1": None if saved_n_trades is None else float(n_trades) - saved_n_trades,
+                "residual_body_vs_d1": component_residuals["p_body_cross"],
+                "residual_fly_vs_d1": component_residuals["p_fly_cross"],
+                "residual_mid_vs_trades": fly_mid - official_mid,
+                "trade_sum_fly_mid": official_mid,
                 "residual_identity_cross": fly - (body + derived["net_cross"]),
+                "residual_identity_mid": fly_mid - (derived["b_mid"] + derived["w_pay"] - derived["w_mid"]),
                 "payout_positive": _positive(derived["w_pay"]),
                 "net_positive": _positive(derived["net_cross"]),
             }
@@ -392,36 +415,55 @@ def _build_annual(trades: pd.DataFrame, dates: pd.DataFrame, annual: pd.DataFram
         year_trades = trades.loc[trades["trade_date"].map(_as_date).isin(year_days)] if not trades.empty else trades
         last_day = max(year_days)
         ending_body, ending_fly = path_by_date[last_day]
+        body = float(date_frame["p_body_cross"].sum())
+        fly = float(date_frame["p_fly_cross"].sum())
+        w_pay = float(date_frame["w_pay"].sum())
+        w_mid = float(date_frame["w_mid"].sum())
+        h_wing = float(date_frame["h_wing"].sum())
+        b_mid = float(date_frame["b_mid"].sum())
+        h_body = float(date_frame["h_body"].sum())
+        net = float(date_frame["net_cross"].sum())
+        fly_mid = float(date_frame["p_fly_mid"].sum())
         row: dict[str, Any] = {
             "year": year,
             "n_dates": int(len(date_frame)),
             "n_zero_short_dates": int((date_frame["short_book_class"] == "verified_zero_short").sum()),
             "n_trades": int(date_frame["n_trades"].sum()),
-            "p_body_cross": float(date_frame["p_body_cross"].sum()),
-            "p_fly_cross": float(date_frame["p_fly_cross"].sum()),
-            "net_cross": float(date_frame["net_cross"].sum()),
-            "w_pay": float(date_frame["w_pay"].sum()),
+            "p_body_cross": body,
+            "p_fly_cross": fly,
+            "net_cross": net,
+            "w_pay": w_pay,
             "cost_cross": float(date_frame["cost_cross"].sum()),
-            "w_mid": float(date_frame["w_mid"].sum()),
-            "h_wing": float(date_frame["h_wing"].sum()),
-            "b_mid": float(date_frame["b_mid"].sum()),
+            "w_mid": w_mid,
+            "h_wing": h_wing,
+            "h_body": h_body,
+            "b_mid": b_mid,
+            "p_fly_mid": fly_mid,
             "payout_positive_trades": int(year_trades["payout_positive"].sum()) if not year_trades.empty else 0,
             "net_positive_trades": int(year_trades["net_positive"].sum()) if not year_trades.empty else 0,
             "ending_cumulative_body_cross": ending_body,
             "ending_cumulative_fly_cross": ending_fly,
+            "residual_identity_cross": fly - (body + (w_pay - w_mid - h_wing)),
+            "residual_identity_mid": fly_mid - (b_mid + (w_pay - w_mid)),
         }
         saved = saved_by_year.get(year)
         if saved is None:
             issues.append(f"{year}: missing from annual_decomposition")
-            for name in ("p_body_cross", "p_fly_cross", "w_pay", "w_mid", "h_wing", "n_dates", "n_trades", "n_zero_short_dates"):
+            for name in DATE_DOLLAR_COLUMNS:
+                row[f"saved_{name}"] = None
+                row[f"residual_{name}_vs_d1"] = None
+            for name in ANNUAL_COUNT_COLUMNS:
                 row[f"residual_{name}_vs_d1"] = None
         else:
-            for name in ("p_body_cross", "p_fly_cross", "w_pay", "w_mid", "h_wing"):
+            for name in DATE_DOLLAR_COLUMNS:
+                observed = saved.get(name)
+                row[f"saved_{name}"] = None if not _finite(observed) else float(observed)
+                row[f"residual_{name}_vs_d1"] = None if not _finite(observed) else float(row[name]) - float(observed)
+            for name in ANNUAL_COUNT_COLUMNS:
                 observed = saved.get(name)
                 row[f"residual_{name}_vs_d1"] = None if not _finite(observed) else float(row[name]) - float(observed)
-            for name in ("n_dates", "n_trades", "n_zero_short_dates"):
-                if int(saved[name]) != int(row[name]):
-                    issues.append(f"{year}: {name} {int(row[name])} != saved {int(saved[name])}")
+                if not _finite(observed) or int(observed) != int(row[name]):
+                    issues.append(f"{year}: {name} {int(row[name])} != saved {observed}")
         rows.append(row)
     if annual is not None and not annual.empty:
         extra_years = sorted(set(int(value) for value in annual["year"]) - set(ANNUAL_YEARS))
@@ -620,20 +662,156 @@ def _official_coverage_problems(trades: pd.DataFrame, dates: pd.DataFrame) -> li
     return problems
 
 
-def _residual_failures(frame: pd.DataFrame, columns: tuple[str, ...], official_column: str, limit: int = 5) -> list[str]:
+def _quantity_preservation_problems(source: pd.DataFrame, output: pd.DataFrame) -> list[str]:
+    """Output keys and quantities must be the source rows that were emitted, not a rescaled book."""
+    problems: list[str] = []
+    source_by_key: dict[tuple[date, str, str], pd.Series] = {}
+    if not source.empty:
+        for _, row in source.iterrows():
+            key = (_as_date(row["trade_date"]), str(row["ticker"]), str(row["direction"]))
+            source_by_key[key] = row
+    output_by_key: dict[tuple[date, str, str], pd.Series] = {}
+    if not output.empty:
+        for _, row in output.iterrows():
+            key = (_as_date(row["trade_date"]), str(row["ticker"]), str(row["direction"]))
+            if key in output_by_key:
+                problems.append(f"{key[0]} {key[1]} {key[2]}: duplicate output trade key")
+            output_by_key[key] = row
+    missing = sorted(set(source_by_key) - set(output_by_key))
+    extra = sorted(set(output_by_key) - set(source_by_key))
+    if missing:
+        shown = ", ".join(f"{day} {ticker} {direction}" for day, ticker, direction in missing[:3])
+        problems.append(f"output trade keys missing source rows: {shown}")
+    if extra:
+        shown = ", ".join(f"{day} {ticker} {direction}" for day, ticker, direction in extra[:3])
+        problems.append(f"output trade keys absent from source rows: {shown}")
+    for key, row in output_by_key.items():
+        source_row = source_by_key.get(key)
+        if source_row is None:
+            continue
+        label = f"{key[0]} {key[1]} {key[2]}"
+        if not _finite(row.get("Q")) or not _finite(source_row.get("Q")) or float(row["Q"]) != float(source_row["Q"]):
+            problems.append(f"{label}: output Q {row.get('Q')} != source Q {source_row.get('Q')}")
+        signed = row.get("quantity_cross_signed")
+        source_signed = source_row.get("quantity_cross_signed")
+        if not _finite(signed) or not _finite(source_signed) or float(signed) != float(source_signed):
+            problems.append(f"{label}: output quantity_cross_signed {signed} != source {source_signed}")
+        if len(problems) >= 6:
+            break
+    return problems
+
+
+def _residual_text(value: Any) -> str:
+    if value is None or not _finite(value):
+        return "undefined"
+    return f"{float(value):.6g}"
+
+
+def _dollar_residual_failures(
+    frame: pd.DataFrame,
+    pairs: tuple[tuple[str, str], ...],
+    *,
+    limit: int = 8,
+) -> list[str]:
+    """Residual must be within the dollar tolerance of zero, using the matching reference column."""
     failed: list[str] = []
     if frame.empty:
         return ["empty frame"]
     for _, row in frame.iterrows():
-        reference = float(row[official_column]) if official_column in row and _finite(row.get(official_column)) else 0.0
+        label = row.get("trade_date", row.get("year"))
+        for residual_name, reference_name in pairs:
+            residual = row.get(residual_name)
+            reference = row.get(reference_name)
+            if residual is None or not _finite(residual) or reference is None or not _finite(reference):
+                failed.append(f"{label} {residual_name} residual={_residual_text(residual)}")
+            elif not within_dollars(float(residual), 0.0, float(reference)):
+                failed.append(
+                    f"{label} {residual_name} residual={_residual_text(residual)} reference={_residual_text(reference)}"
+                )
+            else:
+                continue
+            if len(failed) >= limit:
+                return failed
+    return failed
+
+
+def _count_residual_failures(frame: pd.DataFrame, columns: tuple[str, ...], *, limit: int = 8) -> list[str]:
+    failed: list[str] = []
+    if frame.empty:
+        return ["empty frame"]
+    for _, row in frame.iterrows():
+        label = row.get("trade_date", row.get("year"))
         for name in columns:
             value = row.get(name)
-            if value is None or not _finite(value) or not within_dollars(float(value), 0.0, reference):
-                failed.append(f"{row.get('trade_date', row.get('year'))} {name}")
-                break
-        if len(failed) >= limit:
-            break
+            if value is None or not _finite(value) or float(value) != 0.0:
+                failed.append(f"{label} {name} residual={_residual_text(value)}")
+                if len(failed) >= limit:
+                    return failed
     return failed
+
+
+def _development_identity(trades: pd.DataFrame) -> dict[str, float | None]:
+    if trades.empty:
+        return {
+            "residual_identity_cross": None,
+            "residual_identity_mid": None,
+            "reference_cross": None,
+            "reference_mid": None,
+        }
+    body = float(trades["p_body_cross"].sum())
+    fly = float(trades["p_fly_cross"].sum())
+    net = float(trades["net_cross"].sum())
+    b_mid = float(trades["b_mid"].sum())
+    w_pay = float(trades["w_pay"].sum())
+    w_mid = float(trades["w_mid"].sum())
+    fly_mid = float(trades["p_fly_mid"].sum())
+    return {
+        "residual_identity_cross": fly - (body + net),
+        "residual_identity_mid": fly_mid - (b_mid + (w_pay - w_mid)),
+        "reference_cross": fly,
+        "reference_mid": fly_mid,
+    }
+
+
+def _development_identity_failures(trades: pd.DataFrame) -> list[str]:
+    values = _development_identity(trades)
+    failed: list[str] = []
+    cross = values["residual_identity_cross"]
+    mid = values["residual_identity_mid"]
+    if cross is None or not _finite(cross) or not within_dollars(float(cross), 0.0, float(values["reference_cross"] or 0.0)):
+        failed.append(
+            f"development residual_identity_cross residual={_residual_text(cross)} reference={_residual_text(values['reference_cross'])}"
+        )
+    if mid is None or not _finite(mid) or not within_dollars(float(mid), 0.0, float(values["reference_mid"] or 0.0)):
+        failed.append(
+            f"development residual_identity_mid residual={_residual_text(mid)} reference={_residual_text(values['reference_mid'])}"
+        )
+    return failed
+
+
+def residual_summary(trades: pd.DataFrame, dates: pd.DataFrame, annual: pd.DataFrame) -> dict[str, Any]:
+    trade_cols = tuple(name for name, _ in TRADE_COMPONENT_PAIRS) + tuple(name for name, _ in IDENTITY_PAIRS)
+    date_cols = tuple(name for name, _ in DATE_RECONCILE_PAIRS) + ("residual_n_trades_vs_d1",) + tuple(name for name, _ in IDENTITY_PAIRS)
+    annual_cols = tuple(name for name, _ in DATE_COMPONENT_PAIRS) + tuple(
+        f"residual_{name}_vs_d1" for name in ANNUAL_COUNT_COLUMNS
+    ) + tuple(name for name, _ in IDENTITY_PAIRS)
+    return {
+        "trade_max_abs": _max_abs_residuals(trades, trade_cols),
+        "date_max_abs": _max_abs_residuals(dates, date_cols),
+        "annual_max_abs": _max_abs_residuals(annual, annual_cols),
+        "development_identity": _development_identity(trades),
+    }
+
+
+def _max_abs_residuals(frame: pd.DataFrame, columns: tuple[str, ...]) -> dict[str, float | None]:
+    summary: dict[str, float | None] = {}
+    for name in columns:
+        if frame.empty or name not in frame.columns:
+            summary[name] = None
+            continue
+        finite = [abs(float(value)) for value in frame[name] if value is not None and _finite(value)]
+        summary[name] = max(finite) if finite else None
+    return summary
 
 
 def evaluate_gates(
@@ -665,17 +843,12 @@ def evaluate_gates(
             "development inputs are finite and paired" if not issues else "; ".join(issues[:6]),
         )
     )
-    identity_cols = ("residual_identity_cross", "residual_identity_mid")
-    reconcile_cols = (
-        "residual_body_vs_d1",
-        "residual_fly_vs_official",
-        "residual_fly_vs_legs",
-        "residual_wing_vs_d1",
-        "residual_mid_vs_d1",
-    )
-    identity_failed = _residual_failures(trades, identity_cols, "pnl_cross_official") if not trades.empty else ["no trades"]
+    identity_failed = _dollar_residual_failures(trades, IDENTITY_PAIRS) if not trades.empty else ["no trades"]
     if not dates.empty:
-        identity_failed.extend(_residual_failures(dates, ("residual_identity_cross",), "p_fly_cross"))
+        identity_failed.extend(_dollar_residual_failures(dates, IDENTITY_PAIRS))
+    if not annual.empty:
+        identity_failed.extend(_dollar_residual_failures(annual, IDENTITY_PAIRS))
+    identity_failed.extend(_development_identity_failures(trades))
     gates.append(
         GateResult(
             "identity",
@@ -683,17 +856,13 @@ def evaluate_gates(
             "cross and midpoint identities hold" if not identity_failed else "; ".join(identity_failed[:6]),
         )
     )
-    reconcile_failed = _residual_failures(trades, reconcile_cols, "pnl_cross_official") if not trades.empty else ["no trades"]
+    reconcile_failed = _dollar_residual_failures(trades, TRADE_COMPONENT_PAIRS) if not trades.empty else ["no trades"]
     if not dates.empty:
-        reconcile_failed.extend(_residual_failures(dates, ("residual_body_vs_d1", "residual_fly_vs_d1", "residual_mid_vs_trades"), "p_fly_cross"))
+        reconcile_failed.extend(_dollar_residual_failures(dates, DATE_RECONCILE_PAIRS))
+        reconcile_failed.extend(_count_residual_failures(dates, ("residual_n_trades_vs_d1",)))
     if not annual.empty:
-        for _, row in annual.iterrows():
-            reference = float(row["p_fly_cross"])
-            for name in ("residual_p_body_cross_vs_d1", "residual_p_fly_cross_vs_d1", "residual_w_pay_vs_d1", "residual_w_mid_vs_d1", "residual_h_wing_vs_d1"):
-                value = row.get(name)
-                if value is None or not _finite(value) or not within_dollars(float(value), 0.0, reference):
-                    reconcile_failed.append(f"{int(row['year'])} {name}")
-                    break
+        reconcile_failed.extend(_dollar_residual_failures(annual, DATE_COMPONENT_PAIRS))
+        reconcile_failed.extend(_count_residual_failures(annual, tuple(f"residual_{name}_vs_d1" for name in ANNUAL_COUNT_COLUMNS)))
     gates.append(
         GateResult(
             "reconciliation",
@@ -785,7 +954,11 @@ def compare_development(
         for name, observed in checks.items():
             reference = aggregate.get(name)
             if reference is None or not _finite(reference) or not within_dollars(observed, float(reference), float(reference)):
-                issues.append(f"aggregate {name} does not match aggregate_dollars.json")
+                residual = None if reference is None or not _finite(reference) else observed - float(reference)
+                issues.append(
+                    f"aggregate {name} residual={_residual_text(residual)} reference={_residual_text(reference)}"
+                )
+    issues.extend(_quantity_preservation_problems(dev_trades, compared))
     worst_frames = []
     if not compared.empty:
         worst_frames.append(_rank_trades(compared, "p_body_cross", "body_trades"))
@@ -846,6 +1019,7 @@ def compare_development(
     report = {
         "verdict": "BLOCKED",
         "totals": totals,
+        "residuals": residual_summary(compared, date_table, annual_table),
         "caveat": "Midpoint results are diagnostic; this analysis does not establish whether midpoint fills are attainable.",
     }
     if any(key in report for key in FORBIDDEN_REPORT_KEYS):
@@ -886,6 +1060,32 @@ def _money(value: Any) -> str:
     return f"{sign}${abs(amount):,.2f}"
 
 
+def _residual_lines(residuals: dict[str, Any]) -> str:
+    if not residuals:
+        return "No residual summary."
+    parts = []
+    for level in ("trade_max_abs", "date_max_abs", "annual_max_abs"):
+        values = residuals.get(level) or {}
+        finite = {name: value for name, value in values.items() if value is not None}
+        if not finite:
+            parts.append(f"{level}: none")
+            continue
+        worst_name = max(finite, key=finite.get)
+        parts.append(f"{level} largest absolute residual {worst_name}={_residual_text(finite[worst_name])}")
+    identity = residuals.get("development_identity") or {}
+    parts.append(
+        "development "
+        f"residual_identity_cross={_residual_text(identity.get('residual_identity_cross'))} "
+        f"residual_identity_mid={_residual_text(identity.get('residual_identity_mid'))}"
+    )
+    return ". ".join(parts) + "."
+    if value is None or not _finite(value):
+        return "undefined"
+    amount = float(value)
+    sign = "-" if amount < 0 else ""
+    return f"{sign}${abs(amount):,.2f}"
+
+
 def render_report_md(result: ComparisonResult) -> str:
     lines = [
         "# Sprint 009 D2 protection comparison",
@@ -901,6 +1101,8 @@ def render_report_md(result: ComparisonResult) -> str:
         mark = "PASS" if gate.passed else "FAIL"
         lines.append(f"- {mark} `{gate.gate_id}`: {gate.detail}")
     if result.verdict != "READY":
+        lines.extend(["", "## Residuals", ""])
+        lines.append(_residual_lines(result.report.get("residuals", {})))
         lines.extend(["", "No interpretation. A failed gate is a named blocker, not a partial economic result.", ""])
         return "\n".join(lines)
     totals = result.totals
@@ -929,6 +1131,10 @@ def render_report_md(result: ComparisonResult) -> str:
             f"Body-only cross ends at {_money(result.drawdown.get('body_cross', {}).get('ending_cumulative'))} with maximum dollar drawdown {_money(result.drawdown.get('body_cross', {}).get('max_drawdown'))}.",
             f"Iron-fly cross ends at {_money(result.drawdown.get('fly_cross', {}).get('ending_cumulative'))} with maximum dollar drawdown {_money(result.drawdown.get('fly_cross', {}).get('max_drawdown'))}.",
             "Drawdowns are non-positive and use an initial peak of zero. Annual P&L is that year's sum. Year-end cumulative is the endpoint of the continuous development series. This is not a compounded account path.",
+            "",
+            "## Residuals",
+            "",
+            _residual_lines(result.report.get("residuals", {})),
             "",
         ]
     )

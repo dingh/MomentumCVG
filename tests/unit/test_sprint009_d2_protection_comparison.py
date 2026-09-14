@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from src.backtest import sprint009_d2_protection_comparison as d2
 from src.backtest.sprint009_d2_protection_comparison import (
     ACCEPTED_D1_CODE_SHA,
     ACCEPTED_D1_DIR,
@@ -71,19 +72,18 @@ def _annual_from(trades: pd.DataFrame, dates: pd.DataFrame) -> pd.DataFrame:
     dated["year"] = dated["trade_date"].map(lambda value: value.year if isinstance(value, date) else pd.Timestamp(value).year)
     rows = []
     for year, frame in dated.groupby("year"):
-        rows.append(
-            {
-                "year": int(year),
-                "n_dates": int(len(frame)),
-                "n_zero_short_dates": int((frame["short_book_class"] == "verified_zero_short").sum()),
-                "n_trades": int(frame["n_trades"].sum()) if "n_trades" in frame else int(len(trades)),
-                "p_body_cross": float(frame["p_body_cross"].sum()) if "p_body_cross" in frame else float(trades["p_body_cross"].sum()),
-                "p_fly_cross": float(frame["p_fly_cross"].sum()) if "p_fly_cross" in frame else float(trades["p_fly_cross"].sum()),
-                "w_pay": float(frame["w_pay"].sum()) if "w_pay" in frame else float(trades["w_pay"].sum()),
-                "w_mid": float(frame["w_mid"].sum()) if "w_mid" in frame else float(trades["w_mid"].sum()),
-                "h_wing": float(frame["h_wing"].sum()) if "h_wing" in frame else float(trades["h_wing"].sum()),
-            }
-        )
+        row = {
+            "year": int(year),
+            "n_dates": int(len(frame)),
+            "n_zero_short_dates": int((frame["short_book_class"] == "verified_zero_short").sum()),
+            "n_trades": int(frame["n_trades"].sum()) if "n_trades" in frame else int(len(trades)),
+        }
+        for name in ("b_mid", "h_body", "w_mid", "h_wing", "w_pay", "p_body_cross", "p_fly_cross"):
+            if name in frame:
+                row[name] = float(frame[name].sum())
+            elif name in trades:
+                row[name] = float(trades[name].sum())
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -188,13 +188,20 @@ def test_valid_control_passes_runner_verdict() -> None:
     assert body_worst.iloc[0]["loss_avoided"] == -20.0
     assert body_worst.iloc[0]["w_pay"] == 0.0
     assert result.drawdown["body_cross"]["max_drawdown"] < 0
+    identity = result.report["residuals"]["development_identity"]
+    assert abs(identity["residual_identity_cross"]) < 1e-9
+    assert abs(identity["residual_identity_mid"]) < 1e-9
+    assert result.dates["residual_h_body_vs_d1"].abs().max() == 0.0
+    assert result.annual["residual_b_mid_vs_d1"].abs().max() == 0.0
+    assert (result.dates["residual_n_trades_vs_d1"] == 0.0).all()
 
 
-def test_quantity_scale_and_non_boolean_input_are_blocked() -> None:
+def test_scaled_saved_dollars_fail_reconciliation_without_changing_quantity() -> None:
     trades, calendar = _book()
     scaled = _panel(trades, calendar, scale_saved=True)
     assert scaled.verdict == "BLOCKED"
     assert not next(gate for gate in scaled.gates if gate.gate_id == "reconciliation").passed
+    assert not any("output Q" in item for item in scaled.issues)
     assert readiness_verdict([GateResult("provenance", True, "held")] + scaled.gates) == "BLOCKED"
 
     broken = [dict(trades[0], input_ok="true")]
@@ -204,6 +211,58 @@ def test_quantity_scale_and_non_boolean_input_are_blocked() -> None:
     assert result.verdict == "BLOCKED"
     assert any("input_ok" in item for item in result.issues)
     assert readiness_verdict(result.gates) == "BLOCKED"
+
+
+def test_quantity_mismatch_against_source_is_blocked(monkeypatch) -> None:
+    trades, calendar = _book()
+    original = d2._annotate_trade
+
+    def scaled(row):
+        out = original(row)
+        out["Q"] = float(row["Q"]) * 100.0
+        out["quantity_cross_signed"] = float(row["quantity_cross_signed"]) * 100.0
+        return out
+
+    monkeypatch.setattr(d2, "_annotate_trade", scaled)
+    result = _panel(trades, calendar)
+    assert result.verdict == "BLOCKED"
+    assert any("output Q" in item for item in result.issues)
+    assert any("quantity_cross_signed" in item for item in result.issues)
+    assert not next(gate for gate in result.gates if gate.gate_id == "coverage").passed
+    assert next(gate for gate in result.gates if gate.gate_id == "reconciliation").passed
+    assert readiness_verdict(result.gates) == "BLOCKED"
+
+
+def test_date_component_mismatch_missed_by_body_and_fly_checks_is_blocked() -> None:
+    trades, calendar = _book()
+    frame = pd.DataFrame(trades)
+    dates = _saved_dates(frame, calendar)
+    annual = _annual_from(frame, dates)
+    dates = dates.copy()
+    target = dates.index[0]
+    day = dates.loc[target, "trade_date"]
+    dates.loc[target, "h_body"] = float(dates.loc[target, "h_body"]) + 25.0
+    result = compare_development(frame, dates, annual, require_official_coverage=False)
+    row = result.dates.loc[result.dates["trade_date"] == day].iloc[0]
+    assert row["residual_p_body_cross_vs_d1"] == 0.0
+    assert row["residual_p_fly_cross_vs_d1"] == 0.0
+    assert row["residual_h_body_vs_d1"] == -25.0
+    recon = next(gate for gate in result.gates if gate.gate_id == "reconciliation")
+    assert not recon.passed
+    assert "h_body" in recon.detail
+    assert result.verdict == "BLOCKED"
+    assert readiness_verdict(result.gates) == "BLOCKED"
+
+    counted = dates.copy()
+    counted.loc[target, "h_body"] = float(counted.loc[target, "h_body"]) - 25.0
+    counted.loc[target, "n_trades"] = int(counted.loc[target, "n_trades"]) + 1
+    count_result = compare_development(frame, counted, annual, require_official_coverage=False)
+    count_row = count_result.dates.loc[count_result.dates["trade_date"] == day].iloc[0]
+    assert count_row["residual_n_trades_vs_d1"] == -1.0
+    count_gate = next(gate for gate in count_result.gates if gate.gate_id == "reconciliation")
+    assert not count_gate.passed
+    assert "residual_n_trades_vs_d1" in count_gate.detail
+    assert readiness_verdict(count_result.gates) == "BLOCKED"
 
 
 def test_zero_loss_denominator_stays_null_and_trades_remain() -> None:
