@@ -1,13 +1,14 @@
 # Sprint 009 D2 — Protection provided by the existing wings
 
-**Status:** `DESIGN DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED`  
+**Status:** **ACCEPTED** at `a34f21e`  
 **Updated:** 2026-09-14  
+**Implementation:** **IN PROGRESS.** Restricted to D2. Official evidence is not attached until the committed implementation is executed.  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](../agenda/sprint9_short_body_wing_plan.md) §9 — formulas unchanged; this file pins D1 columns and outputs  
 **D1 design:** [`docs/tmp/sprint009_d1_design.md`](sprint009_d1_design.md) — accepted at `e109a9e`  
 **D1 evidence:** [`docs/tmp/sprint009_d1_evidence_review.md`](sprint009_d1_evidence_review.md) — **ACCEPTED** through `28f5ea4`. Implementation `5669773`.
 
-This draft does not authorize a helper, runner, test file, chart, or evidence directory. D3–D5 are unchanged.
+This design is **ACCEPTED** at `a34f21e`, with the midpoint caveat below. Implementation is in progress and restricted to D2. D3–D5 are unchanged.
 
 ---
 
@@ -25,7 +26,7 @@ Accepted D1 already stores body cross P&L, iron-fly cross P&L, wing premium, win
 
 ## Authorization
 
-Awaiting review. Acceptance of this design would still not start implementation. Do not create implementation or evidence files until that is separately authorized.
+This design is **ACCEPTED** at `a34f21e`. That acceptance authorizes the D2 helper, focused tests, and the official development comparison. It does not authorize D3–D5, later-period economics, or a verdict that D2 evidence is accepted before review.
 
 ---
 
@@ -224,7 +225,7 @@ Charts use matplotlib with the Agg backend. No new dependency. No later-period s
 
 Forbidden report keys: `later_period_pnl`, `filter_result`, `margin_call`, `uncovered_authorization`, `primary_window_anchor_as_development`.
 
-`d2_report.md` answers D2-A, D2-B, and D2-C only if every gate passed. Required caveats: fees = 0; concession is not deducted twice; midpoint fills are not attainable; this is not a margin or path result; gross payout is not loss avoided; the no-wing book is a counterfactual on the iron-fly-selected population; D2 does not authorize uncovered trading. If a gate fails, the report says `BLOCKED` and lists the named gaps. It does not interpret a partial book.
+`d2_report.md` answers D2-A, D2-B, and D2-C only if every gate passed. Required caveats: fees = 0; concession is not deducted twice; midpoint results are diagnostic; this analysis does not establish whether midpoint fills are attainable; this is not a margin or path result; gross payout is not loss avoided; the no-wing book is a counterfactual on the iron-fly-selected population; D2 does not authorize uncovered trading. If a gate fails, the report says `BLOCKED` and lists the named gaps. It does not interpret a partial book.
 
 ---
 
@@ -302,7 +303,7 @@ D2 is done when the gates pass or a named blocker is recorded, and the memo, if 
 - cumulative dollar P&L and maximum dollar drawdown for both books, peak including the initial zero, plus the 2020–2023 comparison;
 - whether that advantage and that protection are concentrated in years or events in this sample.
 
-It is not done if it claims a margin result, an unseen-tail probability, an attainable midpoint fill, or authorization to trade uncovered. D3–D5 stay as written in the sprint plan.
+It is not done if it claims a margin result, an unseen-tail probability, that midpoint fills are attainable, or authorization to trade uncovered. Midpoint results are diagnostic; this analysis does not establish whether midpoint fills are attainable. D3–D5 stay as written in the sprint plan.
 
 ---
 
@@ -310,6 +311,6 @@ It is not done if it claims a margin result, an unseen-tail probability, an atta
 
 Review can accept, amend, or reject the cross-versus-midpoint split, the ranking tie-break, the loss-avoided sign, and the ban on a D0 economic join.
 
-Acceptance still does not start implementation. An implementation run, if later authorized, returns `READY` or `BLOCKED`. This file must not be edited to say `READY` before that evidence exists and is reviewed.
+This design is accepted at `a34f21e` and D2 implementation is authorized. An implementation run returns `READY` or `BLOCKED`. This file must not be edited to say the D2 evidence is accepted before that evidence exists and is reviewed.
 
 No accounting choice is left open for the implementer. Cross is primary. Purchase cost is `w_mid + h_wing`. Net contribution is `w_pay - w_mid - h_wing`. Loss avoided can be negative. The population and quantities stay the accepted D1 development book.

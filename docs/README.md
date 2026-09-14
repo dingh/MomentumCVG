@@ -32,12 +32,12 @@ When a doc goes stale, move it to `docs/archive/` and add a row to `docs/archive
 | [surface_straddle_observation_transform_design.md](surface_straddle_observation_transform_design.md) | Sprint 005 D2 accepted transform contract / design of record | 2026-08-09 |
 | [development_workflow.md](development_workflow.md) | Human + agent sprint workflow; roadmap 004–008 | 2026-08-09 |
 | [baseline_status.md](baseline_status.md) | Test and smoke-command baseline (Sprint 006 closeout Phase 1 gate) | 2026-08-24 |
-| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 009 — `D0 ACCEPTED; D1 ACCEPTED; D2 DESIGN DRAFT — AWAITING REVIEW` | 2026-09-14 |
-| [agenda/sprint9_short_body_wing_plan.md](agenda/sprint9_short_body_wing_plan.md) | Sprint 009 working plan — D0 and D1 accepted; D2 design draft | 2026-09-14 |
+| [agenda/current_sprint.md](agenda/current_sprint.md) | Sprint 009 — `D1 ACCEPTED; D2 DESIGN ACCEPTED at a34f21e; IMPLEMENTATION IN PROGRESS` | 2026-09-14 |
+| [agenda/sprint9_short_body_wing_plan.md](agenda/sprint9_short_body_wing_plan.md) | Sprint 009 working plan — D0 and D1 accepted; D2 implementation in progress | 2026-09-14 |
 | [tmp/sprint009_d0_evidence_review.md](tmp/sprint009_d0_evidence_review.md) | Sprint 009 D0 official readiness — `READY`, accepted through `82e3b46` | 2026-09-13 |
 | [tmp/sprint009_d1_design.md](tmp/sprint009_d1_design.md) | Sprint 009 D1 decomposition design — **ACCEPTED** at `e109a9e` | 2026-09-13 |
 | [tmp/sprint009_d1_evidence_review.md](tmp/sprint009_d1_evidence_review.md) | Sprint 009 D1 official decomposition — `READY`, accepted through `28f5ea4` | 2026-09-14 |
-| [tmp/sprint009_d2_design.md](tmp/sprint009_d2_design.md) | Sprint 009 D2 protection design — `DESIGN DRAFT — AWAITING REVIEW; IMPLEMENTATION NOT STARTED` | 2026-09-14 |
+| [tmp/sprint009_d2_design.md](tmp/sprint009_d2_design.md) | Sprint 009 D2 protection design — **ACCEPTED** at `a34f21e`; implementation in progress | 2026-09-14 |
 | [agenda/sprint7_shortfall_plan.md](agenda/sprint7_shortfall_plan.md) | Sprint 007 working plan — D0–D4 questions, gates, and evidence boundaries | 2026-09-06 |
 | [v1_weekly_runbook.md](v1_weekly_runbook.md) | Stage A producer / repair notes (Sprint 004 input scope; Sprint 005 closed) | 2026-08-09 |
 | [known_bugs.md](known_bugs.md) | Open bugs and spec drift (fix deferred) | 2026-06-14 |
