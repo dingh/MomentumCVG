@@ -3,7 +3,7 @@
 **Status:** **ACCEPTED** at `e109a9e`  
 **Corrected from:** `5d33055` (stored ORATS mid is not the fill-model midpoint; disagreement is a diagnostic, not a gate)  
 **Updated:** 2026-09-13  
-**Implementation:** corrected at `5669773`. Run verdict `READY`. Evidence [`sprint009_d1_evidence_review.md`](sprint009_d1_evidence_review.md) is awaiting review and is not accepted. Output `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z`. Supersedes `0d63293` / `sprint009_d1_20260914T001504Z`.  
+**Implementation:** `5669773`. Run verdict `READY`. Evidence [`sprint009_d1_evidence_review.md`](sprint009_d1_evidence_review.md) — **ACCEPTED** through `28f5ea4`. Output `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z`. Supersedes `0d63293` / `sprint009_d1_20260914T001504Z`.  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](../agenda/sprint9_short_body_wing_plan.md) §8 — formulas unchanged; this file pins saved columns and outputs  
 **D0 design:** [`docs/tmp/sprint009_d0_design.md`](sprint009_d0_design.md) — accepted at `5329726`  
@@ -23,7 +23,7 @@ The accepted D0 panel already stores the quotes, signed settlement, quantity, an
 
 ## Authorization
 
-This design is **ACCEPTED** at `e109a9e`. That acceptance authorizes the D1 helper, focused tests, and the official development decomposition. It does not authorize D2–D5, later-period economics, or a verdict that D1 evidence is accepted before review.
+This design is **ACCEPTED** at `e109a9e`. D1 evidence is **ACCEPTED** through `28f5ea4`. That acceptance does not authorize D2 implementation, D3–D5, or later-period economics. D2 planning is a separate draft.
 
 ---
 
@@ -399,7 +399,7 @@ Hand-calculated, not official extracts. A valid control must pass the same verdi
 
 Review can accept, amend, or reject the column formulas, the null-ratio rule, and the ban on a later-period economic table.
 
-This design is accepted at `e109a9e`. The corrected implementation run is complete at `5669773` and returned `READY`. That evidence is awaiting review. `0d63293` is superseded. This file must not be edited to say the D1 evidence is accepted before that review.
+This design is accepted at `e109a9e`. The corrected implementation run is complete at `5669773` and returned `READY`. That evidence is **ACCEPTED** through `28f5ea4`. `0d63293` is superseded. Acceptance does not authorize D2 implementation.
 
 D2–D5 stay as written in the sprint plan. This design does not change their formulas, windows, or freeze rule.
 

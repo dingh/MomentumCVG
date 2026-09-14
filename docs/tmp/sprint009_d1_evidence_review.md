@@ -1,13 +1,14 @@
 # Sprint 009 D1 — evidence review
 
-**Status:** `EXECUTED — EVIDENCE AWAITING REVIEW`  
+**Status:** `REVIEWED / ACCEPTED` through `28f5ea4`  
 **Executed:** 2026-09-14  
+**Review annotation (2026-09-14):** Accepted through `28f5ea4`. Findings unchanged. Implementation remains `5669773`. Output remains `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z/`. The earlier D1 run stays superseded. This annotation does not change the results below. It authorizes D2 planning only. It does not start D2 implementation.  
 **Design:** [`sprint009_d1_design.md`](sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`. Formulas, population, quantities, and windows unchanged.  
 **Implementation:** `5669773f356f6c33cef86bd0da30ce4051709a6b`  
 **Evidence:** `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z/`  
 **Supersedes:** `0d63293` / `C:/MomentumCVG_env/runs/sprint009_d1_20260914T001504Z/`, previously recorded through `4a9a073`. That directory is not the current D1 record.  
 **Input:** accepted D0 panel `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z/` (`004ba80`, receipt verdict `READY`). The superseded D0 directory was not read. D0 and the baseline were not rerun.  
-**Characterization:** Development-history attribution of the frozen short iron fly. Not a trading decision, not a protection study, and not a filter result. This file does not accept the evidence.
+**Characterization:** Development-history attribution of the frozen short iron fly. Not a trading decision, not a protection study, and not a filter result. The review annotation above accepts this evidence. It does not reinterpret it as a protection result.
 
 ---
 
@@ -159,8 +160,7 @@ Source: `annual_decomposition.parquet` in the corrected evidence directory. Doll
 
 ## What this does not do
 
-- It does not accept this evidence.
-- It does not start D2–D5.
+- The review annotation accepts this evidence. It does not start D2 implementation, and it does not start D3–D5.
 - It does not rerun D0 or the baseline.
 - It does not compute later-period economics.
 - It does not change signals, wings, sizing, or the frozen contract.
