@@ -1,9 +1,9 @@
 # Sprint 009 D1 — Development margin decomposition
 
-**Status:** `DRAFT — AWAITING REVIEW`  
+**Status:** **ACCEPTED** at `e109a9e`  
 **Corrected from:** `5d33055` (stored ORATS mid is not the fill-model midpoint; disagreement is a diagnostic, not a gate)  
 **Updated:** 2026-09-13  
-**Implementation:** **NOT STARTED.** This document does not authorize a runner, tests, a chart, or an evidence directory.  
+**Implementation:** **IN PROGRESS.** Restricted to D1. Official evidence is not attached until the committed implementation is executed.  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](../agenda/sprint9_short_body_wing_plan.md) §8 — formulas unchanged; this file pins saved columns and outputs  
 **D0 design:** [`docs/tmp/sprint009_d0_design.md`](sprint009_d0_design.md) — accepted at `5329726`  
@@ -23,7 +23,7 @@ The accepted D0 panel already stores the quotes, signed settlement, quantity, an
 
 ## Authorization
 
-This design is awaiting review. It does not authorize implementation, an official decomposition run, or D2. Do not create helper, runner, test, chart, or evidence files until that authorization is given separately.
+This design is **ACCEPTED** at `e109a9e`. That acceptance authorizes the D1 helper, focused tests, and the official development decomposition. It does not authorize D2–D5, later-period economics, or a verdict that D1 evidence is accepted before review.
 
 ---
 
@@ -399,7 +399,7 @@ Hand-calculated, not official extracts. A valid control must pass the same verdi
 
 Review can accept, amend, or reject the column formulas, the null-ratio rule, and the ban on a later-period economic table.
 
-Acceptance of this design still does not start implementation. An implementation run, if later authorized, returns `READY` or `BLOCKED`. This file must not be edited to say `READY` before that evidence exists and is reviewed.
+This design is accepted at `e109a9e` and D1 implementation is authorized. An implementation run returns `READY` or `BLOCKED`. This file must not be edited to say the D1 evidence is `READY` or accepted before that evidence exists and is reviewed.
 
 D2–D5 stay as written in the sprint plan. This design does not change their formulas, windows, or freeze rule.
 
