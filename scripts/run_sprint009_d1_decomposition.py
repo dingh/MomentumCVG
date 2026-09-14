@@ -17,6 +17,7 @@ from src.backtest.sprint009_d1_body_wing_decomposition import (
     SUPERSEDED_D0_DIR,
     DecompositionResult,
     decompose_development,
+    official_acceptance_verdict,
     render_report_md,
 )
 
@@ -77,6 +78,7 @@ def main() -> None:
     print("d0_dir", ACCEPTED_D0_DIR, flush=True)
     _progress("inventory")
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    provenance_problems: list[str] = []
     inventory = {
         "d0_dir": str(ACCEPTED_D0_DIR),
         "d0_code_sha": receipt.get("code_sha"),
@@ -89,10 +91,56 @@ def main() -> None:
             "short_calendar.parquet": sha256_file(calendar_path),
         },
     }
+    _verdict, provenance_problems = official_acceptance_verdict(receipt, ACCEPTED_D0_DIR, "READY")
+    inventory["provenance_problems"] = provenance_problems
+    if provenance_problems:
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / "input_inventory.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
+        blocked = {
+            "verdict": "BLOCKED",
+            "provenance_problems": provenance_problems,
+            "code_sha": code_sha,
+            "d0_dir": str(ACCEPTED_D0_DIR),
+            "invocation": command,
+        }
+        (evidence / "d1_report.json").write_text(json.dumps(blocked, indent=2), encoding="utf-8")
+        (evidence / "d1_report.md").write_text(
+            "# Sprint 009 D1 development decomposition\n\n**Verdict:** `BLOCKED`\n\n"
+            + "\n".join(f"- {item}" for item in provenance_problems)
+            + "\n\nNo interpretation. A failed provenance check is a named blocker, not a partial economic result.\n",
+            encoding="utf-8",
+        )
+        (evidence / "execution_receipt.json").write_text(
+            json.dumps(
+                {
+                    "generated_utc": inventory["generated_utc"],
+                    "verdict": "BLOCKED",
+                    "command": command,
+                    "code_sha": code_sha,
+                    "d0_dir": str(ACCEPTED_D0_DIR),
+                    "d0_code_sha": receipt.get("code_sha"),
+                    "evidence_dir": str(evidence),
+                    "input_hashes": inventory["files"],
+                    "provenance_problems": provenance_problems,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print("VERDICT BLOCKED", flush=True)
+        for item in provenance_problems:
+            print(f"FAIL provenance: {item}", flush=True)
+        print("exported", evidence, flush=True)
+        return
     matched = pd.read_parquet(matched_path)
     calendar = pd.read_parquet(calendar_path)
     _progress("decomposition")
     result = decompose_development(matched, calendar, require_official_coverage=True)
+    accepted, acceptance_problems = official_acceptance_verdict(receipt, ACCEPTED_D0_DIR, result.verdict)
+    if acceptance_problems:
+        result.verdict = accepted
+        result.report["verdict"] = accepted
+        result.report["provenance_problems"] = acceptance_problems
     inventory["development_trades"] = int(len(result.trades))
     inventory["development_dates"] = int(len(result.dates))
     _progress("reconciliation")

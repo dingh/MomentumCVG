@@ -11,6 +11,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from src.backtest.sprint007_artifact_validation import expected_mid_fill_price
@@ -21,6 +22,8 @@ from src.backtest.sprint009_d0_body_wing_readiness import (
 
 ACCEPTED_D0_DIR = Path("C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z")
 SUPERSEDED_D0_DIR = Path("C:/MomentumCVG_env/runs/sprint009_d0_20260913T212939Z")
+ACCEPTED_D0_CODE_SHA = "004ba80052f6586f6a230ad207e8151e695e156e"
+ACCEPTED_D0_VERDICT = "READY"
 DEVELOPMENT_START = date(2020, 1, 1)
 DEVELOPMENT_END = date(2023, 12, 31)
 ZERO_SHORT_DATE = date(2020, 3, 13)
@@ -96,6 +99,31 @@ def readiness_verdict(gates: list[GateResult]) -> str:
     return "READY"
 
 
+def _is_true_bool(value: Any) -> bool:
+    """True only for an actual boolean true. Strings and missing values fail."""
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value) is True
+    return False
+
+
+def _unit_is_exact(value: Any, expected: int) -> bool:
+    """Require the numeric unit exactly. Do not truncate 1.5 to 1."""
+    if isinstance(value, (bool, np.bool_)):
+        return False
+    if not _finite(value):
+        return False
+    return float(value) == float(expected)
+
+
+def _ratio_number(value: Any) -> float:
+    if value is None:
+        return float("nan")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def _finite(value: Any) -> bool:
     try:
         return math.isfinite(float(value))
@@ -168,8 +196,8 @@ def _leg_quote(
     stored_mid = row.get(f"{prefix}_mid")
     payoff = row.get(f"{prefix}_expiry_payoff_per_unit")
     problems: list[str] = []
-    if not _finite(unit_raw) or int(unit_raw) != expected_unit:
-        problems.append(f"unit_quantity is not {expected_unit}")
+    if not _unit_is_exact(unit_raw, expected_unit):
+        problems.append(f"unit_quantity is not exactly {expected_unit}")
     for name, value in (("bid", bid), ("ask", ask), ("mid", stored_mid), ("expiry_payoff_per_unit", payoff)):
         if not _finite(value):
             problems.append(f"{name} missing or non-finite")
@@ -180,7 +208,7 @@ def _leg_quote(
     if problems:
         issues.append(_issue(key, prefix, "; ".join(problems)))
         return None
-    unit = int(unit_raw)
+    unit = expected_unit
     mid_fill = expected_mid_fill_price(bid, ask, unit)
     return {
         "unit": float(unit),
@@ -226,8 +254,8 @@ def decompose_trade(row: pd.Series) -> tuple[dict[str, Any], list[str], list[flo
     issues: list[str] = []
     if str(row.get("direction", "")) != "short":
         issues.append(_issue(key, "direction", "is not short"))
-    if not bool(row.get("pairing_ok")):
-        issues.append(_issue(key, "pairing_ok", "is not true"))
+    if not _is_true_bool(row.get("pairing_ok")):
+        issues.append(_issue(key, "pairing_ok", "is not an actual true boolean"))
     quantity = row.get("quantity_cross_signed")
     q_value = row.get("Q")
     if not _finite(quantity) or not float(quantity) < 0:
@@ -433,9 +461,9 @@ def _build_dates(trades: pd.DataFrame, calendar: pd.DataFrame, issues: list[str]
                 "n_trades": n_trades,
                 **dollars,
                 **residuals,
-                "body_concession_ratio": _ratio(dollars["h_body"] or float("nan"), c_body or float("nan")),
-                "wing_premium_ratio": _ratio(dollars["w_mid"] or float("nan"), c_body or float("nan")),
-                "wing_concession_ratio": _ratio(dollars["h_wing"] or float("nan"), c_body or float("nan")),
+                "body_concession_ratio": _ratio(_ratio_number(dollars["h_body"]), _ratio_number(c_body)),
+                "wing_premium_ratio": _ratio(_ratio_number(dollars["w_mid"]), _ratio_number(c_body)),
+                "wing_concession_ratio": _ratio(_ratio_number(dollars["h_wing"]), _ratio_number(c_body)),
                 "ratio_reason": reason,
             }
         )
@@ -469,18 +497,9 @@ def _build_annual(trades: pd.DataFrame, dates: pd.DataFrame) -> pd.DataFrame:
         for name in ("b_mid", "h_body", "w_mid", "h_wing", "w_pay", "p_body_cross", "p_fly_cross", "c_body"):
             row[name] = _sum_or_none(year_trades, name) if not year_trades.empty else 0.0
         row.update({name: level[name] for name in RESIDUAL_FIELDS})
-        row["body_concession_ratio"] = _ratio(
-            row["h_body"] if row["h_body"] is not None else float("nan"),
-            c_body if c_body is not None else float("nan"),
-        )
-        row["wing_premium_ratio"] = _ratio(
-            row["w_mid"] if row["w_mid"] is not None else float("nan"),
-            c_body if c_body is not None else float("nan"),
-        )
-        row["wing_concession_ratio"] = _ratio(
-            row["h_wing"] if row["h_wing"] is not None else float("nan"),
-            c_body if c_body is not None else float("nan"),
-        )
+        row["body_concession_ratio"] = _ratio(_ratio_number(row["h_body"]), _ratio_number(c_body))
+        row["wing_premium_ratio"] = _ratio(_ratio_number(row["w_mid"]), _ratio_number(c_body))
+        row["wing_concession_ratio"] = _ratio(_ratio_number(row["h_wing"]), _ratio_number(c_body))
         row["ratio_reason"] = _date_ratio_reason(
             c_body if c_body is not None else float("nan"),
             int(date_frame["n_trades"].sum()),
@@ -522,17 +541,17 @@ def _aggregate_payloads(trades: pd.DataFrame, dates: pd.DataFrame) -> tuple[dict
         "body_concession_over_body_midpoint_credit": {
             "numerator": "sum(h_body)",
             "denominator": "sum(c_body)",
-            "value": _ratio(dollars["h_body"] if dollars["h_body"] is not None else float("nan"), c_body),
+            "value": _ratio(_ratio_number(dollars["h_body"]), c_body),
         },
         "wing_midpoint_premium_over_body_midpoint_credit": {
             "numerator": "sum(w_mid)",
             "denominator": "sum(c_body)",
-            "value": _ratio(dollars["w_mid"] if dollars["w_mid"] is not None else float("nan"), c_body),
+            "value": _ratio(_ratio_number(dollars["w_mid"]), c_body),
         },
         "wing_concession_over_body_midpoint_credit": {
             "numerator": "sum(h_wing)",
             "denominator": "sum(c_body)",
-            "value": _ratio(dollars["h_wing"] if dollars["h_wing"] is not None else float("nan"), c_body),
+            "value": _ratio(_ratio_number(dollars["h_wing"]), c_body),
         },
         "descriptive_wing_spread_percentage": {
             "numerator": "sum(h_wing)",
@@ -541,9 +560,35 @@ def _aggregate_payloads(trades: pd.DataFrame, dates: pd.DataFrame) -> tuple[dict
             "label": "descriptive spread percentage, not a headline damage figure",
         },
         "null_trade_ratio_counts": dollars["null_trade_ratio_counts"],
+        "null_date_ratio_counts": _null_ratio_counts(dates),
         "aggregate_ratio_reason": _ratio_reason(c_body),
     }
     return dollars, ratios
+
+
+def d0_receipt_problems(receipt: dict[str, Any], d0_dir: Path) -> list[str]:
+    """Named blockers for the official D0 handoff. Does not inspect parquet hashes."""
+    problems: list[str] = []
+    if Path(d0_dir).resolve() != ACCEPTED_D0_DIR.resolve():
+        problems.append(f"D0 directory {d0_dir} is not the accepted directory {ACCEPTED_D0_DIR}")
+    observed_sha = receipt.get("code_sha")
+    if observed_sha != ACCEPTED_D0_CODE_SHA:
+        problems.append(f"D0 receipt code SHA {observed_sha} != {ACCEPTED_D0_CODE_SHA}")
+    observed_verdict = receipt.get("verdict")
+    if observed_verdict != ACCEPTED_D0_VERDICT:
+        problems.append(f"D0 receipt verdict {observed_verdict!r} != {ACCEPTED_D0_VERDICT}")
+    receipt_dir = receipt.get("evidence_dir")
+    if receipt_dir is not None and Path(str(receipt_dir)).resolve() != ACCEPTED_D0_DIR.resolve():
+        problems.append(f"D0 receipt evidence_dir {receipt_dir} is not the accepted directory")
+    return problems
+
+
+def official_acceptance_verdict(receipt: dict[str, Any], d0_dir: Path, economic_verdict: str) -> tuple[str, list[str]]:
+    """Do not accept an economic READY result from an unverified D0 handoff."""
+    problems = d0_receipt_problems(receipt, d0_dir)
+    if problems:
+        return "BLOCKED", problems
+    return economic_verdict, []
 
 
 def official_coverage_problems(trades: pd.DataFrame, dates: pd.DataFrame) -> list[str]:

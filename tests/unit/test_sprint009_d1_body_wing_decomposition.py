@@ -9,8 +9,13 @@ import pytest
 from src.backtest.sprint007_artifact_validation import expected_mid_fill_price
 from src.backtest.sprint009_d0_body_wing_readiness import signed_entry_cash
 from src.backtest.sprint009_d1_body_wing_decomposition import (
+    ACCEPTED_D0_CODE_SHA,
+    ACCEPTED_D0_DIR,
+    ACCEPTED_D0_VERDICT,
     GateResult,
+    d0_receipt_problems,
     decompose_development,
+    official_acceptance_verdict,
     readiness_verdict,
 )
 
@@ -41,6 +46,7 @@ def _trade(
     put_wing_payoff: float = 0.0,
     stored_body_put_mid: float | None = None,
     zero_body_quotes: bool = False,
+    zero_body_spread: bool = False,
     official_pnl: float | None = None,
 ) -> dict:
     specs = {
@@ -52,6 +58,9 @@ def _trade(
     if zero_body_quotes:
         specs["body_put"] = (0.0, 0.0, -1, 0.0)
         specs["body_call"] = (0.0, 0.0, -1, 0.0)
+    if zero_body_spread:
+        specs["body_put"] = (2.0, 2.0, -1, body_put_payoff)
+        specs["body_call"] = (2.1, 2.1, -1, 0.0)
     row: dict = {
         "trade_date": day,
         "ticker": ticker,
@@ -199,3 +208,59 @@ def test_stored_mid_difference_passes_and_pnl_mismatch_fails() -> None:
     failed = _panel([mismatched], _calendar((DAY, "verified_positive_short")))
     assert not _gate(failed, "identity").passed
     _cannot_be_ready(failed)
+
+
+def test_zero_numerator_date_ratio_stays_defined() -> None:
+    result = _panel(
+        [_trade(zero_body_spread=True)],
+        _calendar((DAY, "verified_positive_short"), (ZERO, "verified_zero_short")),
+    )
+    day = result.dates.loc[result.dates["trade_date"].map(lambda value: value == DAY)].iloc[0]
+    zero = result.dates.loc[result.dates["trade_date"].map(lambda value: value == ZERO)].iloc[0]
+    assert day["h_body"] == pytest.approx(0.0)
+    assert day["c_body"] > 0
+    assert day["body_concession_ratio"] == pytest.approx(0.0)
+    assert day["wing_concession_ratio"] == pytest.approx(day["h_wing"] / day["c_body"])
+    assert day["ratio_reason"] == ""
+    assert zero["ratio_reason"] == "zero body midpoint credit"
+    assert pd.isna(zero["body_concession_ratio"]) or zero["body_concession_ratio"] is None
+    assert result.ratios["null_date_ratio_counts"] == {"zero body midpoint credit": 1}
+    assert result.verdict == "READY"
+    assert readiness_verdict(result.gates) == "READY"
+
+
+def test_non_boolean_pairing_and_fractional_unit_are_blocked() -> None:
+    stringy = _trade()
+    stringy["pairing_ok"] = "true"
+    string_result = _panel([stringy], _calendar((DAY, "verified_positive_short")))
+    assert not _gate(string_result, "inputs").passed
+    assert string_result.verdict == "BLOCKED"
+    assert readiness_verdict(string_result.gates) == "BLOCKED"
+
+    missing = _trade()
+    missing["pairing_ok"] = None
+    missing_result = _panel([missing], _calendar((DAY, "verified_positive_short")))
+    assert not _gate(missing_result, "inputs").passed
+    _cannot_be_ready(missing_result)
+
+    fractional = _trade()
+    fractional["body_put_unit_quantity"] = -1.5
+    fractional_result = _panel([fractional], _calendar((DAY, "verified_positive_short")))
+    assert any("unit_quantity is not exactly -1" in item for item in fractional_result.issues)
+    assert not _gate(fractional_result, "inputs").passed
+    _cannot_be_ready(fractional_result)
+
+
+def test_official_d0_receipt_mismatch_blocks_acceptance() -> None:
+    receipt = {
+        "code_sha": ACCEPTED_D0_CODE_SHA,
+        "verdict": ACCEPTED_D0_VERDICT,
+        "evidence_dir": str(ACCEPTED_D0_DIR),
+    }
+    assert d0_receipt_problems(receipt, ACCEPTED_D0_DIR) == []
+    assert official_acceptance_verdict(receipt, ACCEPTED_D0_DIR, "READY") == ("READY", [])
+    bad = {**receipt, "code_sha": "not-the-accepted-sha", "verdict": "BLOCKED"}
+    verdict, problems = official_acceptance_verdict(bad, ACCEPTED_D0_DIR, "READY")
+    assert verdict == "BLOCKED"
+    assert any("code SHA" in item for item in problems)
+    assert any("verdict" in item for item in problems)

@@ -2,9 +2,9 @@
 
 **Updated:** 2026-09-14
 
-**Status:** `D0 ACCEPTED; D1 EXECUTED — EVIDENCE AWAITING REVIEW`
+**Status:** `D0 ACCEPTED; D1 CORRECTION IN PROGRESS`
 
-**Mode:** **Audit.** D1 evidence awaiting review. Do not start D2–D5. Do not mark D1 evidence accepted before review.
+**Mode:** **Build.** Restricted to the D1 date-ratio, input-validation, and D0-provenance correction. Do not start D2–D5. Do not mark D1 evidence accepted before review. The run at `sprint009_d1_20260914T001504Z` is not the corrected record.
 
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.md) — D1 executed; evidence awaiting review. Do not duplicate under `docs/tmp/`.
 **D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`.  
@@ -113,9 +113,9 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 
 **D1 design:** [`sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`.
 
-**Implementation:** D1 executed at `0d63293`. Run verdict `READY`. Evidence is not accepted.
+**Implementation:** D1 correction of `0d63293` **IN PROGRESS**. Prior evidence `sprint009_d1_20260914T001504Z` is not the corrected record. Do not mark D1 evidence accepted before review. Do not start D2–D5.
 
-**Next action:** review the D1 evidence. Do not start D2–D5. Do not mark D1 evidence accepted before that review.
+**Next action:** finish the tested D1 correction, rerun from that commit, and record the new evidence as awaiting review.
 
 ---
 
@@ -123,6 +123,7 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 
 | Date | Event |
 |------|-------|
+| 2026-09-14 | D1 correction of `0d63293` **in progress**. Date-ratio truthiness, boolean pairing, exact unit quantities, and official D0 receipt checks. Prior run `sprint009_d1_20260914T001504Z` is not the corrected record. D2–D5 not started. |
 | 2026-09-14 | D1 **executed** at `0d63293`. Run verdict `READY`. Evidence [`sprint009_d1_evidence_review.md`](../tmp/sprint009_d1_evidence_review.md) awaiting review. Output `C:/MomentumCVG_env/runs/sprint009_d1_20260914T001504Z`. D2–D5 not started. |
 | 2026-09-13 | D1 design at `e109a9e` **accepted**. Mode set to Build, restricted to D1. Implementation **IN PROGRESS**. Official decomposition evidence not yet attached. D0 remains accepted. D2–D5 not started. |
 | 2026-09-13 | D1 design **corrected** from `5d33055`. Stored ORATS mid is not the fill-model midpoint; that difference is a diagnostic, not a gate. Still `DRAFT — AWAITING REVIEW`. Implementation not started. |
