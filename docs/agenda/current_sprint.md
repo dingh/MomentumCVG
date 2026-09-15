@@ -2,44 +2,36 @@
 
 **Updated:** 2026-09-14
 
-**Status:** `D0 ACCEPTED; D1 ACCEPTED; D2 EXECUTED — EVIDENCE AWAITING REVIEW`
+**Status:** `CLOSED — DIAGNOSTIC SCOPE COMPLETED`
 
-**Mode:** **Audit.** D2 evidence awaiting review. Do not start D3–D5. Do not mark D2 evidence accepted before review.
+**Mode:** **Audit.** Sprint 009 is closed. Do not start Sprint 010 planning or implementation from this agenda. Do not execute superseded D3/D4.
 
-**Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.md) — D2 design accepted at `a34f21e`; do not duplicate the sprint plan under `docs/tmp/`.
+**Closeout:** [`docs/sprint_memos/009_closeout.md`](../sprint_memos/009_closeout.md)  
+**Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.md) — closed with the 2026-09-14 scope amendment; do not duplicate under `docs/tmp/`.  
 **D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`.  
 **D0 evidence:** [`docs/tmp/sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md) — **ACCEPTED** through `82e3b46`. Run `READY` at `004ba80`. Output `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z`. Supersedes `546d3e6` / `sprint009_d0_20260913T212939Z`.  
 **D1 design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`. Implementation `5669773`. Run verdict `READY`.  
 **D1 evidence:** [`docs/tmp/sprint009_d1_evidence_review.md`](../tmp/sprint009_d1_evidence_review.md) — **ACCEPTED** through `28f5ea4`. Output `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z`. Supersedes `0d63293` / `sprint009_d1_20260914T001504Z`.  
 **D2 design:** [`docs/tmp/sprint009_d2_design.md`](../tmp/sprint009_d2_design.md) — **ACCEPTED** at `a34f21e`. Implementation `52be625`. Run verdict `READY`.  
-**D2 evidence:** [`docs/tmp/sprint009_d2_evidence_review.md`](../tmp/sprint009_d2_evidence_review.md) — `EXECUTED — EVIDENCE AWAITING REVIEW`. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z`. Supersedes `e7a1108` / `sprint009_d2_20260914T151216Z`.
+**D2 evidence:** [`docs/tmp/sprint009_d2_evidence_review.md`](../tmp/sprint009_d2_evidence_review.md) — **REVIEWED / ACCEPTED**. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z`. Supersedes `e7a1108` / `sprint009_d2_20260914T151216Z`.
 
 **Previous:** Sprint 008 — [`CLOSED — D3 ACCEPTED`](../sprint_memos/008_closeout.md) through `61cbf30`. Findings unchanged: not an income-generating long filter; historical `STOP_NO_THRESHOLDS` preserved.  
-**Prior diagnosis:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md). This draft does not implement that execution-observation handoff and does not cancel it.  
+**Prior diagnosis:** Sprint 007 — [`CLOSED — D3 ACCEPTED; D4 EXECUTION_CALIBRATION_REQUIRED`](../sprint_memos/007_closeout.md). Remains open and unresolved by Sprint 009.  
 **Frozen Sprint 006 contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint.
 
 ---
 
-## 1. Sprint intent
+## 1. Sprint intent (diagnostic scope completed)
 
-Answer, for the frozen `42:8` short iron-fly book:
+Answered, for the frozen `42:8` short iron-fly book, on development history:
 
-> Where does the selected short book lose its economic edge, and can better trade selection improve it while accounting for the value of protection?
+> Where does the selected short book lose its economic edge, and what protection do the existing wings provide at fixed official quantities?
 
-Sprint scope is accepted. D0 is **accepted** through `82e3b46`. Implementation `004ba80` returned `READY`. The earlier `546d3e6` run is superseded. Official accounting is unchanged. The D1 design is **accepted** at `e109a9e`. D1 evidence is **accepted** through `28f5ea4`. Implementation `5669773`. Output `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z`. `0d63293` is superseded. The D2 design is **accepted** at `a34f21e`. D2 was corrected at `52be625` with run verdict `READY`. That evidence is awaiting review and is not accepted. `e7a1108` is superseded. Headline dollars are unchanged. This sprint does not rescue the frozen cross book, retune the signal window, search new wings, or claim that historical quote scenarios are attainable fills. D3–D5 have not started.
-
-Proposed method order:
-
-1. Trust a matched body/wing dataset against the official cross book (D0).
-2. Attribute development-history dollars into body economics, execution concession, protection price, wing spread, and wing payout (D1).
-3. Compare the same positions with and without wings at fixed body quantities (D2).
-4. Only then test two predeclared pairs and freeze at most one, or stop (D3). M1 filters the body-only cross book. M2 filters the cross iron fly. Same population. No cross-combinations.
-5. If a pair is frozen, evaluate it once on the later period against its matching unfiltered expression and its matching exposure benchmark (D4).
-6. Close with historical results and one next investigation (D5). Do not authorize uncovered trading or resolve Sprint 007.
+D0–D2 are **accepted**. Original D3/D4 entry filtering is **SUPERSEDED — NOT EXECUTED**. Amended D5 is the diagnostic closeout. No filter was tested or frozen. Closing does not require a later-period companion. This sprint does not authorize uncovered trading, retune the signal window, search new wings, claim attainable fills, or resolve Sprint 007.
 
 ---
 
-## 2. Central conventions (accepted for D0 planning)
+## 2. Central conventions (unchanged for the executed work)
 
 | Item | Convention |
 |---|---|
@@ -47,15 +39,13 @@ Proposed method order:
 | Selection | Frozen `42:8` / CVG / liquidity / structure / name cap / weekly hold-to-expiry |
 | Wings | Current `0.15` below-nearest rule. No strike search |
 | Reference quantities | Official cross book, fixed. Midpoint at those quantities is a diagnostic, not the official midpoint run |
-| Candidates | M1 score filters the body-only cross book. M2 score filters the cross iron fly. Freeze at most one pair. If both qualify, the tie-break is the larger adjusted lower bound on mean date-level dollar uplift, not an exposure-scaled ranking |
-| Exposure | M2: official iron-fly capital at risk. M1: \(\sum Q S_0\), labeled notional, not margin. Filtered quantities stay unscaled |
 | Calendar | Whole-book `date_status` is not short-book status. Verified zero-short dates stay at zero. Missing short rows are a blocker |
-| Primary measure | Paired dollar P&L. A normalized companion is a diagnostic, not return on capital. Do not put an uncovered body on the iron fly’s max-loss denominator |
+| Primary measure | Paired dollar P&L on expiry settlement |
 | Fees | 0, matching the official book. Not deducted twice through the spread |
 | Development | `2020-01-01` through `2023-12-31` |
-| Later period | `2024-01-01` through `2026-07-10`. Retrospective. Used only after a freeze or a recorded skip |
+| Later period | `2024-01-01` through `2026-07-10`. Not required for this closeout |
 
-Full protocol: [`sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.md).
+Full protocol and the 2026-09-14 amendment: [`sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.md).
 
 ---
 
@@ -65,32 +55,26 @@ Full protocol: [`sprint9_short_body_wing_plan.md`](sprint9_short_body_wing_plan.
 |---|---|---|
 | **D0** | Can the accepted artifacts support a matched body/wing dataset that reproduces every selected short iron fly and correctly accounts for every trading date? | **ACCEPTED** through `82e3b46`. Implementation `004ba80`. Output `C:/MomentumCVG_env/runs/sprint009_d0_20260913T215246Z`. `546d3e6` superseded |
 | **D1** | Where does the short book lose economic margin? | **ACCEPTED** through `28f5ea4` ([`sprint009_d1_evidence_review.md`](../tmp/sprint009_d1_evidence_review.md)). Design accepted at `e109a9e`. Implementation `5669773`. Output `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z`. Supersedes `0d63293` / `sprint009_d1_20260914T001504Z` |
-| **D2** | What protection do the wings provide? | **EXECUTED — EVIDENCE AWAITING REVIEW** ([`sprint009_d2_evidence_review.md`](../tmp/sprint009_d2_evidence_review.md)). Design accepted at `a34f21e`. Implementation `52be625`. Run verdict `READY`. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z`. Supersedes `e7a1108` / `sprint009_d2_20260914T151216Z` |
-| **D3** | Can entry measurements identify unattractive trades? | **Not started** |
-| **D4** | Does the frozen rule improve later-period economics? | **Not started.** Skipped if D3 does not freeze a rule |
-| **D5** | What does the evidence justify? | **Not started** |
-
-D0 and D1 evidence are accepted. D2 is executed and the evidence is awaiting review. Design acceptance is separate from evidence acceptance. D3–D5 have no design files and have not started.
+| **D2** | What protection do the wings provide? | **REVIEWED / ACCEPTED** ([`sprint009_d2_evidence_review.md`](../tmp/sprint009_d2_evidence_review.md)). Design accepted at `a34f21e`. Implementation `52be625`. Run verdict `READY`. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z`. Supersedes `e7a1108` / `sprint009_d2_20260914T151216Z` |
+| **D3** | Can entry measurements identify unattractive trades? | **SUPERSEDED — NOT EXECUTED**. No filter tested or frozen. Not `STOP_NO_RULE` |
+| **D4** | Does the frozen rule improve later-period economics? | **SUPERSEDED — NOT EXECUTED**. No later-period companion required for closeout |
+| **D5** | What does the evidence justify? | **COMPLETED** as diagnostic closeout ([`009_closeout.md`](../sprint_memos/009_closeout.md)) |
 
 ---
 
-## 4. Definition of done
+## 4. Definition of done (amended closeout)
 
-Sprint 009 is not complete while this plan is a draft. After a later execution authorization, it is complete when:
+Sprint 009 is **complete** when:
 
-- [ ] D0 records `READY` or a named blocker, including the short-book calendar classification.
-- [ ] D1 reconciles the five-term identity on development history, or stops on that identity.
-- [ ] D2 separates gross protection payout from net contribution and does not claim unmeasured path risks were measured.
-- [ ] D3 freezes at most one measurement/expression pair, or records `STOP_NO_RULE`. Family size stays 2.
-- [ ] D4 reports both matching comparisons, or is skipped with the D3 reason. The pair is not revised on the later period.
-- [ ] Dollar-profit retention is reported separately from winner-count retention.
-- [ ] D5 states historical results and one next investigation only. It does not authorize uncovered trading, production use, or a Sprint 007 resolution.
-- [ ] Sprint 006/007/008 accepted results remain unreinterpreted.
-- [ ] Hypothetical fills are not claimed attainable.
-- [ ] Focused tests pass for any new financial calculation code.
-- [ ] Official evidence directories and the frozen contract are unchanged.
-
-An inconclusive measurement or a skipped D4 is a valid completion.
+- [x] D0 records `READY` or a named blocker, including the short-book calendar classification.
+- [x] D1 reconciles the five-term identity on development history, or stops on that identity.
+- [x] D2 separates gross protection payout from net contribution and does not claim unmeasured path risks were measured.
+- [x] Original D3/D4 are recorded **SUPERSEDED — NOT EXECUTED** under the 2026-09-14 amendment (no requirement to freeze a filter or run a later-period companion).
+- [x] Amended D5 states historical results and one next investigation only. It does not authorize uncovered trading, production use, or a Sprint 007 resolution.
+- [x] Sprint 006/007/008 accepted results remain unreinterpreted.
+- [x] Hypothetical fills are not claimed attainable.
+- [x] Focused tests passed for D0–D2 financial calculation code.
+- [x] Official evidence directories and the frozen contract are unchanged.
 
 ---
 
@@ -99,27 +83,20 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 - Signal-window or universe expansion.
 - Long-side changes, including promotion of Sprint 008 M1.
 - Alternative wing-strike or delta searches.
-- Sizing or leverage optimization.
+- Sizing or leverage optimization (handed off as a next research theme, not executed here).
 - Brokerage margin, live execution, paper plumbing, or the Sprint 007 observer.
 - Intraday hedging or a new exit policy.
 - Iron condor and KB-001, unless a later amendment says otherwise.
 - Editing the frozen Sprint 006 contract or mutating official evidence directories.
+- Sprint 010 planning or implementation.
 
 ---
 
 ## 6. Authorization and next action
 
-**Plan status:** sprint scope accepted. D0 evidence accepted through `82e3b46`. D1 evidence accepted through `28f5ea4`. D2 design accepted at `a34f21e`. D2 evidence is awaiting review. D3–D5 are not started and are not redesigned here.
+**Plan status:** Sprint 009 **CLOSED — DIAGNOSTIC SCOPE COMPLETED**. D0–D2 accepted. D3/D4 superseded, not executed. Amended D5 completed in [`009_closeout.md`](../sprint_memos/009_closeout.md).
 
-**D0 design:** [`sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED**. Evidence accepted through `82e3b46`.
-
-**D1 design:** [`sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`. Evidence accepted through `28f5ea4`.
-
-**D2 design:** [`sprint009_d2_design.md`](../tmp/sprint009_d2_design.md) — **ACCEPTED** at `a34f21e`. Evidence is not accepted.
-
-**Implementation:** D2 corrected at `52be625`. Run verdict `READY`. Evidence is not accepted. `e7a1108` is superseded. Headline dollars are unchanged.
-
-**Next action:** review the D2 evidence. Do not start D3–D5. Do not mark D2 evidence accepted before that review.
+**Next action:** none inside Sprint 009. Research handoff only: candidate recovery and research sizing under explicit portfolio stress limits. Do not design Sprint 010 here. Sprint 007 `EXECUTION_CALIBRATION_REQUIRED` remains open.
 
 ---
 
@@ -127,6 +104,7 @@ An inconclusive measurement or a skipped D4 is a valid completion.
 
 | Date | Event |
 |------|-------|
+| 2026-09-14 | Sprint 009 **CLOSED — DIAGNOSTIC SCOPE COMPLETED**. D2 evidence **REVIEWED / ACCEPTED**. Original D3/D4 **SUPERSEDED — NOT EXECUTED**. Amended D5 closeout [`009_closeout.md`](../sprint_memos/009_closeout.md). No Sprint 010 planning. |
 | 2026-09-14 | D2 **corrected** at `52be625`. Run verdict `READY`. Evidence awaiting review. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z`. Supersedes `e7a1108` / `sprint009_d2_20260914T151216Z`. Headline dollars unchanged. D3–D5 not started. |
 | 2026-09-14 | D2 **executed** at `e7a1108`. Run verdict `READY`. Evidence [`sprint009_d2_evidence_review.md`](../tmp/sprint009_d2_evidence_review.md) awaiting review. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T151216Z`. D3–D5 not started. |
 | 2026-09-14 | D2 design at `a34f21e` **accepted**, with the midpoint-attainability wording correction. Mode set to Build, restricted to D2. Implementation **IN PROGRESS**. Official comparison evidence not yet attached. D3–D5 not started. |

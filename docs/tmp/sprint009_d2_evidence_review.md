@@ -1,13 +1,14 @@
 # Sprint 009 D2 — evidence review
 
-**Status:** `EXECUTED — EVIDENCE AWAITING REVIEW`  
+**Status:** `REVIEWED / ACCEPTED`  
 **Executed:** 2026-09-14  
+**Review annotation (2026-09-14):** Accepted under the Sprint 009 closeout. Findings unchanged from the corrected run. Implementation remains `52be6254ef877a791fcf476e0a82fc663804ffa5`. Output remains `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z/`. Older D2 runs stay superseded. This annotation does not rerun the comparison. It closes the diagnostic scope with D0–D2 accepted; original D3/D4 are superseded and not executed.  
 **Design:** [`sprint009_d2_design.md`](sprint009_d2_design.md) — **ACCEPTED** at `a34f21e`. Methodology unchanged. Midpoint caveat corrected before implementation.  
 **Implementation:** `52be6254ef877a791fcf476e0a82fc663804ffa5`  
 **Evidence:** `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z/`  
 **Supersedes:** `e7a1108` / `C:/MomentumCVG_env/runs/sprint009_d2_20260914T151216Z/`. Those artifacts are preserved and are not the official record.  
 **Input:** accepted D1 panel `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z/` (`5669773`, receipt `READY`). Evidence acceptance `28f5ea4`.  
-**Characterization:** Fixed-quantity expiry comparison of the same iron-fly-selected names with and without the existing wings. Not a margin, liquidation, unseen-tail, or uncovered-trading result. This file does not accept the evidence. D3–D5 have not started.
+**Characterization:** Fixed-quantity expiry comparison of the same iron-fly-selected names with and without the existing wings. Not a margin, liquidation, unseen-tail, or uncovered-trading result. The review annotation above accepts this evidence.
 
 ---
 
@@ -123,7 +124,7 @@ The observed protection is concentrated. Date-level loss avoided on 2020-02-21 i
 
 These are fixed-quantity expiry outcomes on the iron-fly-selected population. Removing wings does not add names, change strikes, or resize \(Q\). Fees remain zero. Midpoint results are diagnostic; this analysis does not establish whether midpoint fills are attainable.
 
-This evidence does not measure intraperiod mark-to-market losses, margin calls, or liquidation risk. It does not estimate the probability of an unseen tail. A rare payout, including the 2020-02-21 cluster, is a historical frequency. It does not authorize uncovered trading. D3–D5 have not started.
+This evidence does not measure intraperiod mark-to-market losses, margin calls, or liquidation risk. It does not estimate the probability of an unseen tail. A rare payout, including the 2020-02-21 cluster, is a historical frequency. It does not authorize uncovered trading. Under the Sprint 009 closeout, original D3/D4 are superseded and not executed.
 
 ---
 

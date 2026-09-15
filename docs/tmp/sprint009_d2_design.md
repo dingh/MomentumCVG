@@ -2,13 +2,13 @@
 
 **Status:** **ACCEPTED** at `a34f21e`  
 **Updated:** 2026-09-14  
-**Implementation:** corrected at `52be625`. Run verdict `READY`. Evidence [`sprint009_d2_evidence_review.md`](sprint009_d2_evidence_review.md) is awaiting review and is not accepted. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z`. Supersedes `e7a1108` / `sprint009_d2_20260914T151216Z`. Methodology unchanged.  
+**Implementation:** corrected at `52be625`. Run verdict `READY`. Evidence [`sprint009_d2_evidence_review.md`](sprint009_d2_evidence_review.md) is **REVIEWED / ACCEPTED**. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z`. Supersedes `e7a1108` / `sprint009_d2_20260914T151216Z`. Methodology unchanged.  
 **Agenda:** [`docs/agenda/current_sprint.md`](../agenda/current_sprint.md)  
 **Working plan:** [`docs/agenda/sprint9_short_body_wing_plan.md`](../agenda/sprint9_short_body_wing_plan.md) §9 — formulas unchanged; this file pins D1 columns and outputs  
 **D1 design:** [`docs/tmp/sprint009_d1_design.md`](sprint009_d1_design.md) — accepted at `e109a9e`  
 **D1 evidence:** [`docs/tmp/sprint009_d1_evidence_review.md`](sprint009_d1_evidence_review.md) — **ACCEPTED** through `28f5ea4`. Implementation `5669773`.
 
-This design is **ACCEPTED** at `a34f21e`, with the midpoint caveat below. The corrected implementation is restricted to D2. D3–D5 are unchanged.
+This design is **ACCEPTED** at `a34f21e`, with the midpoint caveat below. The corrected implementation and evidence are accepted. Original D3/D4 are superseded under the 2026-09-14 closeout amendment.
 
 ---
 
@@ -26,7 +26,7 @@ Accepted D1 already stores body cross P&L, iron-fly cross P&L, wing premium, win
 
 ## Authorization
 
-This design is **ACCEPTED** at `a34f21e`. That acceptance authorizes the D2 helper, focused tests, and the official development comparison. It does not authorize D3–D5, later-period economics, or a verdict that D2 evidence is accepted before review.
+This design is **ACCEPTED** at `a34f21e`. That acceptance authorized the D2 helper, focused tests, and the official development comparison. Under the 2026-09-14 closeout, D2 evidence is accepted and original D3/D4 are superseded.
 
 ---
 
@@ -38,7 +38,7 @@ Same names, strikes, existing wings, and official cross quantities. Removing win
 
 Cross is primary. Midpoint uses those same quantities and is a diagnostic. It is not the official midpoint run. Fees stay 0. Settlement stays hold-to-expiry. Do not deduct concession twice. Body execution concession already sits inside `p_body_cross`. Do not subtract `h_body` again when forming the no-wing book.
 
-Do not rerun the baseline or D0. Do not compute later-period economics, search wings, filter, optimize size, or add a brokerage-margin model. Do not change D3–D5.
+Do not rerun the baseline or D0. Do not compute later-period economics, search wings, filter, optimize size, or add a brokerage-margin model. Original D3–D4 paths are superseded by the closeout amendment.
 
 The full-primary-window −$146,279.85 is not a D2 residual or benchmark.
 
@@ -303,7 +303,7 @@ D2 is done when the gates pass or a named blocker is recorded, and the memo, if 
 - cumulative dollar P&L and maximum dollar drawdown for both books, peak including the initial zero, plus the 2020–2023 comparison;
 - whether that advantage and that protection are concentrated in years or events in this sample.
 
-It is not done if it claims a margin result, an unseen-tail probability, that midpoint fills are attainable, or authorization to trade uncovered. Midpoint results are diagnostic; this analysis does not establish whether midpoint fills are attainable. D3–D5 stay as written in the sprint plan.
+It is not done if it claims a margin result, an unseen-tail probability, that midpoint fills are attainable, or authorization to trade uncovered. Midpoint results are diagnostic; this analysis does not establish whether midpoint fills are attainable. Original D3–D4 stay as superseded historical methodology in the sprint plan.
 
 ---
 
@@ -311,6 +311,6 @@ It is not done if it claims a margin result, an unseen-tail probability, that mi
 
 Review can accept, amend, or reject the cross-versus-midpoint split, the ranking tie-break, the loss-avoided sign, and the ban on a D0 economic join.
 
-This design is accepted at `a34f21e`. The corrected implementation run is complete at `52be625` and returned `READY`. That evidence is awaiting review. This file must not be edited to say the D2 evidence is accepted before that review.
+This design is accepted at `a34f21e`. The corrected implementation run is complete at `52be625` and returned `READY`. That evidence is **REVIEWED / ACCEPTED**. Sprint 009 is closed as diagnostic scope completed.
 
 No accounting choice is left open for the implementer. Cross is primary. Purchase cost is `w_mid + h_wing`. Net contribution is `w_pay - w_mid - h_wing`. Loss avoided can be negative. The population and quantities stay the accepted D1 development book.

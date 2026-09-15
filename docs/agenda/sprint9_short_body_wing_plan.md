@@ -1,21 +1,30 @@
 # Sprint 009 — Short-body economics, execution costs, protection, and conditional entry filtering
 
-**Status:** `D0 ACCEPTED; D1 ACCEPTED; D2 EXECUTED — EVIDENCE AWAITING REVIEW`  
-**Revised from:** `52be625` (D2 corrected; evidence awaiting review; D3–D5 not started)  
+**Status:** `CLOSED — DIAGNOSTIC SCOPE COMPLETED`  
+**Revised from:** closeout authorization 2026-09-14 (D2 accepted; D3/D4 superseded; amended D5 completed)  
 **Updated:** 2026-09-14  
+**Closeout:** [`docs/sprint_memos/009_closeout.md`](../sprint_memos/009_closeout.md)  
 **D0 design:** [`docs/tmp/sprint009_d0_design.md`](../tmp/sprint009_d0_design.md) — **ACCEPTED** at `5329726`.  
 **D0 evidence:** [`docs/tmp/sprint009_d0_evidence_review.md`](../tmp/sprint009_d0_evidence_review.md) — **ACCEPTED** through `82e3b46`. Implementation `004ba80`.  
 **D1 design:** [`docs/tmp/sprint009_d1_design.md`](../tmp/sprint009_d1_design.md) — **ACCEPTED** at `e109a9e`. Implementation `5669773`.  
 **D1 evidence:** [`docs/tmp/sprint009_d1_evidence_review.md`](../tmp/sprint009_d1_evidence_review.md) — **ACCEPTED** through `28f5ea4`. Implementation `5669773`. Output `C:/MomentumCVG_env/runs/sprint009_d1_20260914T025142Z`. Supersedes `0d63293` / `sprint009_d1_20260914T001504Z`.  
 **D2 design:** [`docs/tmp/sprint009_d2_design.md`](../tmp/sprint009_d2_design.md) — **ACCEPTED** at `a34f21e`. Implementation `52be625`.  
-**D2 evidence:** [`docs/tmp/sprint009_d2_evidence_review.md`](../tmp/sprint009_d2_evidence_review.md) — `EXECUTED — EVIDENCE AWAITING REVIEW`. Run verdict `READY`. Not accepted.  
-**Mode:** Audit. D2 evidence awaiting review. D3–D5 have not started.  
+**D2 evidence:** [`docs/tmp/sprint009_d2_evidence_review.md`](../tmp/sprint009_d2_evidence_review.md) — **REVIEWED / ACCEPTED**. Run verdict `READY`. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z`.  
+**Mode:** Audit. Sprint closed. Do not start Sprint 010 from this plan.  
 **Agenda:** [`docs/agenda/current_sprint.md`](current_sprint.md)  
 **Canonical path:** `docs/agenda/sprint9_short_body_wing_plan.md` — do not duplicate under `docs/tmp/`.  
 **Prior closeouts:** [`docs/sprint_memos/008_closeout.md`](../sprint_memos/008_closeout.md) (accepted through `61cbf30`), [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md), [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md)  
 **Frozen contract:** [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) — immutable; not edited by this sprint  
 
-This document is the accepted sprint-level research protocol. D0 is accepted through `82e3b46`. D1 evidence is accepted through `28f5ea4`. D2 was corrected at `52be625`. That evidence is awaiting review. It does not authorize D3–D5 or a new later-period comparison. Official inputs stay read-only.
+This document is the accepted sprint-level research protocol, closed under the **2026-09-14 scope amendment**. D0–D2 evidence is accepted. Original D3/D4 are **SUPERSEDED — NOT EXECUTED**. Amended D5 is the diagnostic closeout. Official inputs stay read-only.
+
+---
+
+## 0. Scope amendment (2026-09-14)
+
+Accepted D0–D2 evidence shows that the short book’s remaining edge problem is not primarily entry filtering of already-selected names. The body can print positive expiry dollars while the existing protection architecture consumes that edge at a cost that exceeds observed payout. Body profit also concentrates in 2022. Intraperiod mark-to-market, margin, liquidation, and unseen-tail risks remain unmeasured.
+
+**Amendment decision.** Sizing and protection architecture now take priority over entry filtering. Original §10 (D3) and §11 (D4) methodology is retained below under **SUPERSEDED — NOT EXECUTED**. No filter was tested or frozen. Do not record `STOP_NO_RULE`. Closing does not require executing D3/D4 or producing a later-period companion. Amended §12 (D5) is the diagnostic closeout and research handoff in [`009_closeout.md`](../sprint_memos/009_closeout.md).
 
 ---
 
@@ -27,11 +36,11 @@ This document is the accepted sprint-level research protocol. D0 is accepted thr
 | **Theme** | Short-body economics, execution costs, protection value, and conditional entry filtering |
 | **Population** | Official short iron-fly candidates and strikes from the frozen `42:8` book. Conclusions are conditional on that population, including its wing-availability restrictions |
 | **Reference book** | Official cross book. Quantities stay fixed. A midpoint repricing at those quantities is a diagnostic, not the separately sized official midpoint run |
-| **Structures in scope** | Current iron fly (`wing_delta_target = 0.15`, `_choose_below_nearest`) and a body-only counterfactual that drops wings without adding names or resizing. D3/D4 pair each predeclared score with one matching expression: M1 filters the body-only cross book; M2 filters the cross iron fly |
-| **Windows** | Development `2020-01-01` through `2023-12-31` for D1–D3 inspection and any rule freeze. Later period `2024-01-01` through `2026-07-10` only after a freeze or an explicit stop. Retrospective evaluation, not an untouched holdout |
+| **Structures in scope** | Current iron fly (`wing_delta_target = 0.15`, `_choose_below_nearest`) and a body-only counterfactual that drops wings without adding names or resizing. Original D3/D4 filter pairs are superseded and were not executed |
+| **Windows** | Development `2020-01-01` through `2023-12-31` for D1–D2. Later period not required for closeout |
 | **Not the goal** | Force profitability; authorize uncovered trading; search new wing strikes; establish production readiness; resolve Sprint 007’s execution-calibration requirement |
 
-An inconclusive measurement, a decision not to freeze a rule, or a skipped D4 is a valid completion.
+Diagnostic closeout completed under the 2026-09-14 amendment. Original D3/D4 were not executed and are not recorded as `STOP_NO_RULE`.
 
 ---
 
@@ -40,7 +49,7 @@ An inconclusive measurement, a decision not to freeze a rule, or a skipped D4 is
 | Source | Role |
 |---|---|
 | [`docs/agenda/current_sprint.md`](current_sprint.md) | Active sprint status |
-| This plan | Accepted sprint scope. D0 and D1 evidence are accepted. D2 is executed; evidence is awaiting review |
+| This plan | Closed under the 2026-09-14 amendment. D0–D2 accepted. D3/D4 superseded. Amended D5 completed |
 | [`configs/sprint006_baseline_v1.json`](../../configs/sprint006_baseline_v1.json) and official run `C:/MomentumCVG_env/runs/sprint006_baseline_v1_20260823T204430Z` | Frozen selection, structures, and the reference cross book |
 | [`docs/sprint_memos/006_closeout.md`](../sprint_memos/006_closeout.md) | Accepted cross economics. Not revised here |
 | [`docs/sprint_memos/007_closeout.md`](../sprint_memos/007_closeout.md) | `EXECUTION_CALIBRATION_REQUIRED` remains. This sprint does not implement the observer and does not cancel that handoff |
@@ -142,10 +151,10 @@ Verified zero-short dates contribute zero to applicable dollar series and to bot
 
 | Window | Dates | Use |
 |---|---|---|
-| Development | `2020-01-01` through `2023-12-31` | D1 attribution, D2 protection, D3 measurements and the only place a rule may be frozen |
-| Later period | `2024-01-01` through `2026-07-10` | D4 if a rule is frozen; otherwise unused for selection. 2026 is partial through `2026-07-10` |
+| Development | `2020-01-01` through `2023-12-31` | D1 attribution and D2 protection. Original D3 inspection path superseded |
+| Later period | `2024-01-01` through `2026-07-10` | Original D4 path superseded. Not required for closeout. 2026 is partial through `2026-07-10` |
 
-D1–D3 economic inspection uses development history first. Later-period attribution or protection summaries are produced only after the D4 rule is frozen or D4 is recorded as skipped. That companion is descriptive. It must not choose wings versus no wings, and it must not retune the filter.
+D1–D2 economic inspection used development history. A later-period companion is not required under the 2026-09-14 amendment.
 
 The later period was inspected in Sprints 006–008. Call it retrospective evaluation. It is not an untouched holdout and not independent confirmation.
 
@@ -160,9 +169,9 @@ Do not pool development and later-period inference. They are different windows a
 | **D0** | Can we trust the body/wing comparison? | Matched short-book dataset reconciles to the official cross iron fly | Named identity or reconciliation blocker. No D1 |
 | **D1** | Where does the short book lose economic margin? | Development decomposition reconciles | Reconciliation failure. No economic story from a broken identity |
 | **D2** | What protection do the wings provide? | Development with/without-wings comparison is identified and labeled as a counterfactual | Same. A large wing cost does not by itself authorize wing removal |
-| **D3** | Can entry measurements identify unattractive trades? | Exactly one predeclared measurement/expression pair meets the freeze rule | Inconclusive, both fail, or tie-break fails → D4 skipped |
-| **D4** | Does the frozen rule improve later-period economics? | D3 froze exactly one pair | Skipped with the D3 reason. No substitute pair |
-| **D5** | What does the evidence justify? | Always, including after a stop | Historical results and one investigation only. Not production readiness, uncovered trading, or a Sprint 007 resolution |
+| **D3** | Can entry measurements identify unattractive trades? | — | **SUPERSEDED — NOT EXECUTED** (2026-09-14 amendment). Methodology retained in §10 |
+| **D4** | Does the frozen rule improve later-period economics? | — | **SUPERSEDED — NOT EXECUTED**. No later-period companion required for closeout |
+| **D5** | What does the evidence justify? | Always | **COMPLETED** as diagnostic closeout ([`009_closeout.md`](../sprint_memos/009_closeout.md)) |
 
 No deliverable selects a signal window, a new wing, a size, or a live fill.
 
@@ -242,7 +251,7 @@ Body-only economics at midpoint and at cross use the same \(Q\) and the same bod
 ## 9. D2 — What protection do the wings provide?
 
 **Design:** [`docs/tmp/sprint009_d2_design.md`](../tmp/sprint009_d2_design.md) — **ACCEPTED** at `a34f21e`. Implementation `52be625`.  
-**Evidence:** [`docs/tmp/sprint009_d2_evidence_review.md`](../tmp/sprint009_d2_evidence_review.md) — `EXECUTED — EVIDENCE AWAITING REVIEW`. Run verdict `READY`. Not accepted. The question and boundaries below are unchanged. That design pins verified D1 column names, ranking, loss avoided, and outputs. It does not replace D3–D5.
+**Evidence:** [`docs/tmp/sprint009_d2_evidence_review.md`](../tmp/sprint009_d2_evidence_review.md) — **REVIEWED / ACCEPTED**. Run verdict `READY`. Output `C:/MomentumCVG_env/runs/sprint009_d2_20260914T153106Z`. The question and boundaries below are unchanged. That design pins verified D1 column names, ranking, loss avoided, and outputs.
 
 **Question.** Holding body quantities fixed, what do the wings change in development-history dollars, and what does that not measure?
 
@@ -277,11 +286,13 @@ Also report, on development dates only:
 
 **Done when.** Costs saved, payouts forgone, absolute P&L, frequency, concentration, and drawdown are reported with the path limitation explicit.
 
-**Continuation.** D2 does not authorize wing removal or uncovered trading. Body-only P&L is a fixed-quantity research comparison. It does not establish brokerage-margin feasibility. D3 then tests the two predeclared pairs in §10: M1 on the body-only cross book, and M2 on the cross iron fly. Both stay on this same population. A later descriptive companion on 2024+ waits until the D4 freeze or skip, and it still cannot select a structure or authorize uncovered trading.
+**Continuation.** D2 does not authorize wing removal or uncovered trading. Body-only P&L is a fixed-quantity research comparison. It does not establish brokerage-margin feasibility. Under the 2026-09-14 amendment, original D3/D4 are superseded and not executed. The diagnostic closeout is §12 / [`009_closeout.md`](../sprint_memos/009_closeout.md).
 
 ---
 
 ## 10. D3 — Can entry measurements identify unattractive trades?
+
+**Status:** **SUPERSEDED — NOT EXECUTED** (2026-09-14 amendment). No filter was tested or frozen. Do not record `STOP_NO_RULE`. The methodology below is retained for history only.
 
 **Question.** On development history only, does one predeclared entry-only measurement support freezing a single measurement/expression/exclusion combination?
 
@@ -397,6 +408,8 @@ The common official iron-fly population, original cross quantities, and shared c
 
 ## 11. D4 — Does the frozen rule improve later-period economics?
 
+**Status:** **SUPERSEDED — NOT EXECUTED** (2026-09-14 amendment). No later-period companion is required for closeout. The methodology below is retained for history only.
+
 **Question.** On `2024-01-01` through `2026-07-10`, does the single frozen measurement/expression/rule improve economics relative to its matching unfiltered expression and relative to its matching exposure-scaled benchmark?
 
 **Inputs.** The frozen D3 combination, unchanged. Official cross quantities. Later-period calendar from §4.5. Not available if D3 did not freeze a pair. If the frozen pair is M1, the expression remains the body-only cross book. If it is M2, the expression remains the cross iron fly. Do not evaluate the other expression as a new candidate.
@@ -433,23 +446,25 @@ If unfiltered exposure is zero on a verified zero-short date, both dollar result
 
 ## 12. D5 — What does the evidence justify?
 
-**Question.** Given the accepted chain, what historical results are established, what one investigation should come next, and what evidence is still missing for any operational decision?
+**Status:** **COMPLETED** as the diagnostic closeout under the 2026-09-14 amendment. See [`009_closeout.md`](../sprint_memos/009_closeout.md).
 
-**Inputs.** Accepted D0–D4 evidence, including a skipped D4.
+**Question.** Given the accepted D0–D2 chain and the superseded D3/D4 path, what historical results are established, what one investigation should come next, and what evidence is still missing for any operational decision?
+
+**Inputs.** Accepted D0–D2 evidence. Original D3/D4 recorded as superseded, not executed.
 
 **Bounded analysis.** A closeout memo. It may:
 
-- establish the historical body, wing, and filtering results, including a stop;
+- establish the historical body, wing, and protection results;
 - recommend one prioritized subsequent investigation;
 - identify evidence still needed before any operational decision.
 
-It must cover body economics, execution-cost attribution, protection cost and value, filtering evidence or the reason no pair was frozen, and remaining profitability and implementation limits.
+It must cover body economics, execution-cost attribution, protection cost and value, the reason original filtering work was superseded, and remaining profitability and implementation limits.
 
 It must **not** establish production readiness, authorize uncovered trading, approve wing removal, promote a production filter, treat quote crosses as attainable fills, or claim to resolve Sprint 007’s `EXECUTION_CALIBRATION_REQUIRED` outcome. That handoff remains open.
 
-**Footprint.** `docs/sprint_memos/009_closeout.md` when D5 is authorized. Not created in this planning step.
+**Footprint.** [`docs/sprint_memos/009_closeout.md`](../sprint_memos/009_closeout.md).
 
-**Done when.** The memo answers the central question within those limits, including a stop.
+**Done when.** The memo answers the diagnostic question within those limits and records the research handoff without designing Sprint 010.
 
 ---
 
@@ -462,41 +477,41 @@ Plan accepted
         ready → D1 (development attribution)
             identity fails → stop
             reconciles → D2 (development protection counterfactual)
-                → D3 (development scores; freeze or STOP_NO_RULE)
-                    STOP_NO_RULE → D4 skipped
-                    one rule frozen → D4 (later period, rule unchanged)
-                → descriptive later-period attribution/protection
-                  only after freeze or skip; not a selector
-                → D5
+                → 2026-09-14 amendment:
+                    D3/D4 SUPERSEDED — NOT EXECUTED
+                    → D5 diagnostic closeout
 ```
 
-Choices that wait for evidence, and must not be answered in this plan:
+Historical (superseded) branch retained for reference only:
 
-- Whether D0 finds a missing field that blocks a no-rerun path.
-- The development dollar split among the five D1 terms.
-- Whether net wing contribution is positive.
-- Whether either measurement/expression pair meets the freeze predicates.
-- Whether a frozen pair, if any, helps on the later period against its matching unfiltered expression and its matching exposure benchmark.
-- What single follow-up D5 should prioritize.
+```text
+D2 → D3 (freeze or STOP_NO_RULE) → D4 or skip → later-period companion → D5
+```
+
+Choices answered by accepted evidence:
+
+- D0 readiness: `READY`.
+- D1 five-term split: body profitable at cross; wings dominate the loss.
+- Net wing contribution: negative on development history.
+- Original D3/D4: superseded before execution; sizing and protection architecture take priority.
+- Next investigation: candidate recovery and research sizing under explicit portfolio stress limits (handoff only; not Sprint 010 design).
 
 ---
 
 ## 14. Proposed implementation increments
 
-These start only after plan acceptance and a separate authorization for that increment. Estimates are planning ranges, not commitments.
+These increments describe the executed path and the superseded remainder.
 
-| Increment | Work | Rough effort | Depends on |
-|---|---|---|---|
-| 1 | D0 inventory, short-book calendar classification, reconciliation tests | 1–2 days | Plan acceptance |
-| 2 | D1 development decomposition and identity tests | about 1 day | D0 ready |
-| 3 | D2 development protection comparison and tests | 1–2 days | D1 identity |
-| 4 | D3 two candidate-expression pairs, freeze record, tests | about 2 days | D0 quotes; D1/D2 reviewed so formulas are not quietly edited |
-| 5 | D4 later-period evaluation of the frozen pair only | 1–2 days | D3 freeze |
-| 6 | D5 closeout | about 1 day | D0–D4 status, including skips |
+| Increment | Work | Status |
+|---|---|---|
+| 1 | D0 inventory, short-book calendar classification, reconciliation tests | **Completed** (`004ba80`, accepted) |
+| 2 | D1 development decomposition and identity tests | **Completed** (`5669773`, accepted) |
+| 3 | D2 development protection comparison and tests | **Completed** (`52be625`, accepted) |
+| 4 | D3 two candidate-expression pairs, freeze record, tests | **SUPERSEDED — NOT EXECUTED** |
+| 5 | D4 later-period evaluation of the frozen pair only | **SUPERSEDED — NOT EXECUTED** |
+| 6 | D5 closeout | **Completed** ([`009_closeout.md`](../sprint_memos/009_closeout.md)) |
 
-If D4 is skipped, the remaining path is the descriptive companion plus the closeout. No increment reruns `SurfaceRunner` or retunes `42:8`.
-
-Separate one-page designs are written when an increment is authorized, following the existing workflow. D0 and D1 evidence are accepted. D2 is executed and the evidence is awaiting review. Do not create D3–D5 designs until those increments are authorized.
+No increment reruns `SurfaceRunner` or retunes `42:8`. Sprint 010 is not designed here.
 
 ---
 
@@ -505,12 +520,13 @@ Separate one-page designs are written when an increment is authorized, following
 - Signal-window or universe expansion.
 - Long-side changes, including promotion of Sprint 008 M1.
 - Alternative wing strike or delta searches.
-- Sizing or leverage optimization.
+- Sizing or leverage optimization inside this sprint (handed off as next research theme only).
 - Brokerage margin, live execution, paper-trading plumbing, or the Sprint 007 execution observer.
 - Intraday hedging or a new exit policy.
 - Iron condor, and any KB-001 fix, unless a later amendment says otherwise.
 - Treating historical quote crosses as attainable fills.
 - Mutating official Sprint 006/007/008 evidence directories or the frozen contract.
+- Sprint 010 planning or implementation.
 
 Data limits and narrow enabling work belong in the deliverable that finds them. This sprint does not expand to repair every operational gap.
 
@@ -518,38 +534,36 @@ Data limits and narrow enabling work belong in the deliverable that finds them. 
 
 ## 16. Decisions required before kickoff
 
-The reviewer should accept, reject, or amend these before any implementation:
+Historical kickoff decisions for the executed D0–D2 path remain as accepted. Items 4–7 about D3/D4 filtering are **superseded** by the 2026-09-14 amendment and were not executed.
 
 1. Reference quantities are the official cross book, not the official midpoint book and not a new equal-dollar book.
 2. Body-only is a counterfactual on the iron-fly-selected population, not a newly selected short-straddle strategy.
 3. The five-term attribution and the concession definitions in §8, including fees = 0.
-4. The two measurement/expression pairs in §10: M1 filters the body-only cross book; M2 filters the cross iron fly. No cross-combinations. Rejecting a pair requires a plan amendment before D3, not a post-result replacement.
-5. The freeze predicates, including the 80% winning-profit floor and the 8-of-10 largest-winner count, applied on each candidate’s matching expression. If both qualify, the tie-break is the larger adjusted lower bound on mean date-level dollar uplift. A difference under \$1 freezes neither. Exposure-scaled bounds are not used to rank candidates. These are proposed gates, not results.
-6. Exposure benchmarks: M2 uses official iron-fly capital at risk; M1 uses \(\sum Q S_0\) and is labeled notional, not margin. Filtered quantities stay unscaled. D4 tests exactly those two contrasts for the frozen pair.
-7. Later-period attribution and protection summaries wait until a freeze or a skip, and cannot select a structure or authorize uncovered trading.
-8. Sequential authorization: D0 design acceptance at `5329726` authorized D0 implementation only. The D1 design draft does not start D1 implementation.
+4. ~~The two measurement/expression pairs in §10~~ — **SUPERSEDED — NOT EXECUTED**.
+5. ~~The freeze predicates~~ — **SUPERSEDED — NOT EXECUTED**.
+6. ~~Exposure benchmarks for D4~~ — **SUPERSEDED — NOT EXECUTED**.
+7. ~~Later-period attribution after freeze/skip~~ — **SUPERSEDED — NOT EXECUTED**; not required for closeout.
+8. Sequential authorization for D0–D2 remains as executed.
 9. D5 cannot close Sprint 007’s execution-calibration requirement or declare production readiness.
 
 ---
 
 ## 17. Definition of done
 
-Sprint 009 is complete only after a later acceptance, not by this draft. When executed, it is complete when:
+Sprint 009 is **complete** under the 2026-09-14 amendment when:
 
-- [ ] D0 records `READY` or a named blocker, including the short-book calendar classification.
-- [ ] D1 reconciles the five-term identity on development history, or stops on that identity.
-- [ ] D2 reports protection cost, gross payout, and net contribution, and states that intraholding margin and liquidation paths were not measured if they are absent.
-- [ ] D3 freezes at most one measurement/expression pair under the predeclared predicates, or records `STOP_NO_RULE`. Family size stays 2.
-- [ ] D4 evaluates that pair against its matching unfiltered expression and its matching exposure benchmark, or is skipped with the D3 reason. The pair is not revised on the later period.
-- [ ] Dollar-profit retention and winner-count retention are not treated as the same number.
-- [ ] D5 states historical results and one next investigation only. It does not authorize uncovered trading, production use, or a Sprint 007 resolution.
-- [ ] Sprint 006/007/008 accepted results stay unreinterpreted.
-- [ ] Quote fills are not claimed attainable.
-- [ ] Focused tests pass for any new financial calculation.
-- [ ] Official evidence directories and the frozen contract are unchanged.
+- [x] D0 records `READY` or a named blocker, including the short-book calendar classification.
+- [x] D1 reconciles the five-term identity on development history, or stops on that identity.
+- [x] D2 reports protection cost, gross payout, and net contribution, and states that intraholding margin and liquidation paths were not measured if they are absent.
+- [x] Original D3/D4 are recorded **SUPERSEDED — NOT EXECUTED** (no requirement to freeze a filter or run a later-period companion).
+- [x] Amended D5 states historical results and one next investigation only. It does not authorize uncovered trading, production use, or a Sprint 007 resolution.
+- [x] Sprint 006/007/008 accepted results stay unreinterpreted.
+- [x] Quote fills are not claimed attainable.
+- [x] Focused tests passed for D0–D2 financial calculation.
+- [x] Official evidence directories and the frozen contract are unchanged.
 
 ---
 
 ## 18. Authorization
 
-**Not started.** This draft does not authorize code, tests that compute new official economics, notebooks, evidence directories, or a kickoff status of accepted.
+**Closed.** Diagnostic scope completed. See [`009_closeout.md`](../sprint_memos/009_closeout.md). Do not start Sprint 010 from this plan.
