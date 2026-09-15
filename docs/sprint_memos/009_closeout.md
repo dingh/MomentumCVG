@@ -31,7 +31,7 @@ This closeout uses committed evidence only. No experiment was rerun.
 
 ## 2. Scope amendment (2026-09-14)
 
-Accepted D0–D2 evidence shows that the short book’s remaining edge problem is not primarily “which selected names to drop at entry.” The body can print positive expiry dollars while the existing protection architecture consumes that edge at a cost that exceeds observed payout. Body profit also concentrates in one development year. Intraperiod mark-to-market, margin, liquidation, and unseen-tail risks remain unmeasured.
+Accepted D0–D2 evidence shows substantial negative net contribution from the existing wings on development history, while positive aggregate body-cross P&L depended on 2022. These findings motivate prioritizing sizing and protection architecture as the next research direction. The potential benefit of entry filtering remains untested because D3/D4 were not executed. Intraperiod mark-to-market, margin, liquidation, and unseen-tail risks remain unmeasured.
 
 Under that evidence, **sizing and protection architecture take priority over entry filtering**. Original D3 and D4 remain documented as historical methodology under **SUPERSEDED — NOT EXECUTED**. They are not failed experiments. Closing does not require executing them or producing a later-period companion.
 

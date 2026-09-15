@@ -22,7 +22,7 @@ This document is the accepted sprint-level research protocol, closed under the *
 
 ## 0. Scope amendment (2026-09-14)
 
-Accepted D0–D2 evidence shows that the short book’s remaining edge problem is not primarily entry filtering of already-selected names. The body can print positive expiry dollars while the existing protection architecture consumes that edge at a cost that exceeds observed payout. Body profit also concentrates in 2022. Intraperiod mark-to-market, margin, liquidation, and unseen-tail risks remain unmeasured.
+Accepted D0–D2 evidence shows substantial negative net contribution from the existing wings on development history, while positive aggregate body-cross P&L depended on 2022. These findings motivate prioritizing sizing and protection architecture as the next research direction. The potential benefit of entry filtering remains untested because D3/D4 were not executed. Intraperiod mark-to-market, margin, liquidation, and unseen-tail risks remain unmeasured.
 
 **Amendment decision.** Sizing and protection architecture now take priority over entry filtering. Original §10 (D3) and §11 (D4) methodology is retained below under **SUPERSEDED — NOT EXECUTED**. No filter was tested or frozen. Do not record `STOP_NO_RULE`. Closing does not require executing D3/D4 or producing a later-period companion. Amended §12 (D5) is the diagnostic closeout and research handoff in [`009_closeout.md`](../sprint_memos/009_closeout.md).
 
@@ -488,7 +488,7 @@ Historical (superseded) branch retained for reference only:
 D2 → D3 (freeze or STOP_NO_RULE) → D4 or skip → later-period companion → D5
 ```
 
-Choices answered by accepted evidence:
+Established findings and closeout decisions:
 
 - D0 readiness: `READY`.
 - D1 five-term split: body profitable at cross; wings dominate the loss.
